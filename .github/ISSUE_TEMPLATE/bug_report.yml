@@ -1,0 +1,69 @@
+name: Bug report
+description: Report something that is broken or behaves unexpectedly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out the form below so we can reproduce and fix the issue.
+
+        **Security issues:** please do not open a public bug. Use the [Security tab](https://github.com/xnyzer/mcp-oauth-gateway/security) and click "Report a vulnerability" instead — see [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: When I do X, Y happens instead of Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: Z should happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps someone else can follow to see the bug.
+      placeholder: |
+        1. Go to …
+        2. Run …
+        3. See error …
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: mcp-oauth-gateway version / commit
+      description: Output of `git rev-parse --short HEAD` in your checkout. There are no tagged releases yet — once there are, a version tag is also fine here.
+      placeholder: e.g. 5b1a433
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      description: Which client hit the gateway (and version), if relevant. Use "N/A" if not client-specific.
+      placeholder: e.g. Claude web custom connector
+
+  - type: input
+    id: upstream
+    attributes:
+      label: Upstream MCP server
+      description: Which MCP server the proxy was fronting, if relevant. Use "N/A" if not applicable.
+      placeholder: e.g. some-mcp-server v1.2.0
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Paste any relevant error output or logs. Redact tokens, keys, and hostnames first. Will be rendered as code.
+      render: shell

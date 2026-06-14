@@ -1,0 +1,26 @@
+# Secrets / runtime
+.env
+*.env
+!*.env.example
+*.pem
+*.key
+*.jwks
+data/
+__pycache__/
+
+# Reference internals / anything that must never reach the public repo
+private/
+
+# Audit output (regenerated on demand)
+AUDIT-RESULTS.md
+
+# macOS
+.DS_Store
+
+# Build artifacts
+/bin/
+/dist/
+node_modules/
+
+# Claude local settings (personal, not shared)
+.claude/settings.local.json

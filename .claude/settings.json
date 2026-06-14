@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if ! git -C \"$CLAUDE_PROJECT_DIR\" diff --quiet HEAD 2>/dev/null || ! git -C \"$CLAUDE_PROJECT_DIR\" diff --cached --quiet 2>/dev/null; then echo '[reminder] uncommitted changes — run /step-done (checks + secrets-scan) before committing'; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
