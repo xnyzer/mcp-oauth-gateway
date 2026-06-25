@@ -16,16 +16,23 @@ third-party identity provider. Generic, lightweight, reverse-proxy- and upstream
 intended to later become a module of the memstead suite. Full context: `README.md`.
 
 ## Status & where to start
-**Specification phase — no code yet.** Read in order: `README.md`, `REQUIREMENTS.md`,
-`THREAT-MODEL.md`, `PROGRESS.md`. To resume from empty context: `STARTPROMPT.md`.
-First real work item = **PROGRESS F-001: build-vs-fork evaluation** (assess
-`atrawog/mcp-oauth-gateway` et al. — don't duplicate).
+The base gateway exists: a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite),
+builds and tests green on `main`. Done so far — **F-001** (decided to fork sigbit; validated by a
+live Claude PoC), **F-002** (Go + Ory Fosite), **F-003** (CIMD-first, DCR deprecated fallback),
+**F-008** (fork imported, CI green); rationale in `PROGRESS-ARCHIVE.md`. The binary is still named
+`mcp-warp` until the rebrand (F-010).
+
+Read in order: `README.md`, `REQUIREMENTS.md`, `THREAT-MODEL.md`, `PROGRESS.md`
+(+ `PROGRESS-ARCHIVE.md` for past decisions). **To continue: open `PROGRESS.md`, take the first
+open task (top of "Open tasks" — currently F-009), run `/prep-step <F-number>` to plan, then
+`/step-done <F-number>` to finish.** Work the open tasks top-to-bottom.
 
 ## Conventions
 - **Repo language: English** (public/international).
 - Git: author `xnyzer <12890660+xnyzer@users.noreply.github.com>`, **Conventional Commits**,
   body ends with `Co-Authored-By: Claude <noreply@anthropic.com>`. **Never auto-commit** — ask first.
-- License **Apache-2.0**; **dependencies must be permissive (no GPL/AGPL)**.
+- License **Apache-2.0**; **dependencies must be permissive (no GPL/AGPL/LGPL)** — weak-copyleft
+  MPL-2.0 accepted only where unavoidable (e.g. transitive via Ory Fosite).
 - **Security-first** (it's a public auth boundary): no hand-rolled crypto (vetted lib only),
   fail-closed, mandatory security review before any public exposure. See `THREAT-MODEL.md`.
 - Ask instead of guessing. The user communicates in German (replies in German); the repo/docs stay English.
@@ -37,5 +44,5 @@ decompose), `/step-done` (review + secrets-scan + docs + Graphiti + commit quest
 `/audit-code` (full audit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`. Coding rules: `CODING-STANDARDS.md`.
 
 ## Key documents
-`REQUIREMENTS.md` (source of truth), `THREAT-MODEL.md`, `PROGRESS.md` (roadmap, start at F-001),
-`PROGRESS-ARCHIVE.md` (finished tasks), `STARTPROMPT.md` (resume prompt).
+`REQUIREMENTS.md` (source of truth), `THREAT-MODEL.md`, `PROGRESS.md` (roadmap — work
+top-to-bottom), `PROGRESS-ARCHIVE.md` (finished tasks + their rationale).

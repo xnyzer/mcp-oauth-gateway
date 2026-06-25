@@ -1,8 +1,9 @@
 # Requirements — mcp-oauth-gateway
 
-> Status: draft / specification phase. This is the source of truth for the build. It must be
-> completed (API contracts, data model, config schema) before implementation — see
-> [`PROGRESS.md`](PROGRESS.md) (F-004). Generic by design: **no deployment-specific or personal details.**
+> Status: draft. This is the source of truth for the build. The implementation base already
+> exists (a fork of `sigbit/mcp-auth-proxy`, see PROGRESS F-008); these requirements still need
+> completing (exact API contracts, data model, config schema — F-004) and a CIMD-first update
+> (F-009). Generic by design: **no deployment-specific or personal details.**
 
 ## 0. Verified background (mid-2026; re-verify, fast-moving area)
 - OAuth-requiring MCP clients (notably Claude's apps) mandate **OAuth 2.1 + PKCE/S256**. A

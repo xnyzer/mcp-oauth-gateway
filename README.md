@@ -10,7 +10,7 @@ identity provider**.
 > [`sigbit/mcp-auth-proxy`](https://github.com/sigbit/mcp-auth-proxy) (see [`FORK.md`](FORK.md));
 > work now focuses on closing the gaps to this project's spec/security bar. Not yet released — do
 > not expose publicly without the mandatory security review. See [`PROGRESS.md`](PROGRESS.md) for
-> the roadmap and [`STARTPROMPT.md`](STARTPROMPT.md) to resume from scratch.
+> the roadmap (work top to bottom).
 
 ## Why
 The MCP authorization spec requires remote MCP servers to be OAuth 2.1 Authorization Servers
@@ -36,8 +36,8 @@ upstream-agnostic.**
 ## Documentation
 - [`REQUIREMENTS.md`](REQUIREMENTS.md) — functional, security, and non-functional requirements.
 - [`THREAT-MODEL.md`](THREAT-MODEL.md) — assets, threats, mitigations.
-- [`PROGRESS.md`](PROGRESS.md) — open decisions and roadmap as F-numbers (start at F-001).
-- [`STARTPROMPT.md`](STARTPROMPT.md) — resume the project with a fresh context.
+- [`PROGRESS.md`](PROGRESS.md) — roadmap as F-numbers (work top to bottom).
+- [`PROGRESS-ARCHIVE.md`](PROGRESS-ARCHIVE.md) — finished tasks and their rationale.
 
 ## License
 Apache-2.0 © xnyzer. See [`LICENSE`](LICENSE).
