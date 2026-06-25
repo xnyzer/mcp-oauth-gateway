@@ -12,42 +12,11 @@ Everything top-down: nothing here is built yet; this is the path from spec → w
 
 | Step | Description | Completed |
 |------|-------------|-----------|
-| — | _(nothing implemented yet)_ | — |
+| F-001 | Build vs fork evaluation → **decided: hard-fork `sigbit/mcp-auth-proxy`** (Go + Ory Fosite), validated by a live Claude PoC. Detail in `PROGRESS-ARCHIVE.md`. | 2026-06-25 |
 
 ---
 
 ## Open tasks
-
-### F-001 — Build vs fork evaluation (do first)
-
-**Problem:** Before any code, decide whether to fork an existing MCP-OAuth gateway or build greenfield, to avoid duplicating work.
-
-**Idea:** Evaluate existing projects at the code level as a possible fork base instead of greenfield.
-
-**Possible implementation:**
-- Primary candidate: `atrawog/mcp-oauth-gateway` (Apache-2.0): genuine OAuth 2.1 + DCR, but **mandates GitHub login**, bundles **Traefik + Redis**, and looked **stale**. Can GitHub be swapped for self-hosted/self-contained login? Can Traefik/Redis be dropped? Is it maintainable?
-- Also skim: IBM `mcp-context-forge` (only outbound DCR), `tigrisdata/mcp-oidc-provider` (DCR shim — check no phone-home / local token storage), Pomerium MCP support.
-- HyprMCP `mcp-gateway` is **archived** → excluded.
-- **Decide:** maintained fork vs greenfield on a vetted library. Record the rationale.
-
-**Dependencies:** none (first item).
-
-**Evaluation result (2026-06-24) — code-level review done; final decision deferred to a local PoC.**
-
-Candidates reviewed (atrawog + sigbit at the code level; others skimmed):
-- **`atrawog/mcp-oauth-gateway`** — ❌ not a fork base. Python/authlib but ~10 months stale; **GitHub login hardcoded** into the authorize/callback flow (no auth-backend abstraction); enforcement *is* Traefik ForwardAuth (no in-process gate); **Redis** threaded through every call site (no DAO); **RFC 9728 PRM referenced but never served**; 1-year auth-code TTL; no unit tests for the auth package; "divine" cosmetic styling. Useful only as a reference.
-- **`sigbit/mcp-auth-proxy`** — ✅ **leading candidate / likely base.** Go 1.26, **MIT**, single binary, built on **Ory Fosite** (= our F-002 lean). Already provides: in-process **fail-closed** bearer enforcement, upstream credential injection + hiding, SSE/streaming passthrough, stdio→HTTP MCP bridge, **embedded persistence (bbolt default / GORM SQLite·Postgres·MySQL)** behind a clean storage interface, **built-in password login with NO third-party IdP required**, built-in ACME, X-Forwarded trust gating, decent unit tests, active (v2.10.2, 2026-05). Verified by upstream against Claude/ChatGPT/Copilot/Cursor.
-- Skimmed: IBM `mcp-context-forge` (downstream OAuth + heavy Postgres/Redis stack — wrong layer), `tigrisdata/mcp-oidc-provider` (DCR shim but **mandates** a third-party IdP, DCR-only), Pomerium MCP (acts as MCP-client AS, Apache-2.0, but heavy platform and leans on an upstream IdP for user login). `hyprmcp/mcp-gateway` archived → excluded.
-
-**Spec change found (re-verification): MCP spec 2025-11-25 makes _CIMD_ the recommended client-registration mechanism (SHOULD) and _deprecates DCR_ (MAY, fallback only).** Claude supports CIMD/DCR/Anthropic-creds, prefers CIMD. Also new: RFC 9207 `iss` (SHOULD), OIDC Discovery as an RFC 8414 alternative; RFC 8707 audience-binding stays MUST. → Design should be **CIMD-first, DCR fallback** (affects F-003/F-004; REQUIREMENTS §0 needs an update).
-
-**Recommendation — DECIDED (PoC validated 2026-06-25): build on a hard fork of `sigbit/mcp-auth-proxy`** rather than greenfield. A live PoC (sigbit in Docker on a self-hosted VM, plain HTTP behind a Zoraxy reverse proxy doing public TLS, fronting `@modelcontextprotocol/server-filesystem`) **completed a full Claude custom-connector round-trip**: OAuth 2.1 discovery → built-in password login → consent → token → proxied MCP tool call (list/read `/tmp`). Confirms sigbit is a viable base toward Claude. (Note: Claude's cloud connects from egress `160.79.104.0/21`; the public endpoint must allow it — geo/IP firewalls that block US sources will silently fail before any request reaches the gateway.) Gaps to close after adoption (the parts we'd want to own/audit anyway): **RFC 8707 audience-binding** (currently hardcoded to `externalURL`), **CIMD** + **RFC 9207 `iss`**, complete PRM/AS-metadata (advertise jwks_uri/introspection; add `/revoke` route), **passkey/WebAuthn + real user model** (currently bcrypt single-shared-secret), **key rotation** + optional ES256. Risks: single maintainer (treat as our own fork from day one), hand-rolled metadata/DCR structs drift, transitive dep bloat (ory/x, OTel, mongo) to prune. License: MIT→Apache-2.0 is compatible (retain MIT NOTICE).
-
-**Implications:** F-002 likely resolved (**Go + Ory Fosite**); F-003 trends **CIMD-first, DCR fallback**; F-004 inherits a real codebase.
-
-**PoC done (2026-06-25): SUCCESS** — local smoke-test + public Claude custom-connector round-trip both worked. F-001 resolved in favor of forking `sigbit/mcp-auth-proxy`. **Next:** confirm F-002 (Go + Ory Fosite), F-003 (CIMD-first), then create the hard fork and open F-numbers for the gap-closing work (RFC 8707/9207, CIMD, complete PRM + `WWW-Authenticate` on the `/mcp` 401, `/revoke`, passkey/WebAuthn + user model, key rotation). Update REQUIREMENTS §0 for the CIMD/DCR spec change.
-
----
 
 ### F-002 — Choose language + OAuth library
 
@@ -60,6 +29,7 @@ Candidates reviewed (atrawog + sigbit at the code level; others skimmed):
 - Once chosen, add the language-specific section to `CODING-STANDARDS.md`.
 
 **Dependencies:** F-001 (a fork may decide the language).
+**F-001 outcome:** the chosen base `sigbit/mcp-auth-proxy` is **Go + Ory Fosite** → this task is now mostly a formal confirmation.
 
 ---
 
@@ -74,6 +44,7 @@ Candidates reviewed (atrawog + sigbit at the code level; others skimmed):
 - Decide the registration model and record the rationale.
 
 **Dependencies:** F-001 (the chosen base may already implement one model).
+**F-001 outcome:** spec 2025-11-25 makes **CIMD** recommended (SHOULD) and **deprecates DCR** (MAY). The base implements DCR only (open `/register`, no CIMD) → decide **CIMD-first, DCR fallback** and plan CIMD as new work.
 
 ---
 
@@ -93,18 +64,28 @@ Candidates reviewed (atrawog + sigbit at the code level; others skimmed):
 
 ---
 
-### F-005 — Implement on the vetted library
+### F-005 — Implement on the chosen base (sigbit fork)
 
-**Problem:** The gateway does not exist yet.
+**Problem:** The gateway does not exist yet. F-001 chose to hard-fork `sigbit/mcp-auth-proxy`; the base already provides much of this, so the work is **closing the gaps** to our spec/security bar — glue only, no hand-rolled crypto (see `THREAT-MODEL.md`).
 
-**Idea:** Build the gateway on the chosen vetted library — glue only, no hand-rolled crypto (see `THREAT-MODEL.md`).
+**Idea:** Build on the fork (F-008). Keep/verify what sigbit already does (in-process fail-closed enforcement, streaming proxy, embedded persistence, ACME); add and harden the missing pieces below.
 
 **Possible implementation:**
 - Discovery (PRM/AS metadata), DCR, authorize+token (PKCE), JWKS, login (passkey), consent.
 - Upstream proxy with streaming passthrough + configurable upstream auth injection.
 - Rate-limiting, DCR-client expiry/caps, structured auth logging.
 
-**Dependencies:** F-004.
+**Gap list vs the sigbit fork base (from F-001 code review):**
+- **RFC 8707 audience-binding** — sigbit hardcodes `aud` to `externalURL`; bind tokens to the actual MCP resource.
+- **CIMD client-registration** — absent; add Client ID Metadata Document resolution (CIMD-first per spec 2025-11-25, see F-003/F-009).
+- **`WWW-Authenticate` on the `/mcp` 401** — sigbit returns a bare 401 JSON; emit `Bearer resource_metadata="…"` so clients can discover the PRM.
+- **`/revoke` route (RFC 7009)** — storage supports it but no HTTP endpoint is wired.
+- **Complete PRM/AS-metadata** — advertise `jwks_uri`/introspection/revocation; PRM is currently thin.
+- **RFC 9207 `iss`** in the authorize response.
+- **Key management** — rotation + optional ES256 (sigbit ships a single static RS256 key).
+- **Self-contained auth** — replace the bcrypt single-shared-secret with passkey/WebAuthn + a real user model.
+
+**Dependencies:** F-004, F-008.
 
 ---
 
@@ -143,15 +124,46 @@ Candidates reviewed (atrawog + sigbit at the code level; others skimmed):
 
 _New ideas beyond the path above are intaked via `/add-feature` and get the next F-number._
 
+### F-008 — Create the hard fork of `sigbit/mcp-auth-proxy`
+
+**Problem:** F-001 chose `sigbit/mcp-auth-proxy` (Go + Ory Fosite, MIT) as the base, but no project repo exists yet; all gap-closing work (F-005) needs a clean fork to build on.
+
+**Idea:** Stand up our own hard fork as the project's codebase — owned and maintained by us from day one (not tracking upstream), licence-clean and lean.
+
+**Possible implementation:**
+- Import the source into our repo; retain the upstream **MIT LICENSE/NOTICE** alongside our Apache-2.0 (`NOTICE` file) — both permissive, no GPL/AGPL.
+- Prune unused transitive dependency trees (ory/x, OpenTelemetry, mongo-driver) to shrink the audit/supply-chain surface.
+- Establish project layout + CI (build/test); baseline must compile and pass the existing unit tests.
+- Record provenance (the upstream commit forked from) for future security tracking.
+
+**Dependencies:** F-002, F-003.
+
+---
+
+### F-009 — Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first)
+
+**Problem:** `REQUIREMENTS.md` §0/FR-2 still frame **DCR** as the registration mechanism, but the MCP authorization spec **2025-11-25** makes **CIMD** the recommended path (SHOULD) and **deprecates DCR** (MAY, fallback). RFC 9207 `iss` and OIDC Discovery (as an RFC 8414 alternative) are newly relevant too.
+
+**Idea:** Bring the source-of-truth docs in line with the current spec so F-003/F-004/F-005 build to the right contract.
+
+**Possible implementation:**
+- REQUIREMENTS §0: note CIMD-first / DCR-deprecated; add RFC 9207 `iss` and OIDC-Discovery-as-alternative.
+- FR-2: reframe as CIMD primary, DCR fallback; cross-reference F-003.
+- Note the 2026-07-28 release candidate as a watch item (re-verify before release).
+
+**Dependencies:** none (documentation).
+
 ---
 
 <!-- FEATURE-INDEX
-next-feature: F-008
-F-001 Build vs fork evaluation (do first)
+next-feature: F-010
+F-001 Build vs fork evaluation (do first) (DONE)
 F-002 Choose language + OAuth library
 F-003 DCR vs CIMD decision
 F-004 Complete the spec (make it implementable)
-F-005 Implement on the vetted library
+F-005 Implement on the chosen base (sigbit fork)
 F-006 Verify against Claude + security review
 F-007 Release hygiene
+F-008 Create the hard fork of sigbit/mcp-auth-proxy
+F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first)
 -->
