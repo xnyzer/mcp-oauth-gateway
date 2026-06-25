@@ -32,6 +32,21 @@ Everything top-down: nothing here is built yet; this is the path from spec → w
 
 **Dependencies:** none (first item).
 
+**Evaluation result (2026-06-24) — code-level review done; final decision deferred to a local PoC.**
+
+Candidates reviewed (atrawog + sigbit at the code level; others skimmed):
+- **`atrawog/mcp-oauth-gateway`** — ❌ not a fork base. Python/authlib but ~10 months stale; **GitHub login hardcoded** into the authorize/callback flow (no auth-backend abstraction); enforcement *is* Traefik ForwardAuth (no in-process gate); **Redis** threaded through every call site (no DAO); **RFC 9728 PRM referenced but never served**; 1-year auth-code TTL; no unit tests for the auth package; "divine" cosmetic styling. Useful only as a reference.
+- **`sigbit/mcp-auth-proxy`** — ✅ **leading candidate / likely base.** Go 1.26, **MIT**, single binary, built on **Ory Fosite** (= our F-002 lean). Already provides: in-process **fail-closed** bearer enforcement, upstream credential injection + hiding, SSE/streaming passthrough, stdio→HTTP MCP bridge, **embedded persistence (bbolt default / GORM SQLite·Postgres·MySQL)** behind a clean storage interface, **built-in password login with NO third-party IdP required**, built-in ACME, X-Forwarded trust gating, decent unit tests, active (v2.10.2, 2026-05). Verified by upstream against Claude/ChatGPT/Copilot/Cursor.
+- Skimmed: IBM `mcp-context-forge` (downstream OAuth + heavy Postgres/Redis stack — wrong layer), `tigrisdata/mcp-oidc-provider` (DCR shim but **mandates** a third-party IdP, DCR-only), Pomerium MCP (acts as MCP-client AS, Apache-2.0, but heavy platform and leans on an upstream IdP for user login). `hyprmcp/mcp-gateway` archived → excluded.
+
+**Spec change found (re-verification): MCP spec 2025-11-25 makes _CIMD_ the recommended client-registration mechanism (SHOULD) and _deprecates DCR_ (MAY, fallback only).** Claude supports CIMD/DCR/Anthropic-creds, prefers CIMD. Also new: RFC 9207 `iss` (SHOULD), OIDC Discovery as an RFC 8414 alternative; RFC 8707 audience-binding stays MUST. → Design should be **CIMD-first, DCR fallback** (affects F-003/F-004; REQUIREMENTS §0 needs an update).
+
+**Recommendation — DECIDED (PoC validated 2026-06-25): build on a hard fork of `sigbit/mcp-auth-proxy`** rather than greenfield. A live PoC (sigbit in Docker on a self-hosted VM, plain HTTP behind a Zoraxy reverse proxy doing public TLS, fronting `@modelcontextprotocol/server-filesystem`) **completed a full Claude custom-connector round-trip**: OAuth 2.1 discovery → built-in password login → consent → token → proxied MCP tool call (list/read `/tmp`). Confirms sigbit is a viable base toward Claude. (Note: Claude's cloud connects from egress `160.79.104.0/21`; the public endpoint must allow it — geo/IP firewalls that block US sources will silently fail before any request reaches the gateway.) Gaps to close after adoption (the parts we'd want to own/audit anyway): **RFC 8707 audience-binding** (currently hardcoded to `externalURL`), **CIMD** + **RFC 9207 `iss`**, complete PRM/AS-metadata (advertise jwks_uri/introspection; add `/revoke` route), **passkey/WebAuthn + real user model** (currently bcrypt single-shared-secret), **key rotation** + optional ES256. Risks: single maintainer (treat as our own fork from day one), hand-rolled metadata/DCR structs drift, transitive dep bloat (ory/x, OTel, mongo) to prune. License: MIT→Apache-2.0 is compatible (retain MIT NOTICE).
+
+**Implications:** F-002 likely resolved (**Go + Ory Fosite**); F-003 trends **CIMD-first, DCR fallback**; F-004 inherits a real codebase.
+
+**PoC done (2026-06-25): SUCCESS** — local smoke-test + public Claude custom-connector round-trip both worked. F-001 resolved in favor of forking `sigbit/mcp-auth-proxy`. **Next:** confirm F-002 (Go + Ory Fosite), F-003 (CIMD-first), then create the hard fork and open F-numbers for the gap-closing work (RFC 8707/9207, CIMD, complete PRM + `WWW-Authenticate` on the `/mcp` 401, `/revoke`, passkey/WebAuthn + user model, key rotation). Update REQUIREMENTS §0 for the CIMD/DCR spec change.
+
 ---
 
 ### F-002 — Choose language + OAuth library
