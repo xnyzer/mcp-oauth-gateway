@@ -1,7 +1,7 @@
 ---
 name: add-feature
 description: Put a new task on the roadmap. Analyses the idea, checks for overlaps, fleshes it out, and adds it to PROGRESS.md after approval.
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 # Intake a task
