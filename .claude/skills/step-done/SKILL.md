@@ -1,7 +1,7 @@
 ---
 name: step-done
 description: Run after a task is finished. Code review against CODING-STANDARDS.md, secrets scan, PROGRESS docs, Graphiti update, and commit preparation.
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 # Post-step checklist
