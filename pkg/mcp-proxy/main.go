@@ -195,22 +195,6 @@ func Run(
 		if err != nil {
 			return fmt.Errorf("failed to create repository: %w", err)
 		}
-	case "postgres", "postgresql":
-		if repositoryDSN == "" {
-			return fmt.Errorf("repository DSN must be provided for postgres backend")
-		}
-		repo, err = repository.NewSQLRepository("postgres", repositoryDSN)
-		if err != nil {
-			return fmt.Errorf("failed to create repository: %w", err)
-		}
-	case "mysql":
-		if repositoryDSN == "" {
-			return fmt.Errorf("repository DSN must be provided for mysql backend")
-		}
-		repo, err = repository.NewSQLRepository("mysql", repositoryDSN)
-		if err != nil {
-			return fmt.Errorf("failed to create repository: %w", err)
-		}
 	default:
 		return fmt.Errorf("unsupported repository backend: %s", repositoryBackend)
 	}

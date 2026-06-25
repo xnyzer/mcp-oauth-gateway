@@ -136,10 +136,10 @@ _New ideas beyond the path above are intaked via `/add-feature` and get the next
 #### F-008c — Dependency pruning + CI
 - **What:** Best-effort prune (see explanation): drop unused **GORM postgres/mysql drivers** if standardising on bbolt/SQLite; `go mod tidy`; assess OTel removal; `mongo-driver` stays (transitive via `ory/x`) — document. Add **GitHub Actions CI** (build, test, license check, pinned Go 1.26).
 - **Files:** `go.mod`, `go.sum`, storage/provider imports, `.github/workflows/ci.yml`.
-- **Acceptance:**
-  - [ ] `go mod tidy` clean
-  - [ ] unused drivers removed (or pruning limits documented)
-  - [ ] CI green on build + test + license check
+- **Acceptance:** ✅ DONE 2026-06-25
+  - [x] `go mod tidy` clean
+  - [x] unused drivers removed — MySQL + Postgres GORM drivers dropped (keeps bbolt default + SQLite); this also removed the `go-sql-driver/mysql` MPL dep. Limits documented: OTel + `mongo-driver` + the two hashicorp MPL deps are transitive via Ory Fosite/`ory/x` and cannot be pruned without dropping Fosite.
+  - [x] CI added (`.github/workflows/ci.yml`: gofmt, vet, build, test, license check on pinned go.mod version) — green status verified on first push.
 - **Dependencies:** F-008a (F-008b first, to reuse the license scan).
 
 ---

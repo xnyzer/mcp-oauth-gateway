@@ -10,8 +10,6 @@ import (
 
 	"github.com/ory/fosite"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/models"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -76,10 +74,6 @@ func NewSQLRepository(driver string, dsn string) (Repository, error) {
 	switch strings.ToLower(driver) {
 	case "sqlite":
 		dialector = sqlite.Open(dsn)
-	case "postgres", "postgresql":
-		dialector = postgres.Open(dsn)
-	case "mysql":
-		dialector = mysql.Open(dsn)
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", driver)
 	}
