@@ -6,9 +6,11 @@ only support a static bearer token, or no auth at all — so that **OAuth-only M
 (e.g. Claude's web/desktop/mobile apps) can connect, **without depending on a third-party
 identity provider**.
 
-> **Status: specification phase — no code yet.** This repository currently contains the
-> requirements, threat model, and open decisions. See [`PROGRESS.md`](PROGRESS.md) and
-> [`STARTPROMPT.md`](STARTPROMPT.md) to continue the work from scratch.
+> **Status: early development.** The codebase is a hard fork of
+> [`sigbit/mcp-auth-proxy`](https://github.com/sigbit/mcp-auth-proxy) (see [`FORK.md`](FORK.md));
+> work now focuses on closing the gaps to this project's spec/security bar. Not yet released — do
+> not expose publicly without the mandatory security review. See [`PROGRESS.md`](PROGRESS.md) for
+> the roadmap and [`STARTPROMPT.md`](STARTPROMPT.md) to resume from scratch.
 
 ## Why
 The MCP authorization spec requires remote MCP servers to be OAuth 2.1 Authorization Servers
@@ -39,3 +41,8 @@ upstream-agnostic.**
 
 ## License
 Apache-2.0 © xnyzer. See [`LICENSE`](LICENSE).
+
+This project is a hard fork of [`sigbit/mcp-auth-proxy`](https://github.com/sigbit/mcp-auth-proxy)
+(MIT). The upstream attribution is retained in [`NOTICE`](NOTICE); fork provenance is in
+[`FORK.md`](FORK.md). Dependencies are permissive (MIT/BSD/Apache-2.0) apart from a few
+weak-copyleft **MPL-2.0** modules (mostly transitive via Ory Fosite); **no GPL/AGPL/LGPL**.

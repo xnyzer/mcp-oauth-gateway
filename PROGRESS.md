@@ -126,10 +126,11 @@ _New ideas beyond the path above are intaked via `/add-feature` and get the next
 #### F-008b — License & NOTICE hygiene
 - **What:** Keep the Apache-2.0 `LICENSE`; add a `NOTICE` retaining sigbit's **MIT** attribution + the forked commit; document the fork in `README.md`; run a dependency license scan (e.g. `go-licenses`) → confirm **no GPL/AGPL**.
 - **Files:** `LICENSE` (keep), `NOTICE` (new), `README.md`, license report.
-- **Acceptance:**
-  - [ ] `NOTICE` present with sigbit MIT credit + provenance
-  - [ ] `README.md` documents the fork origin
-  - [ ] license scan shows no GPL/AGPL deps
+- **Acceptance:** ✅ DONE 2026-06-25
+  - [x] `NOTICE` present with sigbit MIT credit + provenance
+  - [x] `README.md` documents the fork origin
+  - [x] license scan shows no GPL/AGPL/LGPL (`go-licenses check` clean)
+  - Note: 3 weak-copyleft **MPL-2.0** deps found — `go-sql-driver/mysql` (drop in F-008c) + `hashicorp/go-retryablehttp`/`go-cleanhttp` (transitive via Ory Fosite, unavoidable). MPL-2.0 is Apache-compatible; accepted.
 - **Dependencies:** F-008a.
 
 #### F-008c — Dependency pruning + CI
