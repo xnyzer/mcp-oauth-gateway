@@ -15,6 +15,7 @@ Everything top-down: nothing here is built yet; this is the path from spec → w
 | F-001 | Build vs fork evaluation → **decided: hard-fork `sigbit/mcp-auth-proxy`** (Go + Ory Fosite), validated by a live Claude PoC. Detail in `PROGRESS-ARCHIVE.md`. | 2026-06-25 |
 | F-002 | Language + OAuth library → **decided: Go + Ory Fosite** (follows the F-001 fork base). | 2026-06-25 |
 | F-003 | DCR vs CIMD → **decided: support both, CIMD-first with DCR as deprecated fallback** (spec 2025-11-25). | 2026-06-25 |
+| F-008 | Create the hard fork → **sigbit source imported** as `github.com/xnyzer/mcp-oauth-gateway` (build+tests green, CI added, NOTICE/license clean). Detail in `PROGRESS-ARCHIVE.md`. | 2026-06-25 |
 
 ---
 
@@ -96,54 +97,6 @@ Everything top-down: nothing here is built yet; this is the path from spec → w
 
 _New ideas beyond the path above are intaked via `/add-feature` and get the next F-number._
 
-### F-008 — Create the hard fork of `sigbit/mcp-auth-proxy`
-
-**Problem:** F-001 chose `sigbit/mcp-auth-proxy` (Go + Ory Fosite, MIT) as the base, but no project repo exists yet; all gap-closing work (F-005) needs a clean fork to build on.
-
-**Idea:** Stand up our own hard fork as the project's codebase — owned and maintained by us from day one (not tracking upstream), licence-clean and lean.
-
-**Possible implementation:**
-- Import the source into our repo; retain the upstream **MIT LICENSE/NOTICE** alongside our Apache-2.0 (`NOTICE` file) — both permissive, no GPL/AGPL.
-- Prune unused transitive dependency trees (ory/x, OpenTelemetry, mongo-driver) to shrink the audit/supply-chain surface.
-- Establish project layout + CI (build/test); baseline must compile and pass the existing unit tests.
-- Record provenance (the upstream commit forked from) for future security tracking.
-
-**Dependencies:** F-002, F-003 (both DONE).
-
-**Assessment:** Medium — ~4.2k LoC imported, ~150–250 lines authored across ~10–15 files. Decomposed into three substeps. Build/test natively with Go 1.26 (installed); CI uses a pinned `golang:1.26` image.
-
-#### F-008a — Import + green baseline
-- **What:** Import the sigbit source into this repo; rename the module path `github.com/sigbit/mcp-auth-proxy/v2` → `github.com/xnyzer/mcp-oauth-gateway`; fix imports; record upstream provenance (forked commit). Add the **Go-specific section** to `CODING-STANDARDS.md` (closes the F-002 follow-up). Baseline stays faithful (all providers + `mcp-warp` binary name kept — rebrand is F-010, provider-trim is F-011).
-- **Files:** Go source tree (`main.go`, `pkg/**`, `go.mod`, `go.sum`, `Dockerfile`), `CODING-STANDARDS.md`, provenance note (README/NOTICE).
-- **Acceptance:** ✅ DONE 2026-06-25
-  - [x] `go build ./...` succeeds
-  - [x] `go test ./...` green (all packages)
-  - [x] no `sigbit/mcp-auth-proxy` import path remains (module `github.com/xnyzer/mcp-oauth-gateway`)
-  - [x] upstream commit hash recorded (`FORK.md`: `76cf8e0`)
-  - [x] Go section added to `CODING-STANDARDS.md` (§11)
-- **Dependencies:** F-002, F-003.
-
-#### F-008b — License & NOTICE hygiene
-- **What:** Keep the Apache-2.0 `LICENSE`; add a `NOTICE` retaining sigbit's **MIT** attribution + the forked commit; document the fork in `README.md`; run a dependency license scan (e.g. `go-licenses`) → confirm **no GPL/AGPL**.
-- **Files:** `LICENSE` (keep), `NOTICE` (new), `README.md`, license report.
-- **Acceptance:** ✅ DONE 2026-06-25
-  - [x] `NOTICE` present with sigbit MIT credit + provenance
-  - [x] `README.md` documents the fork origin
-  - [x] license scan shows no GPL/AGPL/LGPL (`go-licenses check` clean)
-  - Note: 3 weak-copyleft **MPL-2.0** deps found — `go-sql-driver/mysql` (drop in F-008c) + `hashicorp/go-retryablehttp`/`go-cleanhttp` (transitive via Ory Fosite, unavoidable). MPL-2.0 is Apache-compatible; accepted.
-- **Dependencies:** F-008a.
-
-#### F-008c — Dependency pruning + CI
-- **What:** Best-effort prune (see explanation): drop unused **GORM postgres/mysql drivers** if standardising on bbolt/SQLite; `go mod tidy`; assess OTel removal; `mongo-driver` stays (transitive via `ory/x`) — document. Add **GitHub Actions CI** (build, test, license check, pinned Go 1.26).
-- **Files:** `go.mod`, `go.sum`, storage/provider imports, `.github/workflows/ci.yml`.
-- **Acceptance:** ✅ DONE 2026-06-25
-  - [x] `go mod tidy` clean
-  - [x] unused drivers removed — MySQL + Postgres GORM drivers dropped (keeps bbolt default + SQLite); this also removed the `go-sql-driver/mysql` MPL dep. Limits documented: OTel + `mongo-driver` + the two hashicorp MPL deps are transitive via Ory Fosite/`ory/x` and cannot be pruned without dropping Fosite.
-  - [x] CI added (`.github/workflows/ci.yml`: gofmt, vet, build, test, license check on pinned go.mod version) — green status verified on first push.
-- **Dependencies:** F-008a (F-008b first, to reuse the license scan).
-
----
-
 ### F-009 — Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first)
 
 **Problem:** `REQUIREMENTS.md` §0/FR-2 still frame **DCR** as the registration mechanism, but the MCP authorization spec **2025-11-25** makes **CIMD** the recommended path (SHOULD) and **deprecates DCR** (MAY, fallback). RFC 9207 `iss` and OIDC Discovery (as an RFC 8414 alternative) are newly relevant too.
@@ -198,7 +151,7 @@ F-004 Complete the spec (make it implementable)
 F-005 Implement on the chosen base (sigbit fork)
 F-006 Verify against Claude + security review
 F-007 Release hygiene
-F-008 Create the hard fork of sigbit/mcp-auth-proxy
+F-008 Create the hard fork of sigbit/mcp-auth-proxy (DONE)
 F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first)
 F-010 Rebrand the fork to mcp-oauth-gateway
 F-011 Trim bundled auth providers to the self-contained model
