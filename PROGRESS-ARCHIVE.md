@@ -73,3 +73,38 @@ can make a server look externally reachable when it is not.
 - `PROGRESS.md` — F-001 marked done; recommendation/decision recorded.
 - (Evaluation clones and the PoC ran in throwaway scratch/VM environments outside the repo; no
   gateway code committed yet — implementation starts after the fork is created.)
+
+---
+
+## F-002 — Choose language + OAuth library — DONE 2026-06-25
+
+**Problem:** The implementation language and OAuth library were undecided; everything downstream depends on this.
+
+**Decision: Go + Ory Fosite.**
+
+**Rationale:**
+- F-001 chose to hard-fork `sigbit/mcp-auth-proxy`, which is built in **Go** on **Ory Fosite** — adopting it dictates the stack, and re-deciding would mean discarding a working base.
+- **Ory Fosite** is a vetted OAuth2/OIDC library (powers Ory Hydra), Apache-2.0 (permissive, no GPL/AGPL), so token issuance/PKCE/JWT stay in library code — satisfies SR-1 (no hand-rolled crypto).
+- **Go** yields a tiny static single binary (supports GR-3 single-container), strong streaming-proxy support (FR-8), and broad contributor reach.
+- Alternative **Python + authlib** rejected: heavier runtime footprint and would imply greenfield rather than reusing the validated fork base.
+
+**Follow-up:** add the Go-specific section to `CODING-STANDARDS.md` (handled as part of F-008).
+
+**Files changed:** `PROGRESS.md` (moved to Done; F-005 already references the stack).
+
+---
+
+## F-003 — DCR vs CIMD decision — DONE 2026-06-25
+
+**Problem:** Decide the client-registration model — DCR, CIMD, or both.
+
+**Decision: support both — CIMD-first, with DCR retained as a deprecated fallback.**
+
+**Rationale:**
+- MCP authorization spec **2025-11-25** makes **CIMD** the recommended mechanism (SHOULD) and **deprecates DCR** (MAY, fallback only). Claude supports CIMD/DCR/Anthropic-creds and prefers CIMD.
+- The fork base (sigbit) currently implements **DCR only** (open `/register`, no CIMD). So DCR comes for free as the backward-compat fallback; **CIMD must be added** (tracked as a gap in F-005).
+- Not DCR-only (would ignore the now-recommended mechanism and cause registration bloat); not CIMD-only (would drop backward-compat with AS/clients that still rely on DCR).
+- Regardless of model, apply **SR-5** DCR-abuse mitigations (rate-limit `/register`, auto-expiry, client cap).
+- `REQUIREMENTS.md` §0/FR-2 must be updated to reflect CIMD-first — tracked as **F-009**.
+
+**Files changed:** `PROGRESS.md` (moved to Done).

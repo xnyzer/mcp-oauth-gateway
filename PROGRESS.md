@@ -13,40 +13,12 @@ Everything top-down: nothing here is built yet; this is the path from spec → w
 | Step | Description | Completed |
 |------|-------------|-----------|
 | F-001 | Build vs fork evaluation → **decided: hard-fork `sigbit/mcp-auth-proxy`** (Go + Ory Fosite), validated by a live Claude PoC. Detail in `PROGRESS-ARCHIVE.md`. | 2026-06-25 |
+| F-002 | Language + OAuth library → **decided: Go + Ory Fosite** (follows the F-001 fork base). | 2026-06-25 |
+| F-003 | DCR vs CIMD → **decided: support both, CIMD-first with DCR as deprecated fallback** (spec 2025-11-25). | 2026-06-25 |
 
 ---
 
 ## Open tasks
-
-### F-002 — Choose language + OAuth library
-
-**Problem:** The implementation language and OAuth library are undecided; everything downstream depends on this.
-
-**Idea:** Decide between Go + Ory Fosite and Python + authlib (lean: Go + Fosite for a tool others self-host). A fork (F-001) may dictate the language.
-
-**Possible implementation:**
-- Decision criteria: distribution size (tiny static binary vs runtime deps), security pedigree (Fosite powers Ory Hydra; authlib widely used), contributor reach, streaming-proxy support.
-- Once chosen, add the language-specific section to `CODING-STANDARDS.md`.
-
-**Dependencies:** F-001 (a fork may decide the language).
-**F-001 outcome:** the chosen base `sigbit/mcp-auth-proxy` is **Go + Ory Fosite** → this task is now mostly a formal confirmation.
-
----
-
-### F-003 — DCR vs CIMD decision
-
-**Problem:** A Dynamic Client Registration endpoint may be unnecessary if target clients honor CIMD, which would simplify the gateway.
-
-**Idea:** Verify current client support; decide whether to support CIMD, DCR, or both.
-
-**Possible implementation:**
-- Check the current OAuth client behaviour of the target apps (re-verify; fast-moving).
-- Decide the registration model and record the rationale.
-
-**Dependencies:** F-001 (the chosen base may already implement one model).
-**F-001 outcome:** spec 2025-11-25 makes **CIMD** recommended (SHOULD) and **deprecates DCR** (MAY). The base implements DCR only (open `/register`, no CIMD) → decide **CIMD-first, DCR fallback** and plan CIMD as new work.
-
----
 
 ### F-004 — Complete the spec (make it implementable)
 
@@ -158,8 +130,8 @@ _New ideas beyond the path above are intaked via `/add-feature` and get the next
 <!-- FEATURE-INDEX
 next-feature: F-010
 F-001 Build vs fork evaluation (do first) (DONE)
-F-002 Choose language + OAuth library
-F-003 DCR vs CIMD decision
+F-002 Choose language + OAuth library (DONE)
+F-003 DCR vs CIMD decision (DONE)
 F-004 Complete the spec (make it implementable)
 F-005 Implement on the chosen base (sigbit fork)
 F-006 Verify against Claude + security review
