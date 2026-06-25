@@ -3,9 +3,9 @@
 Binding rules for every code change. This document is the working instruction — whoever writes or
 reviews code follows these rules.
 
-> **Stack note:** The language and stack are **not yet decided** (a build-vs-fork and Go-vs-Python
-> decision is pending). The rules below are language-agnostic and always apply. **Language-specific
-> rules (Go or Python) will be added once the stack is chosen (see PROGRESS F-002).**
+> **Stack note:** The stack is **Go + Ory Fosite** (decided in F-001/F-002; the project is a hard
+> fork of `sigbit/mcp-auth-proxy`). The language-agnostic rules below always apply; the
+> **Go-specific rules are in §11**.
 
 ---
 
@@ -111,3 +111,21 @@ Short, descriptive, visually set apart. No rambling block comments.
 - **Commit email = GitHub noreply** (`12890660+xnyzer@users.noreply.github.com`) — never the private address. Verify before each commit (see `step-done` skill / `CONTRIBUTING.md`).
 - **Never auto-commit** — always wait for the user's explicit "yes".
 - **Focused commits** — one concern per commit.
+
+---
+
+## 11. Language-specific: Go
+
+The stack is **Go + Ory Fosite** (fork of `sigbit/mcp-auth-proxy`).
+
+- **Go version:** pinned to **1.26** (`go.mod`); CI uses a pinned `golang:1.26` image. No `latest`.
+- **Module path:** `github.com/xnyzer/mcp-oauth-gateway`.
+- **Formatting:** `gofmt`/`goimports` are mandatory (CI fails on diff). Imports grouped stdlib → third-party → local (§4).
+- **Linting:** `go vet` clean; `golangci-lint` clean (added in CI). Warnings are errors (§1).
+- **Naming:** follow Go conventions — `MixedCaps`, exported identifiers documented; the verb-first/`is`/`has` intent rules (§3) still apply. Package names short, lower-case, no underscores.
+- **Errors:** return `error`, never panic on a request path (§6). Wrap with `fmt.Errorf("...: %w", err)`; define sentinel/typed errors for auth failures (`ErrInvalidToken`, `ErrPkceMismatch`). Check every returned error — no `_ =` on auth paths.
+- **Context:** thread `context.Context` as the first parameter through request/IO paths; honour cancellation.
+- **Concurrency:** no shared state without synchronisation; no goroutine leaks (bounded lifetimes, respect `ctx`).
+- **Crypto/OAuth:** use **Ory Fosite** + `golang-jwt` + `golang.org/x/crypto` — never hand-roll (§7, SR-1).
+- **Tests:** standard `testing` package, table-driven where it helps; tests live in `_test.go` next to the code. Mocks via `go.uber.org/mock` (already in use). Negative auth tests are mandatory (§9).
+- **Dependencies:** `go.mod`/`go.sum` pinned; `go mod tidy` clean; all permissive (no GPL/AGPL) — verified in CI (§7).

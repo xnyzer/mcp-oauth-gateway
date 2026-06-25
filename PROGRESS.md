@@ -115,12 +115,12 @@ _New ideas beyond the path above are intaked via `/add-feature` and get the next
 #### F-008a — Import + green baseline
 - **What:** Import the sigbit source into this repo; rename the module path `github.com/sigbit/mcp-auth-proxy/v2` → `github.com/xnyzer/mcp-oauth-gateway`; fix imports; record upstream provenance (forked commit). Add the **Go-specific section** to `CODING-STANDARDS.md` (closes the F-002 follow-up). Baseline stays faithful (all providers + `mcp-warp` binary name kept — rebrand is F-010, provider-trim is F-011).
 - **Files:** Go source tree (`main.go`, `pkg/**`, `go.mod`, `go.sum`, `Dockerfile`), `CODING-STANDARDS.md`, provenance note (README/NOTICE).
-- **Acceptance:**
-  - [ ] `go build ./...` succeeds
-  - [ ] `go test ./...` green
-  - [ ] no `sigbit/mcp-auth-proxy` import path remains
-  - [ ] upstream commit hash recorded
-  - [ ] Go section added to `CODING-STANDARDS.md`
+- **Acceptance:** ✅ DONE 2026-06-25
+  - [x] `go build ./...` succeeds
+  - [x] `go test ./...` green (all packages)
+  - [x] no `sigbit/mcp-auth-proxy` import path remains (module `github.com/xnyzer/mcp-oauth-gateway`)
+  - [x] upstream commit hash recorded (`FORK.md`: `76cf8e0`)
+  - [x] Go section added to `CODING-STANDARDS.md` (§11)
 - **Dependencies:** F-002, F-003.
 
 #### F-008b — License & NOTICE hygiene

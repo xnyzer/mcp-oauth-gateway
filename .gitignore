@@ -22,5 +22,11 @@ AUDIT-RESULTS.md
 /dist/
 node_modules/
 
+# Go
+/mcp-oauth-gateway
+*.test
+*.out
+coverage.txt
+
 # Claude local settings (personal, not shared)
 .claude/settings.local.json
