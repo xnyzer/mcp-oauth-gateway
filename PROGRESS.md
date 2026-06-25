@@ -108,7 +108,38 @@ _New ideas beyond the path above are intaked via `/add-feature` and get the next
 - Establish project layout + CI (build/test); baseline must compile and pass the existing unit tests.
 - Record provenance (the upstream commit forked from) for future security tracking.
 
-**Dependencies:** F-002, F-003.
+**Dependencies:** F-002, F-003 (both DONE).
+
+**Assessment:** Medium — ~4.2k LoC imported, ~150–250 lines authored across ~10–15 files. Decomposed into three substeps. Build/test natively with Go 1.26 (installed); CI uses a pinned `golang:1.26` image.
+
+#### F-008a — Import + green baseline
+- **What:** Import the sigbit source into this repo; rename the module path `github.com/sigbit/mcp-auth-proxy/v2` → `github.com/xnyzer/mcp-oauth-gateway`; fix imports; record upstream provenance (forked commit). Add the **Go-specific section** to `CODING-STANDARDS.md` (closes the F-002 follow-up). Baseline stays faithful (all providers + `mcp-warp` binary name kept — rebrand is F-010, provider-trim is F-011).
+- **Files:** Go source tree (`main.go`, `pkg/**`, `go.mod`, `go.sum`, `Dockerfile`), `CODING-STANDARDS.md`, provenance note (README/NOTICE).
+- **Acceptance:**
+  - [ ] `go build ./...` succeeds
+  - [ ] `go test ./...` green
+  - [ ] no `sigbit/mcp-auth-proxy` import path remains
+  - [ ] upstream commit hash recorded
+  - [ ] Go section added to `CODING-STANDARDS.md`
+- **Dependencies:** F-002, F-003.
+
+#### F-008b — License & NOTICE hygiene
+- **What:** Keep the Apache-2.0 `LICENSE`; add a `NOTICE` retaining sigbit's **MIT** attribution + the forked commit; document the fork in `README.md`; run a dependency license scan (e.g. `go-licenses`) → confirm **no GPL/AGPL**.
+- **Files:** `LICENSE` (keep), `NOTICE` (new), `README.md`, license report.
+- **Acceptance:**
+  - [ ] `NOTICE` present with sigbit MIT credit + provenance
+  - [ ] `README.md` documents the fork origin
+  - [ ] license scan shows no GPL/AGPL deps
+- **Dependencies:** F-008a.
+
+#### F-008c — Dependency pruning + CI
+- **What:** Best-effort prune (see explanation): drop unused **GORM postgres/mysql drivers** if standardising on bbolt/SQLite; `go mod tidy`; assess OTel removal; `mongo-driver` stays (transitive via `ory/x`) — document. Add **GitHub Actions CI** (build, test, license check, pinned Go 1.26).
+- **Files:** `go.mod`, `go.sum`, storage/provider imports, `.github/workflows/ci.yml`.
+- **Acceptance:**
+  - [ ] `go mod tidy` clean
+  - [ ] unused drivers removed (or pruning limits documented)
+  - [ ] CI green on build + test + license check
+- **Dependencies:** F-008a (F-008b first, to reuse the license scan).
 
 ---
 
@@ -127,8 +158,38 @@ _New ideas beyond the path above are intaked via `/add-feature` and get the next
 
 ---
 
+### F-010 — Rebrand the fork to mcp-oauth-gateway
+
+**Problem:** The imported sigbit code carries upstream branding — binary name `mcp-warp`, "SigBit" identifiers, upstream URLs in help/docs. For a distinct, maintained project these should be our own (without touching auth logic).
+
+**Idea:** Rename the project's surface (binary/CLI, version/user-agent strings, embedded help/links, Dockerfile entrypoint, README) to mcp-oauth-gateway; keep upstream attribution in NOTICE.
+
+**Possible implementation:**
+- Rename built binary `mcp-warp` → `mcp-oauth-gateway`, the Cobra root command, and version/User-Agent strings.
+- Update embedded help text/links, `Dockerfile` entrypoint, README.
+- **Do not** remove the upstream MIT credit in `NOTICE` (see F-008b).
+
+**Dependencies:** F-008.
+
+---
+
+### F-011 — Trim bundled auth providers to the self-contained model
+
+**Problem:** sigbit bundles hosted-IdP login backends (Google, GitHub) plus generic OIDC. The project's goal is **no mandatory third-party IdP** (FR-4: self-contained now, self-hosted OIDC later) — the hosted-IdP providers are out of scope and add attack/dependency surface.
+
+**Idea:** Decide which login backends to keep; remove the hosted **Google/GitHub** providers, keep the self-contained password/passkey path as default, and decide keep-vs-defer for **generic OIDC** (wanted later for self-hosted IdPs).
+
+**Possible implementation:**
+- Remove Google/GitHub provider packages + their config flags and any deps they alone pull in.
+- Keep generic OIDC behind config (off by default) for future self-hosted-IdP use, or defer it — record the decision.
+- Ensure self-contained login stays the default; update config docs and example env.
+
+**Dependencies:** F-008. Relates to F-005 (passkey/WebAuthn + user model).
+
+---
+
 <!-- FEATURE-INDEX
-next-feature: F-010
+next-feature: F-012
 F-001 Build vs fork evaluation (do first) (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -138,4 +199,6 @@ F-006 Verify against Claude + security review
 F-007 Release hygiene
 F-008 Create the hard fork of sigbit/mcp-auth-proxy
 F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first)
+F-010 Rebrand the fork to mcp-oauth-gateway
+F-011 Trim bundled auth providers to the self-contained model
 -->
