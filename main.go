@@ -136,16 +136,6 @@ type proxyRunnerFunc func(
 	repositoryBackend string,
 	repositoryDSN string,
 	externalURL string,
-	googleClientID string,
-	googleClientSecret string,
-	googleAllowedUsers []string,
-	googleAllowedWorkspaces []string,
-	githubURL string,
-	githubAPIURL string,
-	githubClientID string,
-	githubClientSecret string,
-	githubAllowedUsers []string,
-	githubAllowedOrgs []string,
 	oidcConfigurationURL string,
 	oidcClientID string,
 	oidcClientSecret string,
@@ -188,16 +178,6 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var repositoryBackend string
 	var repositoryDSN string
 	var externalURL string
-	var googleClientID string
-	var googleClientSecret string
-	var googleAllowedUsers string
-	var googleAllowedWorkspaces string
-	var githubURL string
-	var githubAPIURL string
-	var githubClientID string
-	var githubClientSecret string
-	var githubAllowedUsers string
-	var githubAllowedOrgs string
 	var oidcConfigurationURL string
 	var oidcClientID string
 	var oidcClientSecret string
@@ -222,10 +202,6 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use: "mcp-oauth-gateway",
 		Run: func(cmd *cobra.Command, args []string) {
-			googleAllowedUsersList := splitCSV(googleAllowedUsers)
-			googleAllowedWorkspacesList := splitCSV(googleAllowedWorkspaces)
-			githubAllowedUsersList := splitCSV(githubAllowedUsers)
-			githubAllowedOrgsList := splitCSV(githubAllowedOrgs)
 			oidcAllowedUsersList := splitCSV(oidcAllowedUsers)
 
 			var oidcAllowedUsersGlobList []string
@@ -259,16 +235,6 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				repositoryBackend,
 				repositoryDSN,
 				externalURL,
-				googleClientID,
-				googleClientSecret,
-				googleAllowedUsersList,
-				googleAllowedWorkspacesList,
-				githubURL,
-				githubAPIURL,
-				githubClientID,
-				githubClientSecret,
-				githubAllowedUsersList,
-				githubAllowedOrgsList,
 				oidcConfigurationURL,
 				oidcClientID,
 				oidcClientSecret,
@@ -308,20 +274,6 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&repositoryBackend, "repository-backend", getEnvWithDefault("REPOSITORY_BACKEND", "local"), "Repository backend to use: local (embedded bbolt, default) or sqlite")
 	rootCmd.Flags().StringVar(&repositoryDSN, "repository-dsn", getEnvWithDefault("REPOSITORY_DSN", ""), "DSN passed directly to the SQL driver (required when repository-backend is sqlite)")
 	rootCmd.Flags().StringVarP(&externalURL, "external-url", "e", getEnvWithDefault("EXTERNAL_URL", "http://localhost"), "External URL for the proxy")
-
-	// Google OAuth configuration
-	rootCmd.Flags().StringVar(&googleClientID, "google-client-id", getEnvWithDefault("GOOGLE_CLIENT_ID", ""), "Google OAuth client ID")
-	rootCmd.Flags().StringVar(&googleClientSecret, "google-client-secret", getEnvWithDefault("GOOGLE_CLIENT_SECRET", ""), "Google OAuth client secret")
-	rootCmd.Flags().StringVar(&googleAllowedUsers, "google-allowed-users", getEnvWithDefault("GOOGLE_ALLOWED_USERS", ""), "Comma-separated list of allowed Google users (emails)")
-	rootCmd.Flags().StringVar(&googleAllowedWorkspaces, "google-allowed-workspaces", getEnvWithDefault("GOOGLE_ALLOWED_WORKSPACES", ""), "Comma-separated list of allowed Google workspaces")
-
-	// GitHub OAuth configuration
-	rootCmd.Flags().StringVar(&githubURL, "github-url", getEnvWithDefault("GITHUB_URL", ""), "GitHub custom instance URL (eg https://github.example.com)")
-	rootCmd.Flags().StringVar(&githubAPIURL, "github-api-url", getEnvWithDefault("GITHUB_API_URL", ""), "GitHub custom API URL (eg https://github.example.com/api/v3).")
-	rootCmd.Flags().StringVar(&githubClientID, "github-client-id", getEnvWithDefault("GITHUB_CLIENT_ID", ""), "GitHub OAuth client ID")
-	rootCmd.Flags().StringVar(&githubClientSecret, "github-client-secret", getEnvWithDefault("GITHUB_CLIENT_SECRET", ""), "GitHub OAuth client secret")
-	rootCmd.Flags().StringVar(&githubAllowedUsers, "github-allowed-users", getEnvWithDefault("GITHUB_ALLOWED_USERS", ""), "Comma-separated list of allowed GitHub users (usernames)")
-	rootCmd.Flags().StringVar(&githubAllowedOrgs, "github-allowed-orgs", getEnvWithDefault("GITHUB_ALLOWED_ORGS", ""), "Comma-separated list of allowed GitHub organizations. You can also restrict access to specific teams using the format `Org:Team`")
 
 	// OIDC configuration
 	rootCmd.Flags().StringVar(&oidcConfigurationURL, "oidc-configuration-url", getEnvWithDefault("OIDC_CONFIGURATION_URL", ""), "OIDC configuration URL")

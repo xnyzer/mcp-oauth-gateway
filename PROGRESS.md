@@ -4,7 +4,7 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`. F-001/F-002/F-003/F-008/F-009/F-010 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-011).** F-numbers are stable IDs; the document order, not the number, is the path.
+**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`. F-001/F-002/F-003/F-008/F-009/F-010/F-011 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-004).** F-numbers are stable IDs; the document order, not the number, is the path.
 
 ---
 
@@ -18,6 +18,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-008 | Create the hard fork → **sigbit source imported** as `github.com/xnyzer/mcp-oauth-gateway` (build+tests green, CI added, NOTICE/license clean). Detail in `PROGRESS-ARCHIVE.md`. | 2026-06-25 |
 | F-009 | Update REQUIREMENTS for MCP 2025-11-25 → **CIMD-first documented** (§0/FR-1/FR-2/FR-3; RFC 9207 `iss`, OIDC Discovery, 2026-07-28 RC watch item); README/CLAUDE.md aligned. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 | F-010 | Rebrand the fork → **binary/CLI/Docker/UI/ClientInfo/bbolt namespace renamed to `mcp-oauth-gateway`** (NOTICE/FORK attribution kept; Go builder image pinned to 1.26). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
+| F-011 | Trim bundled auth providers → **Google/GitHub removed** (~680 lines + 10 flags/env vars + 1 transitive dep); **generic OIDC kept, off by default**; password login verified as default (smoke test). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 
 ---
 
@@ -25,28 +26,12 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 
 | Order | Task | Ready? |
 |-------|------|--------|
-| 1 | **F-011** — Trim bundled auth providers (Google/GitHub) | ✅ ready (F-008 done) |
-| 2 | **F-004** — Complete the spec (implementable contracts) | ✅ ready (F-002/F-003/F-009 done) |
-| 3 | **F-005** — Implement the gap list on the fork | ⛔ after F-004 |
-| 4 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
-| 5 | **F-007** — Release hygiene | ⛔ after F-006 |
+| 1 | **F-004** — Complete the spec (implementable contracts) | ✅ ready (F-002/F-003/F-009 done) |
+| 2 | **F-005** — Implement the gap list on the fork | ⛔ after F-004 |
+| 3 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
+| 4 | **F-007** — Release hygiene | ⛔ after F-006 |
 
-Steps 1–2 are independent and can be reordered; 3→4→5 are a hard chain. Each task below carries its own `**Dependencies:**` line.
-
----
-
-### F-011 — Trim bundled auth providers to the self-contained model
-
-**Problem:** sigbit bundles hosted-IdP login backends (Google, GitHub) plus generic OIDC. The project's goal is **no mandatory third-party IdP** (FR-4: self-contained now, self-hosted OIDC later) — the hosted-IdP providers are out of scope and add attack/dependency surface.
-
-**Idea:** Decide which login backends to keep; remove the hosted **Google/GitHub** providers, keep the self-contained password/passkey path as default, and decide keep-vs-defer for **generic OIDC** (wanted later for self-hosted IdPs).
-
-**Possible implementation:**
-- Remove Google/GitHub provider packages + their config flags and any deps they alone pull in.
-- Keep generic OIDC behind config (off by default) for future self-hosted-IdP use, or defer it — record the decision.
-- Ensure self-contained login stays the default; update config docs and example env.
-
-**Dependencies:** F-008 (DONE). Relates to F-005 (passkey/WebAuthn + user model) — do before F-005's auth rework.
+The remaining tasks are a hard chain: 1→2→3→4. Each task below carries its own `**Dependencies:**` line.
 
 ---
 
@@ -87,7 +72,7 @@ Steps 1–2 are independent and can be reordered; 3→4→5 are a hard chain. Ea
 - **Key management** — rotation + optional ES256 (sigbit ships a single static RS256 key).
 - **Self-contained auth** — replace the bcrypt single-shared-secret with passkey/WebAuthn + a real user model.
 
-**Dependencies:** F-004, F-008 (DONE). Best done after F-011 (auth-provider trim).
+**Dependencies:** F-004; F-008, F-011 (DONE).
 
 ---
 
@@ -136,7 +121,7 @@ F-003 DCR vs CIMD decision (DONE)
 F-008 Create the hard fork of sigbit/mcp-auth-proxy (DONE)
 F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first) (DONE)
 F-010 Rebrand the fork to mcp-oauth-gateway (DONE)
-F-011 Trim bundled auth providers to the self-contained model
+F-011 Trim bundled auth providers to the self-contained model (DONE)
 F-004 Complete the spec (make it implementable)
 F-005 Implement on the chosen base (sigbit fork)
 F-006 Verify against Claude + security review

@@ -60,14 +60,10 @@ func NewAuthRouter(passwordHash []string, noProviderAutoSelect bool, userInfoFie
 }
 
 const (
-	LoginEndpoint          = "/.auth/login"
-	LogoutEndpoint         = "/.auth/logout"
-	GoogleAuthEndpoint     = "/.auth/google"
-	GoogleCallbackEndpoint = "/.auth/google/callback"
-	GitHubAuthEndpoint     = "/.auth/github"
-	GitHubCallbackEndpoint = "/.auth/github/callback"
-	OIDCAuthEndpoint       = "/.auth/oidc"
-	OIDCCallbackEndpoint   = "/.auth/oidc/callback"
+	LoginEndpoint        = "/.auth/login"
+	LogoutEndpoint       = "/.auth/logout"
+	OIDCAuthEndpoint     = "/.auth/oidc"
+	OIDCCallbackEndpoint = "/.auth/oidc/callback"
 
 	PasswordProvider = "password"
 	PasswordUserID   = "password_user"

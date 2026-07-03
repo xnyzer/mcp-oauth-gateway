@@ -50,16 +50,6 @@ func Run(
 	repositoryBackend string,
 	repositoryDSN string,
 	externalURL string,
-	googleClientID string,
-	googleClientSecret string,
-	googleAllowedUsers []string,
-	googleAllowedWorkspaces []string,
-	githubURL string,
-	githubAPIURL string,
-	githubClientID string,
-	githubClientSecret string,
-	githubAllowedUsers []string,
-	githubAllowedOrgs []string,
 	oidcConfigurationURL string,
 	oidcClientID string,
 	oidcClientSecret string,
@@ -217,24 +207,6 @@ func Run(
 		}
 	}
 	var providers []auth.Provider
-
-	// Add Google provider if configured
-	if googleClientID != "" && googleClientSecret != "" {
-		googleProvider, err := auth.NewGoogleProvider(externalURL, googleClientID, googleClientSecret, googleAllowedUsers, googleAllowedWorkspaces)
-		if err != nil {
-			return fmt.Errorf("failed to create Google provider: %w", err)
-		}
-		providers = append(providers, googleProvider)
-	}
-
-	// Add GitHub provider if configured
-	if githubClientID != "" && githubClientSecret != "" {
-		githubProvider, err := auth.NewGithubProvider(githubURL, githubAPIURL, githubClientID, githubClientSecret, externalURL, githubAllowedUsers, githubAllowedOrgs)
-		if err != nil {
-			return fmt.Errorf("failed to create GitHub provider: %w", err)
-		}
-		providers = append(providers, githubProvider)
-	}
 
 	// Add OIDC provider if configured
 	if oidcConfigurationURL != "" && oidcClientID != "" && oidcClientSecret != "" {

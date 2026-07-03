@@ -20,11 +20,12 @@ The base gateway exists: a working **hard fork of `sigbit/mcp-auth-proxy`** (Go 
 builds and tests green on `main`. Done so far — **F-001** (decided to fork sigbit; validated by a
 live Claude PoC), **F-002** (Go + Ory Fosite), **F-003** (CIMD-first, DCR deprecated fallback),
 **F-008** (fork imported, CI green), **F-009** (REQUIREMENTS updated to CIMD-first), **F-010**
-(rebranded to `mcp-oauth-gateway`); rationale in `PROGRESS-ARCHIVE.md`.
+(rebranded to `mcp-oauth-gateway`), **F-011** (Google/GitHub providers removed; OIDC kept
+off-by-default); rationale in `PROGRESS-ARCHIVE.md`.
 
 Read in order: `README.md`, `REQUIREMENTS.md`, `THREAT-MODEL.md`, `PROGRESS.md`
 (+ `PROGRESS-ARCHIVE.md` for past decisions). **To continue: open `PROGRESS.md`, take the first
-open task (top of "Open tasks" — currently F-011), run `/prep-step <F-number>` to plan, then
+open task (top of "Open tasks" — currently F-004), run `/prep-step <F-number>` to plan, then
 `/step-done <F-number>` to finish.** Work the open tasks top-to-bottom.
 
 ## Conventions
