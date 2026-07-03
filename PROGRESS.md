@@ -4,7 +4,7 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`. F-001/F-002/F-003/F-008/F-009/F-010/F-011 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-004).** F-numbers are stable IDs; the document order, not the number, is the path.
+**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`, and `SPEC.md` defines the implementable contracts. F-001/F-002/F-003/F-004/F-008/F-009/F-010/F-011 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-005).** F-numbers are stable IDs; the document order, not the number, is the path.
 
 ---
 
@@ -19,6 +19,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-009 | Update REQUIREMENTS for MCP 2025-11-25 → **CIMD-first documented** (§0/FR-1/FR-2/FR-3; RFC 9207 `iss`, OIDC Discovery, 2026-07-28 RC watch item); README/CLAUDE.md aligned. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 | F-010 | Rebrand the fork → **binary/CLI/Docker/UI/ClientInfo/bbolt namespace renamed to `mcp-oauth-gateway`** (NOTICE/FORK attribution kept; Go builder image pinned to 1.26). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 | F-011 | Trim bundled auth providers → **Google/GitHub removed** (~680 lines + 10 flags/env vars + 1 transitive dep); **generic OIDC kept, off by default**; password login verified as default (smoke test). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
+| F-004 | Complete the spec → **`SPEC.md` created** (API contracts incl. CIMD/RFC 8707/9207/7009 + `WWW-Authenticate`; data model + `jti` revocation + key rotation; full config schema) + `docker-compose.example.yml`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 
 ---
 
@@ -26,28 +27,11 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 
 | Order | Task | Ready? |
 |-------|------|--------|
-| 1 | **F-004** — Complete the spec (implementable contracts) | ✅ ready (F-002/F-003/F-009 done) |
-| 2 | **F-005** — Implement the gap list on the fork | ⛔ after F-004 |
-| 3 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
-| 4 | **F-007** — Release hygiene | ⛔ after F-006 |
+| 1 | **F-005** — Implement the gap list on the fork | ✅ ready (F-004 done) |
+| 2 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
+| 3 | **F-007** — Release hygiene | ⛔ after F-006 |
 
-The remaining tasks are a hard chain: 1→2→3→4. Each task below carries its own `**Dependencies:**` line.
-
----
-
-### F-004 — Complete the spec (make it implementable)
-
-**Problem:** The requirements describe intent but not the implementable contract (exact endpoints, schemas, data model, config).
-
-**Idea:** Turn the requirements into precise, RFC-conformant contracts.
-
-**Possible implementation:**
-- API contracts: exact endpoint paths, request/response schemas, token claims, error formats (RFC-conformant) for all FRs.
-- Data model & persistence (clients, keys, sessions) — store is **bbolt (default) / SQLite** (decided in F-008c).
-- Config schema (env vars), defaults, example `docker-compose.yml`, `Dockerfile`.
-- Key management: generation on first run, storage, **rotation** strategy.
-
-**Dependencies:** F-002, F-003, F-009 (all DONE).
+The remaining tasks are a hard chain: 1→2→3. Each task below carries its own `**Dependencies:**` line.
 
 ---
 
@@ -72,7 +56,7 @@ The remaining tasks are a hard chain: 1→2→3→4. Each task below carries its
 - **Key management** — rotation + optional ES256 (sigbit ships a single static RS256 key).
 - **Self-contained auth** — replace the bcrypt single-shared-secret with passkey/WebAuthn + a real user model.
 
-**Dependencies:** F-004; F-008, F-011 (DONE).
+**Dependencies:** F-004, F-008, F-011 (all DONE). Implement against the `SPEC.md` contracts (each §1 section carries a Delta note).
 
 ---
 
@@ -122,7 +106,7 @@ F-008 Create the hard fork of sigbit/mcp-auth-proxy (DONE)
 F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first) (DONE)
 F-010 Rebrand the fork to mcp-oauth-gateway (DONE)
 F-011 Trim bundled auth providers to the self-contained model (DONE)
-F-004 Complete the spec (make it implementable)
+F-004 Complete the spec (make it implementable) (DONE)
 F-005 Implement on the chosen base (sigbit fork)
 F-006 Verify against Claude + security review
 F-007 Release hygiene

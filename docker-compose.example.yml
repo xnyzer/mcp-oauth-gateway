@@ -1,0 +1,35 @@
+# Example deployment: mcp-oauth-gateway fronting an MCP server.
+# Copy to docker-compose.yml and replace every <placeholder>. No real values here (GR-5).
+#
+# TLS: this example assumes a TLS-terminating reverse proxy in front of the gateway
+# (set TRUSTED_PROXIES accordingly). For built-in ACME instead, expose 443 and set
+# TLS_HOST / TLS_ACCEPT_TOS — see SPEC.md §3.1.
+
+services:
+  mcp-oauth-gateway:
+    image: ghcr.io/xnyzer/mcp-oauth-gateway:<version> # pin a version, never latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80" # reverse proxy forwards to this
+    environment:
+      EXTERNAL_URL: "https://<mcp.example.com>" # public base URL = OAuth issuer
+      TRUSTED_PROXIES: "<reverse-proxy-ip-or-cidr>"
+      # Self-contained login (prefer a bcrypt hash over a plain password):
+      PASSWORD_HASH: "<bcrypt-hash>"
+      # Upstream credential injection (omit if the upstream is unauthenticated):
+      PROXY_BEARER_TOKEN: "<upstream-bearer-token>"
+    command:
+      - "http://mcp-upstream:3000/mcp" # the MCP server to front
+    volumes:
+      - gateway-data:/data # keys, token store — back this up (SPEC.md §2.2)
+    depends_on:
+      - mcp-upstream
+
+  # Example upstream MCP server — replace with your actual server.
+  mcp-upstream:
+    image: <your-mcp-server-image>
+    restart: unless-stopped
+    # No published ports: only reachable by the gateway on the compose network.
+
+volumes:
+  gateway-data:

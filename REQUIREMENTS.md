@@ -1,8 +1,8 @@
 # Requirements — mcp-oauth-gateway
 
-> Status: draft. This is the source of truth for the build. The implementation base already
-> exists (a fork of `sigbit/mcp-auth-proxy`, see PROGRESS F-008); these requirements still need
-> completing (exact API contracts, data model, config schema — F-004). Generic by design:
+> Status: draft. This is the **intent-level** source of truth; the implementable contracts
+> (endpoints, schemas, data model, config) live in **`SPEC.md`** (F-004). The implementation
+> base is a fork of `sigbit/mcp-auth-proxy` (see PROGRESS F-008). Generic by design:
 > **no deployment-specific or personal details.**
 
 ## 0. Verified background (mid-2026; re-verify, fast-moving area)

@@ -21,11 +21,12 @@ builds and tests green on `main`. Done so far — **F-001** (decided to fork sig
 live Claude PoC), **F-002** (Go + Ory Fosite), **F-003** (CIMD-first, DCR deprecated fallback),
 **F-008** (fork imported, CI green), **F-009** (REQUIREMENTS updated to CIMD-first), **F-010**
 (rebranded to `mcp-oauth-gateway`), **F-011** (Google/GitHub providers removed; OIDC kept
-off-by-default); rationale in `PROGRESS-ARCHIVE.md`.
+off-by-default), **F-004** (`SPEC.md` — implementable contracts); rationale in
+`PROGRESS-ARCHIVE.md`.
 
-Read in order: `README.md`, `REQUIREMENTS.md`, `THREAT-MODEL.md`, `PROGRESS.md`
+Read in order: `README.md`, `REQUIREMENTS.md`, `SPEC.md`, `THREAT-MODEL.md`, `PROGRESS.md`
 (+ `PROGRESS-ARCHIVE.md` for past decisions). **To continue: open `PROGRESS.md`, take the first
-open task (top of "Open tasks" — currently F-004), run `/prep-step <F-number>` to plan, then
+open task (top of "Open tasks" — currently F-005), run `/prep-step <F-number>` to plan, then
 `/step-done <F-number>` to finish.** Work the open tasks top-to-bottom.
 
 ## Conventions
@@ -45,5 +46,6 @@ decompose), `/step-done` (review + secrets-scan + docs + Graphiti + commit quest
 `/audit-code` (full audit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`. Coding rules: `CODING-STANDARDS.md`.
 
 ## Key documents
-`REQUIREMENTS.md` (source of truth), `THREAT-MODEL.md`, `PROGRESS.md` (roadmap — work
-top-to-bottom), `PROGRESS-ARCHIVE.md` (finished tasks + their rationale).
+`REQUIREMENTS.md` (intent-level source of truth), `SPEC.md` (implementable contracts),
+`THREAT-MODEL.md`, `PROGRESS.md` (roadmap — work top-to-bottom), `PROGRESS-ARCHIVE.md`
+(finished tasks + their rationale).

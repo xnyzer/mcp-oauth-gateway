@@ -36,6 +36,7 @@ upstream-agnostic.**
 
 ## Documentation
 - [`REQUIREMENTS.md`](REQUIREMENTS.md) — functional, security, and non-functional requirements.
+- [`SPEC.md`](SPEC.md) — implementable contracts: endpoints, schemas, data model, config.
 - [`THREAT-MODEL.md`](THREAT-MODEL.md) — assets, threats, mitigations.
 - [`PROGRESS.md`](PROGRESS.md) — roadmap as F-numbers (work top to bottom).
 - [`PROGRESS-ARCHIVE.md`](PROGRESS-ARCHIVE.md) — finished tasks and their rationale.
