@@ -183,7 +183,7 @@ func Run(
 	var repo repository.Repository
 	switch backend := strings.ToLower(repositoryBackend); backend {
 	case "", "local":
-		repo, err = repository.NewKVSRepository(path.Join(dataPath, "db"), "mcp-oauth-proxy")
+		repo, err = repository.NewKVSRepository(path.Join(dataPath, "db"), "mcp-oauth-gateway")
 		if err != nil {
 			return fmt.Errorf("failed to create repository: %w", err)
 		}

@@ -125,7 +125,7 @@ func TestProxyRouter_HandleProxy_ValidToken(t *testing.T) {
 	})
 
 	proxyHeaders := make(http.Header)
-	proxyHeaders.Set("X-Forwarded-By", "mcp-auth-proxy")
+	proxyHeaders.Set("X-Forwarded-By", "mcp-oauth-gateway")
 
 	proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, proxyHeaders, false, false, nil, "/userinfo")
 	require.NoError(t, err)

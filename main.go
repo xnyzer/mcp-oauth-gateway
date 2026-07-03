@@ -220,7 +220,7 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var trustedProxies string
 
 	rootCmd := &cobra.Command{
-		Use: "mcp-warp",
+		Use: "mcp-oauth-gateway",
 		Run: func(cmd *cobra.Command, args []string) {
 			googleAllowedUsersList := splitCSV(googleAllowedUsers)
 			googleAllowedWorkspacesList := splitCSV(googleAllowedWorkspaces)

@@ -4,7 +4,7 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`. F-001/F-002/F-003/F-008/F-009 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-010).** F-numbers are stable IDs; the document order, not the number, is the path.
+**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`. F-001/F-002/F-003/F-008/F-009/F-010 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-011).** F-numbers are stable IDs; the document order, not the number, is the path.
 
 ---
 
@@ -17,6 +17,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-003 | DCR vs CIMD → **decided: support both, CIMD-first with DCR as deprecated fallback** (spec 2025-11-25). | 2026-06-25 |
 | F-008 | Create the hard fork → **sigbit source imported** as `github.com/xnyzer/mcp-oauth-gateway` (build+tests green, CI added, NOTICE/license clean). Detail in `PROGRESS-ARCHIVE.md`. | 2026-06-25 |
 | F-009 | Update REQUIREMENTS for MCP 2025-11-25 → **CIMD-first documented** (§0/FR-1/FR-2/FR-3; RFC 9207 `iss`, OIDC Discovery, 2026-07-28 RC watch item); README/CLAUDE.md aligned. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
+| F-010 | Rebrand the fork → **binary/CLI/Docker/UI/ClientInfo/bbolt namespace renamed to `mcp-oauth-gateway`** (NOTICE/FORK attribution kept; Go builder image pinned to 1.26). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 
 ---
 
@@ -24,29 +25,13 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 
 | Order | Task | Ready? |
 |-------|------|--------|
-| 1 | **F-010** — Rebrand the fork to mcp-oauth-gateway | ✅ ready (F-008 done) |
-| 2 | **F-011** — Trim bundled auth providers (Google/GitHub) | ✅ ready (F-008 done) |
-| 3 | **F-004** — Complete the spec (implementable contracts) | ✅ ready (F-002/F-003/F-009 done) |
-| 4 | **F-005** — Implement the gap list on the fork | ⛔ after F-004 |
-| 5 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
-| 6 | **F-007** — Release hygiene | ⛔ after F-006 |
+| 1 | **F-011** — Trim bundled auth providers (Google/GitHub) | ✅ ready (F-008 done) |
+| 2 | **F-004** — Complete the spec (implementable contracts) | ✅ ready (F-002/F-003/F-009 done) |
+| 3 | **F-005** — Implement the gap list on the fork | ⛔ after F-004 |
+| 4 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
+| 5 | **F-007** — Release hygiene | ⛔ after F-006 |
 
-Steps 1–3 are independent and can be reordered; 4→5→6 are a hard chain. Each task below carries its own `**Dependencies:**` line.
-
----
-
-### F-010 — Rebrand the fork to mcp-oauth-gateway
-
-**Problem:** The imported sigbit code carries upstream branding — binary name `mcp-warp`, "SigBit" identifiers, upstream URLs in help/docs. For a distinct, maintained project these should be our own (without touching auth logic).
-
-**Idea:** Rename the project's surface (binary/CLI, version/user-agent strings, embedded help/links, Dockerfile entrypoint, README) to mcp-oauth-gateway; keep upstream attribution in NOTICE.
-
-**Possible implementation:**
-- Rename built binary `mcp-warp` → `mcp-oauth-gateway`, the Cobra root command, and version/User-Agent strings.
-- Update embedded help text/links, `Dockerfile` entrypoint, README.
-- **Do not** remove the upstream MIT credit in `NOTICE` (see F-008b).
-
-**Dependencies:** F-008 (DONE).
+Steps 1–2 are independent and can be reordered; 3→4→5 are a hard chain. Each task below carries its own `**Dependencies:**` line.
 
 ---
 
@@ -150,7 +135,7 @@ F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
 F-008 Create the hard fork of sigbit/mcp-auth-proxy (DONE)
 F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first) (DONE)
-F-010 Rebrand the fork to mcp-oauth-gateway
+F-010 Rebrand the fork to mcp-oauth-gateway (DONE)
 F-011 Trim bundled auth providers to the self-contained model
 F-004 Complete the spec (make it implementable)
 F-005 Implement on the chosen base (sigbit fork)

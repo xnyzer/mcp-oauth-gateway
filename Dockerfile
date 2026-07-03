@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.22-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
 
 ENV GOTOOLCHAIN=auto
 
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl python3 python3-pip nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/bin/main /usr/local/bin/mcp-auth-proxy
+COPY --from=builder /app/bin/main /usr/local/bin/mcp-oauth-gateway
 ENV DATA_PATH=/data
 
-ENTRYPOINT [ "/usr/local/bin/mcp-auth-proxy" ]
+ENTRYPOINT [ "/usr/local/bin/mcp-oauth-gateway" ]

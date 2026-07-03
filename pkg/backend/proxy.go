@@ -104,7 +104,7 @@ func setupProxy(ctx context.Context, logger *zap.Logger, tr transport.Bidirectio
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			ClientInfo: mcp.Implementation{
-				Name:    "mcp-auth-proxy",
+				Name:    "mcp-oauth-gateway",
 				Version: "dev",
 			},
 		},
