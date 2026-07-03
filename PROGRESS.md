@@ -4,7 +4,7 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`. F-001/F-002/F-003/F-008 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-009).** F-numbers are stable IDs; the document order, not the number, is the path.
+**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`. F-001/F-002/F-003/F-008/F-009 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-010).** F-numbers are stable IDs; the document order, not the number, is the path.
 
 ---
 
@@ -16,6 +16,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-002 | Language + OAuth library → **decided: Go + Ory Fosite** (follows the F-001 fork base). | 2026-06-25 |
 | F-003 | DCR vs CIMD → **decided: support both, CIMD-first with DCR as deprecated fallback** (spec 2025-11-25). | 2026-06-25 |
 | F-008 | Create the hard fork → **sigbit source imported** as `github.com/xnyzer/mcp-oauth-gateway` (build+tests green, CI added, NOTICE/license clean). Detail in `PROGRESS-ARCHIVE.md`. | 2026-06-25 |
+| F-009 | Update REQUIREMENTS for MCP 2025-11-25 → **CIMD-first documented** (§0/FR-1/FR-2/FR-3; RFC 9207 `iss`, OIDC Discovery, 2026-07-28 RC watch item); README/CLAUDE.md aligned. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 
 ---
 
@@ -23,30 +24,14 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 
 | Order | Task | Ready? |
 |-------|------|--------|
-| 1 | **F-009** — Update REQUIREMENTS for CIMD-first | ✅ ready (doc only) |
-| 2 | **F-010** — Rebrand the fork to mcp-oauth-gateway | ✅ ready (F-008 done) |
-| 3 | **F-011** — Trim bundled auth providers (Google/GitHub) | ✅ ready (F-008 done) |
-| 4 | **F-004** — Complete the spec (implementable contracts) | ✅ ready (F-002/F-003 done) |
-| 5 | **F-005** — Implement the gap list on the fork | ⛔ after F-004 |
-| 6 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
-| 7 | **F-007** — Release hygiene | ⛔ after F-006 |
+| 1 | **F-010** — Rebrand the fork to mcp-oauth-gateway | ✅ ready (F-008 done) |
+| 2 | **F-011** — Trim bundled auth providers (Google/GitHub) | ✅ ready (F-008 done) |
+| 3 | **F-004** — Complete the spec (implementable contracts) | ✅ ready (F-002/F-003/F-009 done) |
+| 4 | **F-005** — Implement the gap list on the fork | ⛔ after F-004 |
+| 5 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
+| 6 | **F-007** — Release hygiene | ⛔ after F-006 |
 
-Steps 1–4 are independent and can be reordered; 5→6→7 are a hard chain. Each task below carries its own `**Dependencies:**` line.
-
----
-
-### F-009 — Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first)
-
-**Problem:** `REQUIREMENTS.md` §0/FR-2 still frame **DCR** as the registration mechanism, but the MCP authorization spec **2025-11-25** makes **CIMD** the recommended path (SHOULD) and **deprecates DCR** (MAY, fallback). RFC 9207 `iss` and OIDC Discovery (as an RFC 8414 alternative) are newly relevant too.
-
-**Idea:** Bring the source-of-truth docs in line with the current spec so F-004/F-005 build to the right contract.
-
-**Possible implementation:**
-- REQUIREMENTS §0: note CIMD-first / DCR-deprecated; add RFC 9207 `iss` and OIDC-Discovery-as-alternative.
-- FR-2: reframe as CIMD primary, DCR fallback; cross-reference the F-003 decision.
-- Note the 2026-07-28 release candidate as a watch item (re-verify before release).
-
-**Dependencies:** none (documentation).
+Steps 1–3 are independent and can be reordered; 4→5→6 are a hard chain. Each task below carries its own `**Dependencies:**` line.
 
 ---
 
@@ -92,7 +77,7 @@ Steps 1–4 are independent and can be reordered; 5→6→7 are a hard chain. Ea
 - Config schema (env vars), defaults, example `docker-compose.yml`, `Dockerfile`.
 - Key management: generation on first run, storage, **rotation** strategy.
 
-**Dependencies:** F-002, F-003 (DONE); informed by F-009.
+**Dependencies:** F-002, F-003, F-009 (all DONE).
 
 ---
 
@@ -164,7 +149,7 @@ F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
 F-008 Create the hard fork of sigbit/mcp-auth-proxy (DONE)
-F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first)
+F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first) (DONE)
 F-010 Rebrand the fork to mcp-oauth-gateway
 F-011 Trim bundled auth providers to the self-contained model
 F-004 Complete the spec (make it implementable)

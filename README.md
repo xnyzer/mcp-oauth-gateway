@@ -1,6 +1,6 @@
 # mcp-oauth-gateway
 
-A self-hosted **OAuth 2.1 + Dynamic Client Registration (DCR) gateway** that puts
+A self-hosted **OAuth 2.1 gateway** that puts
 spec-compliant **MCP authorization** in front of *any* MCP server — including servers that
 only support a static bearer token, or no auth at all — so that **OAuth-only MCP clients**
 (e.g. Claude's web/desktop/mobile apps) can connect, **without depending on a third-party
@@ -14,7 +14,8 @@ identity provider**.
 
 ## Why
 The MCP authorization spec requires remote MCP servers to be OAuth 2.1 Authorization Servers
-that support **Dynamic Client Registration** (clients register themselves) plus discovery
+that support client registration — **CIMD** (Client ID Metadata Documents; recommended since
+spec 2025-11-25) with **Dynamic Client Registration** as a deprecated fallback — plus discovery
 metadata (RFC 9728 / RFC 8414). Most self-hosted MCP servers only offer a static bearer token
 — which OAuth-only clients reject. Existing OAuth gateways either mandate a hosted identity
 provider (e.g. GitHub), are unmaintained, or bundle a heavy stack. This project aims to fill

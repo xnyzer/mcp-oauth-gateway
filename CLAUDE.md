@@ -19,12 +19,12 @@ intended to later become a module of the memstead suite. Full context: `README.m
 The base gateway exists: a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite),
 builds and tests green on `main`. Done so far — **F-001** (decided to fork sigbit; validated by a
 live Claude PoC), **F-002** (Go + Ory Fosite), **F-003** (CIMD-first, DCR deprecated fallback),
-**F-008** (fork imported, CI green); rationale in `PROGRESS-ARCHIVE.md`. The binary is still named
-`mcp-warp` until the rebrand (F-010).
+**F-008** (fork imported, CI green), **F-009** (REQUIREMENTS updated to CIMD-first); rationale in
+`PROGRESS-ARCHIVE.md`. The binary is still named `mcp-warp` until the rebrand (F-010).
 
 Read in order: `README.md`, `REQUIREMENTS.md`, `THREAT-MODEL.md`, `PROGRESS.md`
 (+ `PROGRESS-ARCHIVE.md` for past decisions). **To continue: open `PROGRESS.md`, take the first
-open task (top of "Open tasks" — currently F-009), run `/prep-step <F-number>` to plan, then
+open task (top of "Open tasks" — currently F-010), run `/prep-step <F-number>` to plan, then
 `/step-done <F-number>` to finish.** Work the open tasks top-to-bottom.
 
 ## Conventions
