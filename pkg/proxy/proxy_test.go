@@ -666,6 +666,41 @@ func TestProxyRouter_UnauthorizedChallenge(t *testing.T) {
 	assert.Contains(t, w.Header().Get("WWW-Authenticate"), `error="invalid_token"`)
 }
 
+func TestProxyRouter_ReservedNamespacesNeverProxied(t *testing.T) {
+	privateKey, publicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	upstreamHit := false
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHit = true
+		w.WriteHeader(http.StatusOK)
+	})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: upstream, PublicKey: publicKey, ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	proxyRouter.SetupRoutes(router)
+
+	token, err := createJWT(privateKey, jwt.MapClaims{
+		"sub": "test-user",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+
+	// Even with a valid token, gateway-owned namespaces are never
+	// forwarded upstream (SPEC §0) — disabled endpoints must 404.
+	for _, path := range []string{"/.idp/register", "/.auth/whatever", "/.well-known/openid-configuration"} {
+		req, err := http.NewRequest("POST", path, nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, path)
+	}
+	assert.False(t, upstreamHit, "reserved namespaces must never reach the upstream")
+}
+
 func TestProxyRouter_TokenActiveCheck(t *testing.T) {
 	privateKey, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)

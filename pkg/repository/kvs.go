@@ -251,18 +251,84 @@ func (r *kvsRepository) EnsureSchemaVersion(ctx context.Context, version int) er
 	return nil
 }
 
-func (r *kvsRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client) error {
-	return r.create(ctx, "client-"+fositeClient.GetID(), models.FromFositeClient(fositeClient))
+func (r *kvsRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client, expiresAt time.Time) error {
+	client := models.FromFositeClient(fositeClient)
+	client.CreatedAt = time.Now().UTC()
+	client.ExpiresAt = expiresAt
+	return r.create(ctx, "client-"+fositeClient.GetID(), client)
 }
 
-// GetClient loads the client by its ID or returns an error
-// if the client does not exist or another error occurred.
+// GetClient loads the client by its ID. Expired registrations are treated
+// as absent (SPEC §1.4, fail-closed — no reliance on the sweeper).
 func (r *kvsRepository) GetClient(ctx context.Context, id string) (fosite.Client, error) {
 	var client models.Client
 	if err := r.get(ctx, "client-"+id, &client); err != nil {
 		return nil, err
 	}
+	if !client.ExpiresAt.IsZero() && client.ExpiresAt.Before(time.Now().UTC()) {
+		return nil, fosite.ErrNotFound
+	}
 	return client.ToFositeClient(), nil
+}
+
+// TouchClient extends a registration's expiry (refresh-on-use, SR-5).
+func (r *kvsRepository) TouchClient(ctx context.Context, id string, expiresAt time.Time) error {
+	var client models.Client
+	if err := r.get(ctx, "client-"+id, &client); err != nil {
+		return err
+	}
+	if client.ExpiresAt.IsZero() {
+		return nil // registration without expiry stays permanent
+	}
+	client.ExpiresAt = expiresAt
+	return r.update(ctx, "client-"+id, client)
+}
+
+// CountClients counts stored, non-expired DCR registrations (cap, SR-5).
+func (r *kvsRepository) CountClients(ctx context.Context) (int, error) {
+	now := time.Now().UTC()
+	count := 0
+	err := r.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		cursor := bucket.Cursor()
+		prefix := []byte("client-")
+		for k, v := cursor.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = cursor.Next() {
+			var client models.Client
+			if err := json.Unmarshal(v, &client); err != nil {
+				continue
+			}
+			if client.ExpiresAt.IsZero() || client.ExpiresAt.After(now) {
+				count++
+			}
+		}
+		return nil
+	})
+	return count, err
+}
+
+// DeleteExpiredClients garbage-collects expired DCR registrations.
+func (r *kvsRepository) DeleteExpiredClients(ctx context.Context, now time.Time) error {
+	return r.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		cursor := bucket.Cursor()
+		prefix := []byte("client-")
+		var stale [][]byte
+		for k, v := cursor.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = cursor.Next() {
+			var client models.Client
+			if err := json.Unmarshal(v, &client); err != nil {
+				continue
+			}
+			if !client.ExpiresAt.IsZero() && client.ExpiresAt.Before(now) {
+				stale = append(stale, append([]byte(nil), k...))
+			}
+		}
+		for _, k := range stale {
+			if err := bucket.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ClientAssertionJWTValid returns an error if the JTI is

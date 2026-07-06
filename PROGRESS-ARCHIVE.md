@@ -452,3 +452,56 @@ tests for **both** storage backends; `jti`/`client_id` claim assertions. Live sm
 `pkg/proxy/proxy_test.go`, `pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/main_test.go`,
 `pkg/repository/{interface,kvs,sql}.go`, new `pkg/repository/maintenance_test.go`,
 `pkg/utils/rand.go`, `SPEC.md` (+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).
+
+---
+
+## F-005c — CIMD + DCR hardening (SR-5) — DONE 2026-07-06
+
+Third substep of F-005; completes the CIMD-first registration model decided in F-003.
+
+**What was done** (SPEC references in parentheses):
+- **CIMD resolver** (new `pkg/cimd`, §1.3): HTTPS-URL client IDs resolved with all limits —
+  5 s fetch timeout, 64 KiB size cap, no redirects, no userinfo, port 443 only. **SSRF guards
+  run at dial time** (`net.Dialer.Control`), so DNS rebinding cannot bypass them; rejected:
+  loopback, RFC 1918/ULA, link-local (incl. cloud metadata services), multicast, unspecified.
+  Document validation: `client_id` must equal the fetched URL, redirect URIs follow the
+  RFC 8252 scheme rules, `token_endpoint_auth_method` must be `none` (absent is treated as
+  `none` — decision: common in real CIMD documents; explicit non-`none` is rejected).
+  Positive cache (default 1 h) and negative cache (60 s).
+- **Integration as fosite client source** (`clientSource` in `pkg/idp`): `https://` client
+  IDs resolve via CIMD, everything else via the DCR store — one hook covers the authorize
+  and token endpoints. Resolution failures → `invalid_client`; detail only in logs (SR-8).
+  `idp.Config.CIMDResolver` is an interface for testability (stub in idp tests; real HTTP
+  resolution tested in `pkg/cimd` with in-package-only test knobs).
+- **DCR hardening (§1.4)**: registration TTL (default 30 d) **refreshed on token issuance**
+  (`TouchClient`; active clients never expire mid-use); expired registrations treated as
+  absent on lookup (fail-closed, no reliance on the sweeper); client cap → `503
+  temporarily_unavailable` (never eviction); redirect-URI scheme validation (shared
+  `cimd.ValidateRedirectURI`), grant/response-type whitelist, auth-method validation;
+  `client_secret_expires_at` in the response; `DCR_ENABLED=false` removes the endpoint and
+  the metadata entry. Sweeper extended with `DeleteExpiredClients`.
+- **Security finding from the smoke test, fixed immediately:** with DCR disabled the
+  unregistered `/.idp/register` path fell through to the catch-all proxy — with a valid
+  bearer it would have been **forwarded upstream**. The `/.idp/`, `/.auth/`, and
+  `/.well-known/` namespaces are now **reserved**: unmatched paths inside them return `404`
+  and never reach the upstream (SPEC §0 updated, regression test added).
+- **Storage layer:** `models.Client` gained `CreatedAt`/`ExpiresAt`;
+  `RegisterClient(…, expiresAt)`, `TouchClient`, `CountClients`, `DeleteExpiredClients` in
+  both backends; dead `marshalClient`/`unmarshalClient` helpers removed.
+- **Config (§3.2):** `CIMD_ENABLED` (default true), `CIMD_FETCH_TIMEOUT`, `CIMD_MAX_SIZE`,
+  `CIMD_CACHE_TTL`, `DCR_ENABLED` (default true), `DCR_CLIENT_TTL`, `DCR_MAX_CLIENTS` —
+  fail-fast validated; disabling both mechanisms aborts startup.
+
+**Verification:** gofmt/vet clean, all 9 packages green. New tests: SSRF matrix (8 cases on
+the production config) + document-validation matrix + oversize/redirect/cache tests in
+`pkg/cimd`; full CIMD authorize+token round-trip with PKCE incl. `client_id` claim; DCR
+cap/TTL/disabled/metadata negatives; expired-client rejection; reserved-namespace regression
+test; client lifecycle for both storage backends. Live smoke test: both-mechanisms-disabled
+fails fast, DCR-off metadata omits `registration_endpoint`, reserved namespaces 404, `/mcp`
+still 401.
+
+**Files changed:** new `pkg/cimd/{resolver,resolver_test}.go`; edited `main.go`,
+`pkg/idp/idp.go`, `pkg/idp/idp_test.go`, `pkg/proxy/proxy.go`, `pkg/proxy/proxy_test.go`,
+`pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/main_test.go`, `pkg/models/models.go`,
+`pkg/repository/{interface,kvs,sql}.go`, `pkg/repository/maintenance_test.go`, `SPEC.md`
+(+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).

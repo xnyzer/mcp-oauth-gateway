@@ -50,6 +50,7 @@ func TestRun_NormalizesExternalURLTrailingSlash(t *testing.T) {
 				ExternalURL:       tt.input,
 				ProxyTargets:      []string{"http://example.com"},
 				HeaderMappingBase: "/userinfo",
+				DCREnabled:        true,
 			})
 
 			if tt.wantErr {
@@ -86,6 +87,7 @@ func TestRun_ValidatesTTLs(t *testing.T) {
 				ExternalURL:       "http://localhost",
 				ProxyTargets:      []string{"http://example.com"},
 				HeaderMappingBase: "/userinfo",
+				DCREnabled:        true,
 			}
 			tt.mutate(&cfg)
 			err := Run(cfg)
@@ -116,6 +118,7 @@ func TestRun_PassesHTTPStreamingOnlyToProxyRouter(t *testing.T) {
 		ProxyTargets:      []string{"http://example.com"},
 		HTTPStreamingOnly: true,
 		HeaderMappingBase: "/userinfo",
+		DCREnabled:        true,
 	})
 
 	require.Error(t, err)

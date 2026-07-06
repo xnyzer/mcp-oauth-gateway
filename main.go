@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,32 @@ func getEnvDurationWithDefault(key string, defaultValue time.Duration) time.Dura
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		panic(fmt.Sprintf("invalid duration in %s: %q", key, value))
+	}
+	return parsed
+}
+
+// getEnvIntWithDefault fails fast on a malformed integer (CODING-STANDARDS §7).
+func getEnvIntWithDefault(key string, defaultValue int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		panic(fmt.Sprintf("invalid integer in %s: %q", key, value))
+	}
+	return parsed
+}
+
+// getEnvInt64WithDefault fails fast on a malformed integer (CODING-STANDARDS §7).
+func getEnvInt64WithDefault(key string, defaultValue int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		panic(fmt.Sprintf("invalid integer in %s: %q", key, value))
 	}
 	return parsed
 }
@@ -185,6 +212,13 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var accessTokenTTL time.Duration
 	var authCodeTTL time.Duration
 	var refreshTokenTTL time.Duration
+	var cimdEnabled bool
+	var cimdFetchTimeout time.Duration
+	var cimdMaxSize int64
+	var cimdCacheTTL time.Duration
+	var dcrEnabled bool
+	var dcrClientTTL time.Duration
+	var dcrMaxClients int
 
 	rootCmd := &cobra.Command{
 		Use: "mcp-oauth-gateway",
@@ -253,6 +287,14 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				AccessTokenTTL:      accessTokenTTL,
 				AuthCodeTTL:         authCodeTTL,
 				RefreshTokenTTL:     refreshTokenTTL,
+
+				CIMDEnabled:      cimdEnabled,
+				CIMDFetchTimeout: cimdFetchTimeout,
+				CIMDMaxSize:      cimdMaxSize,
+				CIMDCacheTTL:     cimdCacheTTL,
+				DCREnabled:       dcrEnabled,
+				DCRClientTTL:     dcrClientTTL,
+				DCRMaxClients:    dcrMaxClients,
 			}); err != nil {
 				panic(err)
 			}
@@ -292,6 +334,15 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().DurationVar(&accessTokenTTL, "access-token-ttl", getEnvDurationWithDefault("ACCESS_TOKEN_TTL", time.Hour), "Access token lifetime (1m-24h)")
 	rootCmd.Flags().DurationVar(&authCodeTTL, "auth-code-ttl", getEnvDurationWithDefault("AUTH_CODE_TTL", 10*time.Minute), "Authorization code lifetime (30s-1h)")
 	rootCmd.Flags().DurationVar(&refreshTokenTTL, "refresh-token-ttl", getEnvDurationWithDefault("REFRESH_TOKEN_TTL", 720*time.Hour), "Refresh token lifetime (1h-8760h; 0 disables the refresh grant)")
+
+	// Client registration: CIMD (primary) + DCR (deprecated fallback)
+	rootCmd.Flags().BoolVar(&cimdEnabled, "cimd-enabled", getEnvBoolWithDefault("CIMD_ENABLED", true), "Accept CIMD client IDs (HTTPS URLs resolving to a Client ID Metadata Document)")
+	rootCmd.Flags().DurationVar(&cimdFetchTimeout, "cimd-fetch-timeout", getEnvDurationWithDefault("CIMD_FETCH_TIMEOUT", 5*time.Second), "Timeout for fetching a CIMD document (1s-1m)")
+	rootCmd.Flags().Int64Var(&cimdMaxSize, "cimd-max-size", getEnvInt64WithDefault("CIMD_MAX_SIZE", 65536), "Maximum CIMD document size in bytes (1KiB-1MiB)")
+	rootCmd.Flags().DurationVar(&cimdCacheTTL, "cimd-cache-ttl", getEnvDurationWithDefault("CIMD_CACHE_TTL", time.Hour), "Cache lifetime for resolved CIMD documents (1m-24h)")
+	rootCmd.Flags().BoolVar(&dcrEnabled, "dcr-enabled", getEnvBoolWithDefault("DCR_ENABLED", true), "Serve the deprecated RFC 7591 dynamic client registration endpoint")
+	rootCmd.Flags().DurationVar(&dcrClientTTL, "dcr-client-ttl", getEnvDurationWithDefault("DCR_CLIENT_TTL", 720*time.Hour), "DCR registration lifetime, refreshed on token issuance (0 disables expiry)")
+	rootCmd.Flags().IntVar(&dcrMaxClients, "dcr-max-clients", getEnvIntWithDefault("DCR_MAX_CLIENTS", 100), "Maximum number of stored DCR registrations (0 = unlimited)")
 
 	// Password authentication
 	rootCmd.Flags().BoolVar(&noProviderAutoSelect, "no-provider-auto-select", getEnvBoolWithDefault("NO_PROVIDER_AUTO_SELECT", false), "Disable auto-redirect when only one OAuth/OIDC provider is configured and no password is set")

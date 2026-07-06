@@ -23,6 +23,7 @@ import (
 	"github.com/ory/fosite"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/backend"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/proxy"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
@@ -94,6 +95,16 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	AuthCodeTTL     time.Duration
 	RefreshTokenTTL time.Duration
+
+	// CIMD client identification (SPEC §1.3; on by default in main.go).
+	CIMDEnabled      bool
+	CIMDFetchTimeout time.Duration
+	CIMDMaxSize      int64
+	CIMDCacheTTL     time.Duration
+	// DCR fallback (SPEC §1.4; on by default in main.go).
+	DCREnabled    bool
+	DCRClientTTL  time.Duration
+	DCRMaxClients int
 }
 
 const (
@@ -113,6 +124,26 @@ func validateTTLs(cfg Config) error {
 	}
 	if cfg.RefreshTokenTTL != 0 && (cfg.RefreshTokenTTL < time.Hour || cfg.RefreshTokenTTL > 365*24*time.Hour) {
 		return fmt.Errorf("refresh token TTL must be 0 (disabled) or between 1h and 8760h, got: %s", cfg.RefreshTokenTTL)
+	}
+	if cfg.CIMDEnabled {
+		if cfg.CIMDFetchTimeout < time.Second || cfg.CIMDFetchTimeout > time.Minute {
+			return fmt.Errorf("CIMD fetch timeout must be between 1s and 1m, got: %s", cfg.CIMDFetchTimeout)
+		}
+		if cfg.CIMDMaxSize < 1024 || cfg.CIMDMaxSize > 1024*1024 {
+			return fmt.Errorf("CIMD max document size must be between 1KiB and 1MiB, got: %d", cfg.CIMDMaxSize)
+		}
+		if cfg.CIMDCacheTTL < time.Minute || cfg.CIMDCacheTTL > 24*time.Hour {
+			return fmt.Errorf("CIMD cache TTL must be between 1m and 24h, got: %s", cfg.CIMDCacheTTL)
+		}
+	}
+	if !cfg.CIMDEnabled && !cfg.DCREnabled {
+		return fmt.Errorf("at least one client registration mechanism (CIMD or DCR) must be enabled")
+	}
+	if cfg.DCRClientTTL != 0 && cfg.DCRClientTTL < time.Hour {
+		return fmt.Errorf("DCR client TTL must be 0 (no expiry) or at least 1h, got: %s", cfg.DCRClientTTL)
+	}
+	if cfg.DCRMaxClients < 0 {
+		return fmt.Errorf("DCR client cap must not be negative, got: %d", cfg.DCRMaxClients)
 	}
 	return nil
 }
@@ -313,6 +344,9 @@ func Run(cfg Config) error {
 				); err != nil {
 					logger.Warn("failed to sweep expired session records", zap.Error(err))
 				}
+				if err := repo.DeleteExpiredClients(ctx, now); err != nil {
+					logger.Warn("failed to sweep expired client registrations", zap.Error(err))
+				}
 			}
 		}
 	}()
@@ -376,6 +410,17 @@ func Run(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to create auth router: %w", err)
 	}
+	// Assigned only when enabled: a typed-nil *cimd.Resolver in the
+	// interface field would defeat the nil check in the client source.
+	var cimdResolver idp.CIMDResolver
+	if cfg.CIMDEnabled {
+		cimdResolver = cimd.NewResolver(cimd.Config{
+			FetchTimeout: cfg.CIMDFetchTimeout,
+			MaxSize:      cfg.CIMDMaxSize,
+			CacheTTL:     cfg.CIMDCacheTTL,
+		})
+	}
+
 	idpRouter, err := idp.NewIDPRouter(idp.Config{
 		Repo:                repo,
 		PrivKey:             privKey,
@@ -387,6 +432,10 @@ func Run(cfg Config) error {
 		AccessTokenTTL:      cfg.AccessTokenTTL,
 		AuthCodeTTL:         cfg.AuthCodeTTL,
 		RefreshTokenTTL:     cfg.RefreshTokenTTL,
+		CIMDResolver:        cimdResolver,
+		DCREnabled:          cfg.DCREnabled,
+		DCRClientTTL:        cfg.DCRClientTTL,
+		DCRMaxClients:       cfg.DCRMaxClients,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create IDP router: %w", err)

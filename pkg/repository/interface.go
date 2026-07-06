@@ -34,10 +34,19 @@ type MaintenanceStorage interface {
 	// EnsureSchemaVersion records the schema version on first run and
 	// fails when the store stems from a newer gateway version.
 	EnsureSchemaVersion(ctx context.Context, version int) error
+	// DeleteExpiredClients removes DCR registrations whose expiry passed.
+	DeleteExpiredClients(ctx context.Context, now time.Time) error
 }
 
+// DynamicClientStorage manages DCR client registrations (SPEC §1.4).
+// Expired registrations are treated as absent by GetClient (fail-closed).
 type DynamicClientStorage interface {
-	RegisterClient(ctx context.Context, client fosite.Client) error
+	// RegisterClient stores a registration; a zero expiresAt never expires.
+	RegisterClient(ctx context.Context, client fosite.Client, expiresAt time.Time) error
+	// TouchClient extends a registration's expiry (refresh-on-use, SR-5).
+	TouchClient(ctx context.Context, id string, expiresAt time.Time) error
+	// CountClients returns the number of stored, non-expired registrations.
+	CountClients(ctx context.Context) (int, error)
 }
 
 type AuthorizeRequestStorage interface {

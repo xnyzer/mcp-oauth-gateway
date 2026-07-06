@@ -22,6 +22,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-004 | Complete the spec → **`SPEC.md` created** (API contracts incl. CIMD/RFC 8707/9207/7009 + `WWW-Authenticate`; data model + `jti` revocation + key rotation; full config schema) + `docker-compose.example.yml`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 | F-005a | Discovery & 401 surface → **complete PRM/AS metadata, `WWW-Authenticate` challenge, RFC 9207 `iss`, issuer normalization, `CLOCK_SKEW`, OIDC mirror** + config-struct refactor. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005b | Token binding & lifecycle → **RFC 8707 `resource`→`aud`, `jti`/`client_id`/`scope` claims, `/revoke` (RFC 7009) + fail-closed proxy revocation check, TTL config, sweeper + schema version**; fixed upstream revoke-by-signature no-op bug. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
+| F-005c | CIMD + DCR hardening → **`pkg/cimd` resolver (dial-time SSRF guards, limits, cache) as fosite client source; DCR TTL/cap/validation/`DCR_ENABLED`**; reserved-namespace guard (disabled endpoints 404, never proxied). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 
 ---
 
@@ -62,20 +63,11 @@ The remaining tasks are a hard chain: 1→2→3. Each task below carries its own
 
 **Decisions (prep, user-approved):** passkey bootstrap = first login via `PASSWORD`/`PASSWORD_HASH`, then passkey enrollment on a session-gated settings page (password stays as a disableable fallback); ES256 ships only if Fosite supports it cleanly, otherwise documented follow-up; rate-limit state is in-memory (single-instance deployment, GR-3). New deps: `github.com/go-webauthn/webauthn` (BSD-3), `golang.org/x/time/rate` (BSD).
 
-#### F-005c — CIMD + DCR hardening (SR-5)
-
-**What:** CIMD resolver per §1.3 (5 s/64 KiB/no redirects, SSRF guards, document validation, positive/negative cache) integrated at authorize/token; `CIMD_*` config. DCR: client TTL refreshed on use, cap, `DCR_ENABLED`, redirect-URI scheme validation (§1.4).
-**Files:** new `pkg/cimd/`, `pkg/idp/`, `pkg/repository/` + tests.
-**Dependencies:** F-005b (DONE).
-- [ ] SSRF negative tests (private/loopback/metadata IPs, redirects, oversize, non-https)
-- [ ] CIMD client full authorize+token round-trip in tests
-- [ ] DCR expiry/cap enforced (negative tests); `DCR_ENABLED=false` removes endpoint + metadata entry
-
 #### F-005d — Key management
 
 **What:** Key directory + atomic `manifest.json`, migration from the legacy single key, interval-based rotation with retiring window, multi-key JWKS, `KEY_ALG` (RS256/ES256 if Fosite allows) + `KEY_ROTATION_INTERVAL` (§2.2/§2.3).
 **Files:** new `pkg/keys/` (from `pkg/utils/keys.go`), `pkg/idp/` + tests.
-**Dependencies:** F-005b (sweeper).
+**Dependencies:** F-005b (DONE).
 - [ ] rotation test: pre-rotation token stays valid until `exp`; JWKS serves both keys
 - [ ] legacy key adopted on first start (migration test)
 - [ ] crash-safe manifest rewrite (atomic rename)

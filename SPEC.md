@@ -55,6 +55,10 @@
 `/.idp/auth`, `/.idp/auth/:ar_id`, `/.idp/token`, `/.idp/register`, `/.idp/revoke`,
 `/.idp/introspect`, `/.auth/*`, and `/healthz`. Every other path is the protected proxy
 surface (§1.11). This list is normative for SR-7/SR-10 (minimal public surface).
+The `/.idp/`, `/.auth/`, and `/.well-known/` namespaces are **reserved**: unmatched paths
+inside them (e.g. config-disabled endpoints) return `404` and are **never proxied upstream**
+*(added in F-005c after the DCR_ENABLED=false smoke test showed the disabled endpoint falling
+through to the proxy)*.
 
 ---
 
@@ -134,7 +138,10 @@ store (§1.4).
 6. Any resolution/validation failure → the OAuth request fails with `invalid_client`
    (fail-closed); the resolution error detail goes to structured logs (SR-8), not the client.
 
-**Delta:** CIMD does not exist in the fork; entire section is new (top gap-list item).
+**Delta:** **done, F-005c** — implemented in `pkg/cimd` (dial-time SSRF checks, so DNS
+rebinding cannot bypass them) and integrated as the fosite client source, effective at the
+authorize and token endpoints alike. An absent `token_endpoint_auth_method` is treated as
+`none` (decision: common in CIMD documents; explicit non-`none` values are rejected).
 
 ### 1.4 Dynamic Client Registration — `POST /.idp/register` (deprecated fallback)
 
@@ -159,8 +166,10 @@ issued_at + registration TTL; `0` only if expiry is disabled), echo of the accep
 - **Validation:** redirect URIs validated as in §1.3.3; grant/response types restricted to the
   §1.2 sets; unknown `token_endpoint_auth_method` → `invalid_client_metadata` (400).
 
-**Delta:** exists today without TTL, cap, rate limit, or redirect-URI scheme validation, and
-hardcodes `Audience = [externalURL]` (superseded by §1.6/§1.7 audience contract).
+**Delta:** **done, F-005c** — except the per-IP rate limit (F-005e). TTL (refreshed on token
+issuance), cap (503, no eviction), redirect-URI scheme validation, grant/response-type
+whitelist, `client_secret_expires_at`, and `DCR_ENABLED` (endpoint + metadata entry removed
+when off) are implemented; expired registrations are treated as absent on lookup.
 
 ### 1.5 Authorization endpoint — `GET /.idp/auth`
 
@@ -191,8 +200,9 @@ blanket grants in v1).
 error page (§1.12 template) with `400` and MUST NOT redirect.
 
 **Delta:** flow exists (Fosite); `iss` parameter **done (F-005a)**; `resource` validation
-**done (F-005b)**. Still missing: CIMD client support (F-005c); PKCE presence is enforced by
-Fosite config for public clients — F-005 MUST enforce it for **all** clients.
+**done (F-005b)**; CIMD client support **done (F-005c)**. PKCE presence is enforced by Fosite
+config for public clients (which covers every CIMD client) — enforcing it for confidential
+DCR clients too remains open (F-005e picks this up with the auth rework).
 
 ### 1.6 Token endpoint — `POST /.idp/token`
 
@@ -218,8 +228,9 @@ configurable), `refresh_token` (when granted), `scope`.
 PKCE mismatch, rotated refresh token), `unauthorized_client`, `unsupported_grant_type`,
 `invalid_target`.
 
-**Delta:** `resource`→`aud` binding and TTL configuration **done (F-005b)**. Still missing:
-CIMD client resolution at the token endpoint (F-005c), rate limiting (F-005e).
+**Delta:** `resource`→`aud` binding and TTL configuration **done (F-005b)**; CIMD client
+resolution at the token endpoint **done (F-005c**, via the shared client source**)**. Still
+missing: rate limiting (F-005e).
 
 ### 1.7 Access token claims (JWT) — FR-5, SR-4
 
@@ -458,11 +469,11 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 | `ACCESS_TOKEN_TTL` | `1h` | §1.7 `exp`. Go duration; 1 m–24 h. **Done (F-005b).** |
 | `AUTH_CODE_TTL` | `10m` | §1.5. 30 s–1 h. **Done (F-005b).** |
 | `REFRESH_TOKEN_TTL` | `720h` (30 d) | §2.1. `0` disables the refresh grant (also removed from metadata). **Done (F-005b).** |
-| `CIMD_ENABLED` | `true` | §1.3. Disabling leaves DCR-only (not recommended). |
-| `CIMD_FETCH_TIMEOUT` / `CIMD_MAX_SIZE` / `CIMD_CACHE_TTL` | `5s` / `65536` / `1h` | §1.3 resolution limits. |
-| `DCR_ENABLED` | `true` | §1.4. `false` removes `registration_endpoint` from metadata and 404s `/.idp/register`. |
-| `DCR_CLIENT_TTL` | `720h` (30 d) | §1.4/§2.1. `0` disables expiry. |
-| `DCR_MAX_CLIENTS` | `100` | §1.4 cap; `0` = unlimited (not recommended). |
+| `CIMD_ENABLED` | `true` | §1.3. Disabling leaves DCR-only (not recommended). **Done (F-005c).** |
+| `CIMD_FETCH_TIMEOUT` / `CIMD_MAX_SIZE` / `CIMD_CACHE_TTL` | `5s` / `65536` / `1h` | §1.3 resolution limits (1s–1m / 1KiB–1MiB / 1m–24h). **Done (F-005c).** |
+| `DCR_ENABLED` | `true` | §1.4. `false` removes `registration_endpoint` from metadata and 404s `/.idp/register`. At least one of CIMD/DCR must stay enabled. **Done (F-005c).** |
+| `DCR_CLIENT_TTL` | `720h` (30 d) | §1.4/§2.1. `0` disables expiry. **Done (F-005c).** |
+| `DCR_MAX_CLIENTS` | `100` | §1.4 cap; `0` = unlimited (not recommended). **Done (F-005c).** |
 | `RATE_LIMIT_REGISTER` / `RATE_LIMIT_TOKEN` / `RATE_LIMIT_LOGIN` | `10/m` / `60/m` / `10/m` | Per-client-IP token buckets (SR-5/SR-6). `0` disables (not recommended). Honour `TRUSTED_PROXIES` for client-IP extraction. |
 | `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_DURATION` | `10` / `15m` | Per-account lockout after N consecutive failures (SR-6); uniform error either way. |
 | `KEY_ALG` | `RS256` | `RS256` or `ES256` (§2.2); switching triggers a rotation (§2.3). |

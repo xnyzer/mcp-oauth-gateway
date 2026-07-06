@@ -95,6 +95,41 @@ func TestDeleteExpiredSessions(t *testing.T) {
 	}
 }
 
+func TestClientRegistrationLifecycle(t *testing.T) {
+	for name, repo := range testRepos(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			now := time.Now().UTC()
+			client := &fosite.DefaultClient{ID: "client-1", RedirectURIs: []string{"https://app.example.com/cb"}}
+
+			// Active registration: visible and counted.
+			require.NoError(t, repo.RegisterClient(ctx, client, now.Add(time.Hour)))
+			_, err := repo.GetClient(ctx, "client-1")
+			require.NoError(t, err)
+			count, err := repo.CountClients(ctx)
+			require.NoError(t, err)
+			require.Equal(t, 1, count)
+
+			// TouchClient extends the expiry (refresh-on-use, SR-5).
+			require.NoError(t, repo.TouchClient(ctx, "client-1", now.Add(-time.Minute)))
+			_, err = repo.GetClient(ctx, "client-1")
+			require.ErrorIs(t, err, fosite.ErrNotFound, "expired registrations are treated as absent")
+			count, err = repo.CountClients(ctx)
+			require.NoError(t, err)
+			require.Equal(t, 0, count, "expired registrations must not count against the cap")
+
+			// The sweeper reclaims the expired record.
+			require.NoError(t, repo.DeleteExpiredClients(ctx, now))
+			require.NoError(t, repo.RegisterClient(ctx, client, time.Time{})) // re-register without expiry
+			_, err = repo.GetClient(ctx, "client-1")
+			require.NoError(t, err, "zero expiry means the registration never expires")
+			require.NoError(t, repo.TouchClient(ctx, "client-1", now.Add(time.Hour)))
+			_, err = repo.GetClient(ctx, "client-1")
+			require.NoError(t, err, "touching a permanent registration must not expire it")
+		})
+	}
+}
+
 func TestEnsureSchemaVersion(t *testing.T) {
 	for name, repo := range testRepos(t) {
 		t.Run(name, func(t *testing.T) {

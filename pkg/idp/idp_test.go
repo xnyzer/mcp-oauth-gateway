@@ -2,6 +2,7 @@ package idp
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -24,16 +25,21 @@ import (
 	"github.com/ory/fosite"
 	"github.com/stretchr/testify/require"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 )
 
 func setupTestServer(t *testing.T) (*httptest.Server, repository.Repository, string) {
-	return setupTestServerMirror(t, false)
+	return setupTestServerWith(t, nil)
 }
 
 func setupTestServerMirror(t *testing.T, oidcDiscoveryMirror bool) (*httptest.Server, repository.Repository, string) {
+	return setupTestServerWith(t, func(cfg *Config) { cfg.OIDCDiscoveryMirror = oidcDiscoveryMirror })
+}
+
+func setupTestServerWith(t *testing.T, mutate func(*Config)) (*httptest.Server, repository.Repository, string) {
 	// Create temp directory and repository
 	tmpDir, err := os.MkdirTemp("", "idp_test_*")
 	require.NoError(t, err)
@@ -78,18 +84,23 @@ func setupTestServerMirror(t *testing.T, oidcDiscoveryMirror bool) (*httptest.Se
 	require.NoError(t, err)
 
 	logger, _ := zap.NewDevelopment()
-	idpRouter, err := NewIDPRouter(Config{
-		Repo:                repo,
-		PrivKey:             privKey,
-		Logger:              logger,
-		ExternalURL:         "http://localhost:8080",
-		Secret:              secret[:],
-		AuthRouter:          authRouter,
-		OIDCDiscoveryMirror: oidcDiscoveryMirror,
-		AccessTokenTTL:      time.Hour,
-		AuthCodeTTL:         10 * time.Minute,
-		RefreshTokenTTL:     30 * 24 * time.Hour,
-	})
+	cfg := Config{
+		Repo:            repo,
+		PrivKey:         privKey,
+		Logger:          logger,
+		ExternalURL:     "http://localhost:8080",
+		Secret:          secret[:],
+		AuthRouter:      authRouter,
+		AccessTokenTTL:  time.Hour,
+		AuthCodeTTL:     10 * time.Minute,
+		RefreshTokenTTL: 30 * 24 * time.Hour,
+		DCREnabled:      true,
+		DCRClientTTL:    30 * 24 * time.Hour,
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	idpRouter, err := NewIDPRouter(cfg)
 	require.NoError(t, err)
 
 	idpRouter.SetupRoutes(router)
@@ -802,6 +813,188 @@ func TestRevocationEndpoint(t *testing.T) {
 		// 401 invalid_client for wrong ones — both are rejections.
 		require.Contains(t, []int{http.StatusBadRequest, http.StatusUnauthorized}, resp.StatusCode)
 	})
+}
+
+// stubResolver satisfies CIMDResolver without network access; the real HTTP
+// resolution (SSRF guards, limits, caching) is tested in pkg/cimd.
+type stubResolver struct {
+	doc *cimd.Client
+}
+
+func (s *stubResolver) Resolve(_ context.Context, clientID string) (*cimd.Client, error) {
+	if s.doc != nil && s.doc.ClientID == clientID {
+		return s.doc, nil
+	}
+	return nil, cimd.ErrInvalidClientID
+}
+
+func TestCIMDClientRoundTrip(t *testing.T) {
+	const cimdClientID = "https://client.example.com/oauth/client-metadata.json"
+	server, _, _ := setupTestServerWith(t, func(cfg *Config) {
+		cfg.CIMDResolver = &stubResolver{doc: &cimd.Client{
+			ClientID:     cimdClientID,
+			ClientName:   "CIMD Test Client",
+			RedirectURIs: []string{"https://client.example.com/callback"},
+		}}
+	})
+
+	// Public client (SPEC §1.3): PKCE S256 is the proof of possession.
+	verifier := strings.Repeat("v", 64)
+	challengeHash := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(challengeHash[:])
+
+	authURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state&code_challenge=%s&code_challenge_method=S256",
+		server.URL, AuthorizationEndpoint,
+		url.QueryEscape(cimdClientID),
+		url.QueryEscape("https://client.example.com/callback"),
+		challenge)
+
+	callbackURL := testAuthFlowWithURL(t, server.URL, authURL)
+	code := callbackURL.Query().Get("code")
+	require.NotEmpty(t, code, "CIMD client must receive an authorization code")
+
+	tokenReq := url.Values{}
+	tokenReq.Set("grant_type", "authorization_code")
+	tokenReq.Set("code", code)
+	tokenReq.Set("redirect_uri", "https://client.example.com/callback")
+	tokenReq.Set("client_id", cimdClientID)
+	tokenReq.Set("code_verifier", verifier)
+
+	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
+	require.NoError(t, err)
+	defer tokenResp.Body.Close()
+	require.Equal(t, http.StatusOK, tokenResp.StatusCode)
+
+	var tokenResult map[string]any
+	require.NoError(t, json.NewDecoder(tokenResp.Body).Decode(&tokenResult))
+	accessToken, _ := tokenResult["access_token"].(string)
+	require.NotEmpty(t, accessToken)
+
+	// The client_id claim carries the CIMD URL (SPEC §1.7).
+	payload, err := base64.RawURLEncoding.DecodeString(strings.Split(accessToken, ".")[1])
+	require.NoError(t, err)
+	var claims map[string]any
+	require.NoError(t, json.Unmarshal(payload, &claims))
+	require.Equal(t, cimdClientID, claims["client_id"])
+}
+
+func TestCIMDUnresolvableClientRejected(t *testing.T) {
+	server, _, _ := setupTestServerWith(t, func(cfg *Config) {
+		cfg.CIMDResolver = &stubResolver{} // resolves nothing
+	})
+
+	resp, err := http.Get(fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state",
+		server.URL, AuthorizationEndpoint,
+		url.QueryEscape("https://unknown.example.com/client.json"),
+		url.QueryEscape("https://unknown.example.com/callback")))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	// Unknown client: non-redirectable error (no trusted redirect URI).
+	require.GreaterOrEqual(t, resp.StatusCode, 400)
+	require.Less(t, resp.StatusCode, 500)
+}
+
+func TestDCRRegistrationHardening(t *testing.T) {
+	register := func(t *testing.T, serverURL string, req registrationRequest) *http.Response {
+		t.Helper()
+		body, err := json.Marshal(req)
+		require.NoError(t, err)
+		resp, err := http.Post(serverURL+RegistrationEndpoint, "application/json", bytes.NewReader(body))
+		require.NoError(t, err)
+		return resp
+	}
+	validRequest := func() registrationRequest {
+		return registrationRequest{
+			ClientName:              "Hardening Test Client",
+			TokenEndpointAuthMethod: "client_secret_basic",
+			RedirectURIs:            []string{"https://app.example.com/callback"},
+		}
+	}
+
+	t.Run("registration TTL is reported", func(t *testing.T) {
+		server, _, _ := setupTestServer(t)
+		resp := register(t, server.URL, validRequest())
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		var regResp registrationResponse
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&regResp))
+		require.Greater(t, regResp.ClientSecretExpiresAt, time.Now().Unix(), "client_secret_expires_at must carry the SR-5 TTL")
+	})
+
+	t.Run("client cap returns 503", func(t *testing.T) {
+		server, _, _ := setupTestServerWith(t, func(cfg *Config) { cfg.DCRMaxClients = 1 })
+		first := register(t, server.URL, validRequest())
+		first.Body.Close()
+		require.Equal(t, http.StatusCreated, first.StatusCode)
+
+		second := register(t, server.URL, validRequest())
+		defer second.Body.Close()
+		require.Equal(t, http.StatusServiceUnavailable, second.StatusCode)
+		var errBody map[string]any
+		require.NoError(t, json.NewDecoder(second.Body).Decode(&errBody))
+		require.Equal(t, "temporarily_unavailable", errBody["error"])
+	})
+
+	t.Run("invalid metadata is rejected", func(t *testing.T) {
+		server, _, _ := setupTestServer(t)
+		cases := []struct {
+			name    string
+			mutate  func(*registrationRequest)
+			errCode string
+		}{
+			{name: "no redirect uris", mutate: func(r *registrationRequest) { r.RedirectURIs = nil }, errCode: "invalid_redirect_uri"},
+			{name: "http non-loopback redirect", mutate: func(r *registrationRequest) { r.RedirectURIs = []string{"http://app.example.com/cb"} }, errCode: "invalid_redirect_uri"},
+			{name: "javascript redirect", mutate: func(r *registrationRequest) { r.RedirectURIs = []string{"javascript:alert(1)"} }, errCode: "invalid_redirect_uri"},
+			{name: "unsupported grant type", mutate: func(r *registrationRequest) { r.GrantTypes = []string{"client_credentials"} }, errCode: "invalid_client_metadata"},
+			{name: "unsupported response type", mutate: func(r *registrationRequest) { r.ResponseTypes = []string{"token"} }, errCode: "invalid_client_metadata"},
+			{name: "unknown auth method", mutate: func(r *registrationRequest) { r.TokenEndpointAuthMethod = "private_key_jwt" }, errCode: "invalid_client_metadata"},
+		}
+		for _, tt := range cases {
+			t.Run(tt.name, func(t *testing.T) {
+				req := validRequest()
+				tt.mutate(&req)
+				resp := register(t, server.URL, req)
+				defer resp.Body.Close()
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				var errBody map[string]any
+				require.NoError(t, json.NewDecoder(resp.Body).Decode(&errBody))
+				require.Equal(t, tt.errCode, errBody["error"])
+			})
+		}
+	})
+}
+
+func TestDCRDisabled(t *testing.T) {
+	server, _, _ := setupTestServerWith(t, func(cfg *Config) { cfg.DCREnabled = false })
+
+	resp, err := http.Post(server.URL+RegistrationEndpoint, "application/json", strings.NewReader("{}"))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, "DCR_ENABLED=false must remove the endpoint")
+
+	metaResp, err := http.Get(server.URL + OauthAuthorizationServerEndpoint)
+	require.NoError(t, err)
+	defer metaResp.Body.Close()
+	var metadata map[string]any
+	require.NoError(t, json.NewDecoder(metaResp.Body).Decode(&metadata))
+	_, present := metadata["registration_endpoint"]
+	require.False(t, present, "metadata must not advertise a disabled registration endpoint")
+}
+
+func TestExpiredDCRClientRejected(t *testing.T) {
+	server, repo, _ := setupTestServer(t)
+	regResp := registerTestClient(t, server.URL)
+
+	// Push the registration's expiry into the past (SPEC §1.4).
+	require.NoError(t, repo.TouchClient(t.Context(), regResp.ClientID, time.Now().UTC().Add(-time.Minute)))
+
+	resp, err := http.Get(fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state",
+		server.URL, AuthorizationEndpoint, regResp.ClientID,
+		url.QueryEscape("http://localhost:8080/callback")))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.GreaterOrEqual(t, resp.StatusCode, 400, "expired registrations must be treated as absent")
+	require.Less(t, resp.StatusCode, 500)
 }
 
 func TestIntrospectionRequiresClientAuth(t *testing.T) {

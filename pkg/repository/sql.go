@@ -284,10 +284,13 @@ func (r *sqlRepository) EnsureSchemaVersion(ctx context.Context, version int) er
 	return nil
 }
 
-func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client) error {
-	data, err := marshalClient(fositeClient)
+func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client, expiresAt time.Time) error {
+	client := models.FromFositeClient(fositeClient)
+	client.CreatedAt = time.Now().UTC()
+	client.ExpiresAt = expiresAt
+	data, err := json.Marshal(client)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to encode client: %w", err)
 	}
 
 	record := clientRecord{
@@ -300,7 +303,8 @@ func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.
 		Create(&record).Error
 }
 
-func (r *sqlRepository) GetClient(ctx context.Context, id string) (fosite.Client, error) {
+// getClientModel loads and decodes a stored client registration.
+func (r *sqlRepository) getClientModel(ctx context.Context, id string) (*models.Client, error) {
 	var record clientRecord
 	if err := r.db.WithContext(ctx).First(&record, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -308,8 +312,94 @@ func (r *sqlRepository) GetClient(ctx context.Context, id string) (fosite.Client
 		}
 		return nil, fmt.Errorf("failed to load client: %w", err)
 	}
+	var client models.Client
+	if err := json.Unmarshal(record.Client, &client); err != nil {
+		return nil, fmt.Errorf("failed to decode client: %w", err)
+	}
+	return &client, nil
+}
 
-	return unmarshalClient(record.Client)
+// GetClient loads the client by its ID. Expired registrations are treated
+// as absent (SPEC §1.4, fail-closed — no reliance on the sweeper).
+func (r *sqlRepository) GetClient(ctx context.Context, id string) (fosite.Client, error) {
+	client, err := r.getClientModel(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !client.ExpiresAt.IsZero() && client.ExpiresAt.Before(time.Now().UTC()) {
+		return nil, fosite.ErrNotFound
+	}
+	return client.ToFositeClient(), nil
+}
+
+// TouchClient extends a registration's expiry (refresh-on-use, SR-5).
+func (r *sqlRepository) TouchClient(ctx context.Context, id string, expiresAt time.Time) error {
+	client, err := r.getClientModel(ctx, id)
+	if err != nil {
+		return err
+	}
+	if client.ExpiresAt.IsZero() {
+		return nil // registration without expiry stays permanent
+	}
+	client.ExpiresAt = expiresAt
+	data, err := json.Marshal(client)
+	if err != nil {
+		return fmt.Errorf("failed to encode client: %w", err)
+	}
+	return r.db.WithContext(ctx).
+		Model(&clientRecord{}).
+		Where("id = ?", id).
+		Update("client", data).Error
+}
+
+// CountClients counts stored, non-expired DCR registrations (cap, SR-5).
+func (r *sqlRepository) CountClients(ctx context.Context) (int, error) {
+	clients, err := r.allClientModels(ctx)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC()
+	count := 0
+	for _, client := range clients {
+		if client.ExpiresAt.IsZero() || client.ExpiresAt.After(now) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// DeleteExpiredClients garbage-collects expired DCR registrations.
+func (r *sqlRepository) DeleteExpiredClients(ctx context.Context, now time.Time) error {
+	clients, err := r.allClientModels(ctx)
+	if err != nil {
+		return err
+	}
+	for _, client := range clients {
+		if !client.ExpiresAt.IsZero() && client.ExpiresAt.Before(now) {
+			if err := r.db.WithContext(ctx).Delete(&clientRecord{}, "id = ?", client.ID).Error; err != nil {
+				return fmt.Errorf("failed to delete expired client: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// allClientModels loads every stored registration (the table is bounded by
+// the DCR client cap, SPEC §1.4).
+func (r *sqlRepository) allClientModels(ctx context.Context) ([]models.Client, error) {
+	var records []clientRecord
+	if err := r.db.WithContext(ctx).Find(&records).Error; err != nil {
+		return nil, fmt.Errorf("failed to load clients: %w", err)
+	}
+	clients := make([]models.Client, 0, len(records))
+	for _, record := range records {
+		var client models.Client
+		if err := json.Unmarshal(record.Client, &client); err != nil {
+			continue
+		}
+		clients = append(clients, client)
+	}
+	return clients, nil
 }
 
 func (r *sqlRepository) ClientAssertionJWTValid(ctx context.Context, jti string) error {
@@ -410,22 +500,6 @@ func unmarshalRequest(data []byte, sess fosite.Session) (fosite.Requester, error
 		return nil, err
 	}
 	return fositeReq, nil
-}
-
-func marshalClient(client fosite.Client) ([]byte, error) {
-	data, err := json.Marshal(models.FromFositeClient(client))
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal client: %w", err)
-	}
-	return data, nil
-}
-
-func unmarshalClient(data []byte) (fosite.Client, error) {
-	var client models.Client
-	if err := json.Unmarshal(data, &client); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal client: %w", err)
-	}
-	return client.ToFositeClient(), nil
 }
 
 func marshalAuthorizeRequest(req fosite.AuthorizeRequester) ([]byte, error) {

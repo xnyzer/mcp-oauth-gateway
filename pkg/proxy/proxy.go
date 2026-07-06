@@ -100,7 +100,20 @@ func (p *ProxyRouter) abortUnauthorized(c *gin.Context, errorCode string, descri
 	c.AbortWithStatusJSON(http.StatusUnauthorized, body)
 }
 
+// reservedPrefixes are gateway-owned namespaces (SPEC §0). Paths inside them
+// that reach the catch-all (e.g. config-disabled endpoints such as
+// /.idp/register with DCR_ENABLED=false) must 404 — never be proxied
+// upstream.
+var reservedPrefixes = []string{"/.idp/", "/.auth/", "/.well-known/"}
+
 func (p *ProxyRouter) handleProxy(c *gin.Context) {
+	for _, prefix := range reservedPrefixes {
+		if strings.HasPrefix(c.Request.URL.Path, prefix) {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+	}
+
 	authHeader := c.Request.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		p.abortUnauthorized(c, "", "")

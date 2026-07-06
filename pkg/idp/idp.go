@@ -17,6 +17,7 @@ import (
 	"github.com/ory/fosite/compose"
 	"github.com/ory/fosite/token/jwt"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/utils"
 	"go.uber.org/zap"
@@ -34,6 +35,47 @@ type IDPRouter struct {
 	authRouter          *auth.AuthRouter
 	oidcDiscoveryMirror bool
 	refreshEnabled      bool
+	dcrEnabled          bool
+	dcrClientTTL        time.Duration
+	dcrMaxClients       int
+}
+
+// CIMDResolver resolves a Client ID Metadata Document for an https://
+// client ID (implemented by *cimd.Resolver; an interface for testability).
+type CIMDResolver interface {
+	Resolve(ctx context.Context, clientID string) (*cimd.Client, error)
+}
+
+// clientSource resolves CIMD client IDs first and falls back to the DCR
+// store (SPEC §1.3); fosite uses it for every client lookup, so CIMD works
+// at the authorize and token endpoints alike.
+type clientSource struct {
+	repository.Repository
+	resolver    CIMDResolver
+	externalURL string
+	logger      *zap.Logger
+}
+
+func (s *clientSource) GetClient(ctx context.Context, id string) (fosite.Client, error) {
+	if s.resolver == nil || !strings.HasPrefix(id, "https://") {
+		return s.Repository.GetClient(ctx, id)
+	}
+	doc, err := s.resolver.Resolve(ctx, id)
+	if err != nil {
+		// Resolution detail stays in the logs (SR-8); the client only
+		// sees invalid_client (SPEC §1.3.6, fail-closed).
+		s.logger.Warn("CIMD resolution failed", zap.String("client_id", id), zap.Error(err))
+		return nil, fosite.ErrNotFound
+	}
+	return &fosite.DefaultClient{
+		ID:            doc.ClientID,
+		RedirectURIs:  doc.RedirectURIs,
+		GrantTypes:    doc.GrantTypes,
+		ResponseTypes: doc.ResponseTypes,
+		Scopes:        strings.Fields(doc.Scope),
+		Audience:      []string{s.externalURL},
+		Public:        true, // CIMD clients are public; PKCE is enforced
+	}, nil
 }
 
 // Config carries all options for the OAuth authorization-server surface
@@ -54,6 +96,17 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	AuthCodeTTL     time.Duration
 	RefreshTokenTTL time.Duration
+	// CIMDResolver resolves https:// client IDs (SPEC §1.3). nil disables
+	// CIMD; only stored DCR registrations are accepted then.
+	CIMDResolver CIMDResolver
+	// DCREnabled serves POST /.idp/register and advertises it in the AS
+	// metadata (SPEC §1.4). CIMD is unaffected.
+	DCREnabled bool
+	// DCRClientTTL expires DCR registrations (refreshed on token issuance);
+	// 0 disables expiry. DCRMaxClients caps stored registrations; 0 means
+	// unlimited (SR-5).
+	DCRClientTTL  time.Duration
+	DCRMaxClients int
 }
 
 const (
@@ -92,7 +145,13 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		// Space-separated scope claim (SPEC §1.7).
 		JWTScopeClaimKey: jwt.JWTScopeFieldString,
 	}
-	provider, signer := customCompose(fositeConfig, cfg.Repo, cfg.PrivKey, refreshEnabled)
+	storage := &clientSource{
+		Repository:  cfg.Repo,
+		resolver:    cfg.CIMDResolver,
+		externalURL: cfg.ExternalURL,
+		logger:      cfg.Logger,
+	}
+	provider, signer := customCompose(fositeConfig, storage, cfg.PrivKey, refreshEnabled)
 
 	return &IDPRouter{
 		repo:                cfg.Repo,
@@ -105,6 +164,9 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		authRouter:          cfg.AuthRouter,
 		oidcDiscoveryMirror: cfg.OIDCDiscoveryMirror,
 		refreshEnabled:      refreshEnabled,
+		dcrEnabled:          cfg.DCREnabled,
+		dcrClientTTL:        cfg.DCRClientTTL,
+		dcrMaxClients:       cfg.DCRMaxClients,
 	}, nil
 }
 
@@ -155,7 +217,9 @@ func (a *IDPRouter) SetupRoutes(router gin.IRouter) {
 	router.POST(TokenEndpoint, a.handleToken)
 	router.POST(IntrospectionEndpoint, a.handleIntrospect)
 	router.POST(RevocationEndpoint, a.handleRevoke)
-	router.POST(RegistrationEndpoint, a.handleRegister)
+	if a.dcrEnabled {
+		router.POST(RegistrationEndpoint, a.handleRegister)
+	}
 	router.GET(OauthAuthorizationServerEndpoint, a.handleOauthAuthorizationServer)
 	if a.oidcDiscoveryMirror {
 		router.GET(OIDCDiscoveryEndpoint, a.handleOauthAuthorizationServer)
@@ -412,6 +476,17 @@ func (a *IDPRouter) handleToken(c *gin.Context) {
 		return
 	}
 
+	// Active DCR clients never expire mid-use: refresh the registration
+	// TTL on successful issuance (SR-5). CIMD clients are not persisted.
+	if a.dcrClientTTL > 0 {
+		clientID := accessRequest.GetClient().GetID()
+		if !strings.HasPrefix(clientID, "https://") {
+			if err := a.repo.TouchClient(ctx, clientID, time.Now().UTC().Add(a.dcrClientTTL)); err != nil {
+				a.logger.Warn("Failed to refresh client registration TTL", zap.String("client_id", clientID), zap.Error(err))
+			}
+		}
+	}
+
 	a.provider.WriteAccessResponse(ctx, c.Writer, accessRequest, response)
 }
 
@@ -463,6 +538,51 @@ type registrationResponse struct {
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 	RegistrationClientURI   string   `json:"registration_client_uri"`
 	ClientIDIssuedAt        int64    `json:"client_id_issued_at"`
+	// ClientSecretExpiresAt is 0 when the registration never expires
+	// (RFC 7591 §3.2.1); otherwise the SR-5 registration TTL.
+	ClientSecretExpiresAt int64 `json:"client_secret_expires_at"`
+}
+
+var (
+	supportedGrantTypes    = map[string]bool{"authorization_code": true, "refresh_token": true}
+	supportedResponseTypes = map[string]bool{"code": true}
+	supportedAuthMethods   = map[string]bool{"none": true, "client_secret_basic": true, "client_secret_post": true}
+)
+
+// validateRegistration enforces the SPEC §1.4 metadata rules. It returns an
+// RFC 7591 error code and description, or empty strings when valid.
+func validateRegistration(req *registrationRequest) (string, string) {
+	if len(req.RedirectURIs) == 0 {
+		return "invalid_redirect_uri", "redirect_uris must not be empty"
+	}
+	for _, redirectURI := range req.RedirectURIs {
+		if err := cimd.ValidateRedirectURI(redirectURI); err != nil {
+			return "invalid_redirect_uri", err.Error()
+		}
+	}
+	if req.TokenEndpointAuthMethod == "" {
+		req.TokenEndpointAuthMethod = "client_secret_basic" // RFC 7591 default
+	}
+	if !supportedAuthMethods[req.TokenEndpointAuthMethod] {
+		return "invalid_client_metadata", "unsupported token_endpoint_auth_method"
+	}
+	if len(req.GrantTypes) == 0 {
+		req.GrantTypes = []string{"authorization_code"}
+	}
+	for _, grantType := range req.GrantTypes {
+		if !supportedGrantTypes[grantType] {
+			return "invalid_client_metadata", "unsupported grant_type: " + grantType
+		}
+	}
+	if len(req.ResponseTypes) == 0 {
+		req.ResponseTypes = []string{"code"}
+	}
+	for _, responseType := range req.ResponseTypes {
+		if !supportedResponseTypes[responseType] {
+			return "invalid_client_metadata", "unsupported response_type: " + responseType
+		}
+	}
+	return "", ""
 }
 
 func (a *IDPRouter) handleRegister(c *gin.Context) {
@@ -472,6 +592,26 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": err.Error()})
 		return
+	}
+
+	if errCode, errDesc := validateRegistration(&req); errCode != "" {
+		c.JSON(400, gin.H{"error": errCode, "error_description": errDesc})
+		return
+	}
+
+	// Registration cap (SR-5): never silently evict active clients.
+	if a.dcrMaxClients > 0 {
+		count, err := a.repo.CountClients(ctx)
+		if err != nil {
+			a.logger.Error("Failed to count registered clients", zap.Error(err))
+			c.JSON(500, gin.H{"error": "server_error"})
+			return
+		}
+		if count >= a.dcrMaxClients {
+			a.logger.Warn("DCR client cap reached", zap.Int("cap", a.dcrMaxClients))
+			c.JSON(503, gin.H{"error": "temporarily_unavailable", "error_description": "client registration is temporarily unavailable"})
+			return
+		}
 	}
 
 	clientID, err := utils.GenerateClientID()
@@ -512,7 +652,12 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 		Audience:      []string{a.externalURL},
 		Public:        isPublic,
 	}
-	if err := a.repo.RegisterClient(ctx, client); err != nil {
+	// Registration TTL (SR-5): refreshed on token issuance (handleToken).
+	var expiresAt time.Time
+	if a.dcrClientTTL > 0 {
+		expiresAt = time.Now().UTC().Add(a.dcrClientTTL)
+	}
+	if err := a.repo.RegisterClient(ctx, client, expiresAt); err != nil {
 		a.logger.Error("Failed to register client", zap.String("client_id", clientID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
 		return
@@ -538,6 +683,10 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 
 	if !isPublic {
 		response.ClientSecret = clientSecret
+		// 0 = never expires (RFC 7591 §3.2.1).
+		if !expiresAt.IsZero() {
+			response.ClientSecretExpiresAt = expiresAt.Unix()
+		}
 	}
 
 	c.JSON(201, response)
@@ -547,7 +696,7 @@ type authorizationServerResponse struct {
 	Issuer                                     string   `json:"issuer"`
 	AuthorizationEndpoint                      string   `json:"authorization_endpoint"`
 	TokenEndpoint                              string   `json:"token_endpoint"`
-	RegistrationEndpoint                       string   `json:"registration_endpoint"`
+	RegistrationEndpoint                       string   `json:"registration_endpoint,omitempty"`
 	JWKSURI                                    string   `json:"jwks_uri"`
 	IntrospectionEndpoint                      string   `json:"introspection_endpoint"`
 	RevocationEndpoint                         string   `json:"revocation_endpoint"`
@@ -573,11 +722,16 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
 		return
 	}
-	registrationEndpoint, err := url.JoinPath(a.externalURL, RegistrationEndpoint)
-	if err != nil {
-		a.logger.Error("Failed to create registration endpoint URL", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
-		return
+	// Advertised only while the deprecated DCR fallback is enabled
+	// (SPEC §1.4); CIMD needs no registration endpoint.
+	var registrationEndpoint string
+	if a.dcrEnabled {
+		registrationEndpoint, err = url.JoinPath(a.externalURL, RegistrationEndpoint)
+		if err != nil {
+			a.logger.Error("Failed to create registration endpoint URL", zap.Error(err))
+			c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+			return
+		}
 	}
 	jwksURI, err := url.JoinPath(a.externalURL, JWKSEndpoint)
 	if err != nil {

@@ -31,6 +31,10 @@ type Client struct {
 	Scopes         []string
 	Audience       []string
 	Public         bool
+	// CreatedAt/ExpiresAt implement the DCR registration TTL (SPEC §1.4).
+	// A zero ExpiresAt means the registration never expires.
+	CreatedAt time.Time `json:",omitempty"`
+	ExpiresAt time.Time `json:",omitempty"`
 }
 
 type AuthorizeRequest struct {
