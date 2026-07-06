@@ -240,7 +240,7 @@ key (§1.8), set at signing time.
 | Claim | Value | Verified on `/mcp` (§1.11) |
 |---|---|---|
 | `iss` | issuer (§0) | MUST equal issuer |
-| `sub` | stable user ID (`password_user` today; real user ID after F-005) | present |
+| `sub` | stable user ID (the persisted operator account's ID since F-005e1; OIDC logins keep their provider identity) | present |
 | `aud` | granted resource (§1.5/§1.6) — the issuer, as array | MUST contain issuer |
 | `exp` | issue time + access-token TTL (default 3600 s) | MUST be in the future |
 | `iat`, `nbf` | issue time | `nbf` MUST NOT be in the future |
@@ -333,22 +333,50 @@ against the full JWKS key set selected by `kid` (RS256/ES256, unknown `kid` or a
 FR-4/SR-6. Session-cookie based (`Secure`, `HttpOnly`, `SameSite=Lax`; HMAC key from
 `AUTH_HMAC_SECRET` or generated, part 2/3).
 
-- `GET /.auth/login` — login page. Backends: **password** (bcrypt hash(es); the self-contained
-  default) and **generic OIDC** (off by default, active only when configured — decision
-  F-011). **Target (F-005):** passkey/WebAuthn as preferred method + a real user model
-  (REQUIREMENTS FR-4); this spec section will be extended in F-005's prep, not here.
-- `POST /.auth/login` — password verification. **Rate limiting / lockout (SR-6, target):**
+- `GET /.auth/login` — login page. Backends: **passkey/WebAuthn** (preferred, offered once a
+  credential is enrolled), **password** (bcrypt hash(es) from the env config — see below),
+  and **generic OIDC** (off by default, active only when configured — decision F-011).
+- `POST /.auth/login` — password verification. **Rate limiting / lockout (SR-6, F-005e2):**
   per-IP and per-account limits (defaults in part 3); uniform error message and timing (no
-  user enumeration).
+  user/state enumeration — a disabled password fallback answers exactly like a wrong
+  password, and the bcrypt comparison always runs first).
 - `GET /.auth/logout` — session invalidation.
 - `/.auth/oidc`, `/.auth/oidc/callback` — generic OIDC login backend (unchanged contract,
   off by default).
 - Consent (`/.idp/auth/:ar_id`, §1.5) requires an authenticated session; it MUST re-verify
   the pending authorize request server-side (existing `ar_id` session mechanism).
 
-HTML pages (login/consent/error/unauthorized) are the §1.5 "non-redirectable error" and login
-surfaces; they MUST NOT reflect unvalidated request input (XSS) and MUST NOT reveal whether a
-user exists (SR-6).
+**Operator account & bootstrap (F-005e1):** the gateway has exactly **one** persisted user
+(FR-4), created on the first successful password login. Its generated 64-character ID is the
+JWT `sub` (§1.7) and the WebAuthn user handle. **The env config stays the authoritative
+password source** (decision F-005e, user-approved): the record never stores a password hash —
+only identity, passkeys, and the password-disabled flag.
+
+**Passkey/WebAuthn (F-005e1):** RP ID = the issuer's host, allowed origin = the issuer
+(§0). Ceremony state lives in the cookie session, one `finish` per `begin`.
+
+| Endpoint | Access | Purpose |
+|---|---|---|
+| `POST /.auth/webauthn/login/begin` / `finish` | public | assertion ceremony; `400`/`401` with a uniform error when unavailable or failed; a sign-count regression (clone warning) or a failed sign-count persist denies the login (fail-closed) |
+| `POST /.auth/webauthn/register/begin` / `finish` | session-gated | enrollment (attestation) ceremony; existing credentials are excluded |
+| `GET /.auth/settings` | session-gated | passkey list/enroll/delete + password-fallback toggle |
+| `POST /.auth/settings/password`, `POST /.auth/settings/credentials/delete` | session-gated | form posts (CSRF-mitigated by `SameSite=Lax`) |
+
+Settings and enrollment additionally require the session to belong to the persisted operator
+account (OIDC-provider sessions get `403`). **Password-fallback rule:** disabling requires ≥ 1
+passkey; the stored flag is only honoured while a passkey exists — deleting the last passkey
+re-activates the password login (lockout rescue). At startup, at least one usable backend
+(password, OIDC, or an enrolled passkey) MUST exist, otherwise fail-fast (§3.1).
+
+HTML pages (login/consent/error/unauthorized/settings) are the §1.5 "non-redirectable error"
+and login surfaces; they MUST NOT reflect unvalidated request input (XSS — settings messages
+are fixed server-side texts selected by code) and MUST NOT reveal whether a user exists
+(SR-6).
+
+**Delta:** **done, F-005e1** — passkey login/enrollment, operator bootstrap, `sub` = user ID,
+fallback semantics, and the startup auth-backend check are implemented (side fix: the
+session-gate middleware previously continued the handler chain after its login redirect;
+it now aborts). Rate limiting and lockout follow in F-005e2.
 
 ### 1.13 Health — `GET /healthz`
 
@@ -377,8 +405,8 @@ entity with a passed expiry; lookups MUST treat expired-but-not-yet-swept record
 | **Access token record** | token signature (JWT signature segment) + **request ID** (grant); request + session data | `ACCESS_TOKEN_TTL` (default 1 h) | `access_token_sessions` / `access_token-` |
 | **Refresh token record** | token signature + **request ID** (grant); request + session data, rotation state | `REFRESH_TOKEN_TTL` (default 30 d); rotated on use (§1.6) | `refresh_token_sessions` / `refresh_token-` |
 | **PKCE session** | request signature; challenge + method | tied to auth-code lifetime | `pkce_request_sessions` / `pkce_request-` |
-| **User** (new, implemented in F-005) | `user_id`; `username`, optional `password_hash` (bcrypt), `created_at` | permanent | `users` / `user:` |
-| **Passkey credential** (new, F-005) | WebAuthn credential ID; `user_id`, COSE public key, sign count, transports, `created_at`, `last_used_at` | permanent, user-revocable | `webauthn_credentials` / `webauthn_credential:` |
+| **User** (new, F-005e1) | `user_id`; `username`, `password_login_disabled`, `created_at` — **no password hash** (the env config stays authoritative; decision F-005e, replacing the originally drafted optional `password_hash`) | permanent (single record, FR-4) | `user_records` / `user-` |
+| **Passkey credential** (new, F-005e1) | WebAuthn credential ID (base64url); `user_id`, name, marshaled credential (COSE public key, sign count, transports, flags), `created_at`, `last_used_at` | permanent, user-revocable | `webauthn_credential_records` / `webauthn_credential-` |
 
 Access tokens are JWTs (§1.7) **and** have a server-side record: `/mcp` validation stays
 stateless-first (signature/claims), then requires the token's **record to still exist**
@@ -474,7 +502,7 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 | `DATA_PATH` (`-d`) | `./data` (image: `/data`) | Data directory (§2.2). Created if absent. |
 | `REPOSITORY_BACKEND` | `local` | `local` (bbolt) or `sqlite`. |
 | `REPOSITORY_DSN` | — | Required iff backend is `sqlite`. |
-| `PASSWORD` / `PASSWORD_HASH` | — | Self-contained login (§1.12). At least one auth backend MUST be configured (password, or OIDC, or — after F-005 — passkey); otherwise startup fails. `PASSWORD` is bcrypt-hashed at startup; prefer `PASSWORD_HASH`. |
+| `PASSWORD` / `PASSWORD_HASH` | — | Self-contained login (§1.12). At least one auth backend MUST be configured (password, OIDC, or an already-enrolled passkey); otherwise startup fails *(fail-fast implemented in F-005e1)*. `PASSWORD` is bcrypt-hashed at startup; prefer `PASSWORD_HASH`. |
 | `OIDC_CONFIGURATION_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`, `OIDC_USER_ID_FIELD`, `OIDC_PROVIDER_NAME`, `OIDC_ALLOWED_USERS`, `OIDC_ALLOWED_USERS_GLOB`, `OIDC_ALLOWED_ATTRIBUTES`, `OIDC_ALLOWED_ATTRIBUTES_GLOB` | off | Generic OIDC login backend — **off by default**, active only when URL + ID + secret are all set (decision F-011). |
 | `NO_PROVIDER_AUTO_SELECT` | `false` | Disable auto-redirect to a sole login provider. |
 | `PROXY_BEARER_TOKEN` | — | Upstream credential injection (FR-6). |

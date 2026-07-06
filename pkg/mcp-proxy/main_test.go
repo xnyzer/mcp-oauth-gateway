@@ -48,6 +48,7 @@ func TestRun_NormalizesExternalURLTrailingSlash(t *testing.T) {
 				DataPath:          t.TempDir(),
 				RepositoryBackend: "local",
 				ExternalURL:       tt.input,
+				Password:          "test-password",
 				ProxyTargets:      []string{"http://example.com"},
 				HeaderMappingBase: "/userinfo",
 				DCREnabled:        true,
@@ -117,6 +118,7 @@ func TestRun_PassesHTTPStreamingOnlyToProxyRouter(t *testing.T) {
 		DataPath:          t.TempDir(),
 		RepositoryBackend: "local",
 		ExternalURL:       "http://localhost",
+		Password:          "test-password",
 		ProxyTargets:      []string{"http://example.com"},
 		HTTPStreamingOnly: true,
 		HeaderMappingBase: "/userinfo",
@@ -126,6 +128,23 @@ func TestRun_PassesHTTPStreamingOnlyToProxyRouter(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to create proxy router")
 	require.True(t, streamingOnlyReceived, "httpStreamingOnly should be forwarded to proxy router")
+}
+
+// TestRun_RequiresAuthBackend covers the SPEC §3.1 fail-fast: without a
+// password, an OIDC provider, or an enrolled passkey, startup aborts.
+func TestRun_RequiresAuthBackend(t *testing.T) {
+	err := Run(Config{
+		Listen:            ":0",
+		TLSListen:         ":0",
+		DataPath:          t.TempDir(),
+		RepositoryBackend: "local",
+		ExternalURL:       "http://localhost",
+		ProxyTargets:      []string{"http://example.com"},
+		HeaderMappingBase: "/userinfo",
+		DCREnabled:        true,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no authentication backend configured")
 }
 
 func TestSessionCookieSecure(t *testing.T) {

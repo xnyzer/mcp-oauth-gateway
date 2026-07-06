@@ -37,3 +37,14 @@ func GenerateJTI() (string, error) {
 	}
 	return hex.EncodeToString(bytes), nil
 }
+
+// GenerateUserID returns the operator account ID (SPEC §1.12). 32 random
+// bytes hex-encoded yield 64 characters — the full 64-byte WebAuthn user
+// handle recommended by the spec.
+func GenerateUserID() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}

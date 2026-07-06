@@ -136,7 +136,15 @@
     <div class="login-container">
       <h1>MCP OAuth Gateway</h1>
 
-      {{if .HasPassword}}
+      {{if .PasskeyAvailable}}
+      <button class="password-button" id="passkey-button" type="button">
+        Login with passkey
+      </button>
+      <div class="error-message" id="passkey-error" hidden></div>
+      <div class="divider">
+        <span>or</span>
+      </div>
+      {{end}} {{if .HasPassword}}
       <form class="password-form" action="/.auth/login" method="POST">
         <div class="form-group">
           <label class="form-label" for="password">Password</label>
@@ -163,5 +171,36 @@
       </a>
       {{end}}
     </div>
+    {{if .PasskeyAvailable}} {{template "webauthn_script"}}
+    <script>
+      document
+        .getElementById("passkey-button")
+        .addEventListener("click", async () => {
+          const errorEl = document.getElementById("passkey-error");
+          errorEl.hidden = true;
+          try {
+            const beginResp = await fetch("/.auth/webauthn/login/begin", {
+              method: "POST",
+            });
+            if (!beginResp.ok) throw new Error("begin failed");
+            const options = await beginResp.json();
+            const assertion = await navigator.credentials.get({
+              publicKey: decodePublicKeyOptions(options.publicKey),
+            });
+            const finishResp = await fetch("/.auth/webauthn/login/finish", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(credentialToJSON(assertion)),
+            });
+            if (!finishResp.ok) throw new Error("finish failed");
+            const result = await finishResp.json();
+            window.location.href = result.redirect || "/";
+          } catch (err) {
+            errorEl.textContent = "Passkey login failed";
+            errorEl.hidden = false;
+          }
+        });
+    </script>
+    {{end}}
   </body>
 </html>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Settings - MCP OAuth Gateway</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        margin: 0;
+        padding: 2rem 1rem;
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+      }
+      .settings-container {
+        background: white;
+        padding: 2.5rem;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+        max-width: 640px;
+        width: 100%;
+        align-self: flex-start;
+      }
+      h1 {
+        color: #333;
+        margin: 0 0 0.5rem;
+        font-size: 1.6rem;
+        font-weight: 600;
+      }
+      h2 {
+        color: #444;
+        font-size: 1.1rem;
+        margin: 2rem 0 0.75rem;
+      }
+      .subtitle {
+        color: #888;
+        font-size: 0.9rem;
+        margin-bottom: 1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 1px solid #eee;
+        color: #444;
+      }
+      th {
+        color: #777;
+        font-weight: 500;
+      }
+      .button {
+        padding: 10px 16px;
+        background: linear-gradient(45deg, #667eea, #764ba2);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .button.secondary {
+        background: #f1f2f6;
+        color: #555;
+      }
+      .form-input {
+        padding: 10px 12px;
+        border: 2px solid #e1e5e9;
+        border-radius: 8px;
+        font-size: 14px;
+        box-sizing: border-box;
+      }
+      .row {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        margin: 0.75rem 0;
+        flex-wrap: wrap;
+      }
+      .message {
+        background: #eef6ee;
+        border: 1px solid #cfe8cf;
+        color: #2f6f2f;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        margin-bottom: 1rem;
+      }
+      .error-message {
+        color: #e74c3c;
+        font-size: 0.9rem;
+        margin-top: 0.5rem;
+      }
+      .muted {
+        color: #999;
+      }
+      .footer {
+        margin-top: 2rem;
+        font-size: 0.85rem;
+      }
+      .footer a {
+        color: #667eea;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="settings-container">
+      <h1>Settings</h1>
+      <div class="subtitle">Signed in as {{.Username}}</div>
+
+      {{if .Message}}
+      <div class="message">{{.Message}}</div>
+      {{end}}
+
+      <h2>Passkeys</h2>
+      {{if .Credentials}}
+      <table>
+        <tr>
+          <th>Name</th>
+          <th>Created</th>
+          <th>Last used</th>
+          <th></th>
+        </tr>
+        {{range .Credentials}}
+        <tr>
+          <td>{{if .Name}}{{.Name}}{{else}}<span class="muted">unnamed</span>{{end}}</td>
+          <td>{{.CreatedAt.Format "2006-01-02"}}</td>
+          <td>
+            {{if .LastUsedAt.IsZero}}<span class="muted">never</span
+            >{{else}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{end}}
+          </td>
+          <td>
+            <form
+              action="/.auth/settings/credentials/delete"
+              method="POST"
+              style="margin: 0"
+            >
+              <input type="hidden" name="id" value="{{.ID}}" />
+              <button class="button secondary" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </table>
+      {{else}}
+      <div class="muted">No passkeys registered yet.</div>
+      {{end}}
+
+      <div class="row">
+        <input
+          class="form-input"
+          type="text"
+          id="passkey-name"
+          placeholder="Name (e.g. MacBook)"
+          maxlength="64"
+        />
+        <button class="button" id="register-button" type="button">
+          Register passkey
+        </button>
+      </div>
+      <div class="error-message" id="register-error" hidden></div>
+
+      {{if .HasPassword}}
+      <h2>Password login</h2>
+      <div class="subtitle">
+        {{if .PasswordLoginActive}}Password login is currently
+        <strong>enabled</strong>.{{else}}Password login is currently
+        <strong>disabled</strong>.{{end}} {{if and .PasswordLoginDisabled (not
+        .PasswordLoginActive)}}{{else if .PasswordLoginDisabled}}(Disabled, but
+        active again because no passkeys remain.){{end}}
+      </div>
+      <form action="/.auth/settings/password" method="POST">
+        {{if .PasswordLoginDisabled}}
+        <input type="hidden" name="disabled" value="false" />
+        <button class="button secondary" type="submit">
+          Enable password login
+        </button>
+        {{else}}
+        <input type="hidden" name="disabled" value="true" />
+        <button class="button secondary" type="submit">
+          Disable password login (passkey only)
+        </button>
+        {{end}}
+      </form>
+      {{end}}
+
+      <div class="footer"><a href="/.auth/logout">Logout</a></div>
+    </div>
+
+    {{template "webauthn_script"}}
+    <script>
+      document
+        .getElementById("register-button")
+        .addEventListener("click", async () => {
+          const errorEl = document.getElementById("register-error");
+          errorEl.hidden = true;
+          try {
+            const beginResp = await fetch("/.auth/webauthn/register/begin", {
+              method: "POST",
+            });
+            if (!beginResp.ok) throw new Error("begin failed");
+            const options = await beginResp.json();
+            const credential = await navigator.credentials.create({
+              publicKey: decodePublicKeyOptions(options.publicKey),
+            });
+            const name = encodeURIComponent(
+              document.getElementById("passkey-name").value
+            );
+            const finishResp = await fetch(
+              "/.auth/webauthn/register/finish?name=" + name,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(credentialToJSON(credential)),
+              }
+            );
+            if (!finishResp.ok) throw new Error("finish failed");
+            window.location.href = "/.auth/settings?msg=saved";
+          } catch (err) {
+            errorEl.textContent = "Passkey registration failed";
+            errorEl.hidden = false;
+          }
+        });
+    </script>
+  </body>
+</html>

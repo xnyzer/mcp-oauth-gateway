@@ -443,11 +443,29 @@ func Run(cfg Config) error {
 		passwordHashes = append(passwordHashes, cfg.PasswordHash)
 	}
 
+	// At least one auth backend must be able to log the operator in
+	// (SPEC §3.1): a password, an OIDC provider, or an already-enrolled
+	// passkey. Otherwise every login would dead-end — fail fast instead.
+	if len(passwordHashes) == 0 && len(providers) == 0 {
+		if !hasEnrolledPasskey(ctx, repo) {
+			return fmt.Errorf("no authentication backend configured: set PASSWORD or PASSWORD_HASH (or configure OIDC); passkeys require a bootstrap login first")
+		}
+		logger.Info("No password or OIDC provider configured; relying on enrolled passkeys for login")
+	}
+
 	// Collect the top-level userinfo keys that are actually needed so the
 	// session cookie doesn't store the entire provider response.
 	userInfoFields := userInfoFieldsFromConfig(cfg.OIDCUserIDField, headerMapping)
 
-	authRouter, err := auth.NewAuthRouter(passwordHashes, cfg.NoProviderAutoSelect, userInfoFields, providers...)
+	authRouter, err := auth.NewAuthRouter(auth.Config{
+		PasswordHashes:       passwordHashes,
+		NoProviderAutoSelect: cfg.NoProviderAutoSelect,
+		UserInfoFields:       userInfoFields,
+		Providers:            providers,
+		Users:                repo,
+		ExternalURL:          externalURL,
+		Logger:               logger,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create auth router: %w", err)
 	}
@@ -749,6 +767,17 @@ func Run(cfg Config) error {
 
 func sessionCookieSecure(externalURL *url.URL) bool {
 	return externalURL.Scheme == "https"
+}
+
+// hasEnrolledPasskey reports whether the operator account exists and has at
+// least one registered passkey (SPEC §3.1 auth-backend check).
+func hasEnrolledPasskey(ctx context.Context, repo repository.Repository) bool {
+	user, err := repo.GetUser(ctx)
+	if err != nil {
+		return false
+	}
+	credentials, err := repo.ListWebAuthnCredentials(ctx, user.ID)
+	return err == nil && len(credentials) > 0
 }
 
 // userInfoFieldsFromConfig extracts the top-level userinfo keys referenced

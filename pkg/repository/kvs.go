@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	time "time"
 
 	"github.com/ory/fosite"
@@ -379,6 +380,64 @@ func (r *kvsRepository) GetAuthorizeRequest(ctx context.Context, requestID strin
 
 func (r *kvsRepository) DeleteAuthorizeRequest(ctx context.Context, requestID string) error {
 	return r.delete(ctx, "authorize_request-"+requestID)
+}
+
+// kvsUserKey is the fixed key of the single operator account (FR-4).
+const kvsUserKey = "user-record"
+
+func (r *kvsRepository) GetUser(ctx context.Context) (*models.User, error) {
+	var user models.User
+	if err := r.get(ctx, kvsUserKey, &user); err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *kvsRepository) CreateUser(ctx context.Context, user *models.User) error {
+	return r.create(ctx, kvsUserKey, user)
+}
+
+func (r *kvsRepository) UpdateUser(ctx context.Context, user *models.User) error {
+	return r.update(ctx, kvsUserKey, user)
+}
+
+func (r *kvsRepository) AddWebAuthnCredential(ctx context.Context, credential *models.WebAuthnCredential) error {
+	return r.create(ctx, "webauthn_credential-"+credential.ID, credential)
+}
+
+// ListWebAuthnCredentials returns the user's passkeys, oldest first.
+func (r *kvsRepository) ListWebAuthnCredentials(ctx context.Context, userID string) ([]models.WebAuthnCredential, error) {
+	var credentials []models.WebAuthnCredential
+	err := r.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		cursor := bucket.Cursor()
+		prefix := []byte("webauthn_credential-")
+		for k, v := cursor.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = cursor.Next() {
+			var credential models.WebAuthnCredential
+			if err := json.Unmarshal(v, &credential); err != nil {
+				return fmt.Errorf("failed to decode passkey credential: %w", err)
+			}
+			if credential.UserID == userID {
+				credentials = append(credentials, credential)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(credentials, func(i, j int) bool {
+		return credentials[i].CreatedAt.Before(credentials[j].CreatedAt)
+	})
+	return credentials, nil
+}
+
+func (r *kvsRepository) UpdateWebAuthnCredential(ctx context.Context, credential *models.WebAuthnCredential) error {
+	return r.update(ctx, "webauthn_credential-"+credential.ID, credential)
+}
+
+func (r *kvsRepository) DeleteWebAuthnCredential(ctx context.Context, id string) error {
+	return r.delete(ctx, "webauthn_credential-"+id)
 }
 
 func (r *kvsRepository) Close() error {

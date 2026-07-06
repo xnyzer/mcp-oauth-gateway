@@ -568,3 +568,68 @@ abort.
 `pkg/idp/idp_test.go`, `pkg/proxy/proxy.go`, `pkg/proxy/proxy_test.go`,
 `pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/main_test.go`, `pkg/utils/{keys,rand}.go`,
 `pkg/utils/keys_test.go`, `SPEC.md` (+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).
+
+---
+
+## F-005e1 — User model + passkey/WebAuthn — DONE 2026-07-06
+
+Fifth substep of F-005; first half of the F-005e split (prep decision 2026-07-06: env config
+stays the authoritative password source — **Variante A**, user-approved after a pros/cons
+walkthrough; B (hash migrated into the user record) was rejected as an operator trap: env
+rotation would silently stop working, and it needs a password-change UI that is out of scope).
+
+**What was done** (SPEC references in parentheses):
+- **Operator account (FR-4, §1.12):** single persisted `models.User`, bootstrapped on the
+  first successful password login; generated 64-char ID doubles as JWT `sub` (§1.7) and
+  WebAuthn user handle. The record stores identity, passkeys, and the
+  `password_login_disabled` flag — **never a password hash** (Variante A).
+- **Storage (§2.1):** `UserStorage` interface on the repository (Get/Create/UpdateUser +
+  Add/List/Update/DeleteWebAuthnCredential) implemented for **both backends** (bbolt:
+  `user-record` fixed key + `webauthn_credential-` prefix; SQLite: `user_records` +
+  `webauthn_credential_records` via GORM auto-migration). Credentials store the marshaled
+  go-webauthn credential as JSON so models stays agnostic of the library type.
+- **Passkey/WebAuthn (§1.12):** `github.com/go-webauthn/webauthn` v0.17.4 (BSD-3) as the
+  vetted ceremony library (SR-1). Public assertion endpoints
+  `/.auth/webauthn/login/begin|finish`; session-gated attestation endpoints
+  `/.auth/webauthn/register/begin|finish` (existing credentials excluded). RP ID/origin
+  derived from the normalized issuer. Ceremony state lives in the cookie session, consumed
+  on finish (one finish per begin — replay tested). Fail-closed: clone warning (sign-count
+  regression) and a failed sign-count persist both deny the login.
+- **Settings page (§1.12):** `/.auth/settings` (+ `settings/password`,
+  `settings/credentials/delete` form posts, `SameSite=Lax` CSRF mitigation) — passkey
+  list/enroll/delete, password-fallback toggle. Feedback messages are fixed server-side
+  texts selected by `?msg=` code (no reflected input). Settings/enrollment additionally
+  require the session to belong to the persisted user — OIDC-provider sessions get 403.
+- **Fallback rule (§1.12):** disabling the password requires ≥1 passkey; the flag is only
+  honoured while a passkey exists — deleting the last one re-activates the password login
+  (lockout rescue). Disabled-password logins answer exactly like wrong-password ones
+  (uniform body, bcrypt always runs first — no state enumeration, SR-6).
+- **Startup check (§3.1):** fail-fast when neither password, OIDC, nor an enrolled passkey
+  can log the operator in.
+- **Security bug found by test, fixed:** the session-gate middleware (`RequireAuth`)
+  redirected unauthenticated requests **without aborting the handler chain** — on bodyless
+  (POST) redirects gin's deferred WriteHeader let the downstream handler run and even
+  override the 302. Inherited from upstream; now aborts (fail-closed, SR-3).
+- **Enabling refactor:** `auth.NewAuthRouter` takes a `Config` struct (CODING-STANDARDS §3);
+  templates gained `settings.html` + a shared `webauthn_script.html` (base64url/ArrayBuffer
+  helpers + ceremony JS in `login.html`/`settings.html`).
+- **Deps:** `go-webauthn/webauthn` v0.17.4 (BSD-3) + transitives (BSD/MIT/Apache-2.0, all
+  permissive, verified); test-only `descope/virtualwebauthn` v1.0.5 (MIT).
+
+**Verification:** gofmt/vet clean, all 10 packages green. New tests: full enrollment+login
+round-trip with a **virtual authenticator** (bootstrap → enroll → fresh-browser passkey
+login → settings reachable → LastUsedAt stamped → replay denied); fallback semantics
+(disable refused without passkey, uniform disabled-vs-wrong response, passkey-only login,
+auto re-enable after deleting the last passkey); unavailable-before-enrollment; session
+gating (anonymous → redirect; foreign/OIDC session → 403); user+credential lifecycle on
+both storage backends; auth-backend fail-fast. Live smoke test with the built binary:
+fail-fast without backend, bootstrap on first login ("Signed in as admin", no second
+bootstrap after restart), settings gated, register/begin returns correct RP options, OAuth
+flow issues `sub` = 64-char user ID (not `password_user`), proxied request 200.
+
+**Files changed:** new `pkg/auth/{webauthn,settings}.go`, `pkg/auth/webauthn_test.go`,
+`pkg/auth/templates/{settings,webauthn_script}.html`, `pkg/repository/users_test.go`;
+edited `pkg/auth/auth.go`, `pkg/auth/auth_test.go`, `pkg/auth/templates/login.html`,
+`pkg/models/models.go`, `pkg/repository/{interface,kvs,sql}.go`, `pkg/mcp-proxy/main.go`,
+`pkg/mcp-proxy/main_test.go`, `pkg/idp/idp_test.go`, `pkg/utils/rand.go`, `go.mod`,
+`go.sum`, `SPEC.md` (+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).

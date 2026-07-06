@@ -98,7 +98,7 @@ func TestUserInfoFilteringInOAuthFlow(t *testing.T) {
 		mockProvider.EXPECT().Exchange(gomock.Any(), gomock.Any()).Return(mockToken, nil)
 		mockProvider.EXPECT().Authorization(gomock.Any(), mockToken).Return(true, "user@example.com", fullUserInfo, nil)
 
-		authRouter, err := NewAuthRouter(nil, false, []string{"email", "preferred_username"}, mockProvider)
+		authRouter, err := NewAuthRouter(Config{UserInfoFields: []string{"email", "preferred_username"}, Providers: []Provider{mockProvider}})
 		require.NoError(t, err)
 
 		// Add a route that reads back the session to verify stored userinfo
@@ -162,7 +162,7 @@ func TestUserInfoFilteringInOAuthFlow(t *testing.T) {
 		mockProvider.EXPECT().Exchange(gomock.Any(), gomock.Any()).Return(mockToken, nil)
 		mockProvider.EXPECT().Authorization(gomock.Any(), mockToken).Return(true, "user@example.com", fullUserInfo, nil)
 
-		authRouter, err := NewAuthRouter(nil, false, nil, mockProvider)
+		authRouter, err := NewAuthRouter(Config{Providers: []Provider{mockProvider}})
 		require.NoError(t, err)
 
 		var storedUserInfo string
@@ -213,7 +213,7 @@ func TestAuthenticationFlow(t *testing.T) {
 		mockProvider.EXPECT().RedirectURL().Return("/.auth/test/callback").AnyTimes()
 
 		// Create AuthRouter (auto-select enabled by default)
-		authRouter, err := NewAuthRouter(nil, false, nil, mockProvider)
+		authRouter, err := NewAuthRouter(Config{Providers: []Provider{mockProvider}})
 		require.NoError(t, err)
 
 		router := setupTestRouter(authRouter)
@@ -247,7 +247,7 @@ func TestAuthenticationFlow(t *testing.T) {
 		mockProvider.EXPECT().Authorization(gomock.Any(), mockToken).Return(true, "authorized_user", map[string]any{"email": "authorized_user@example.com"}, nil)
 
 		// Create AuthRouter
-		authRouter, err := NewAuthRouter(nil, false, nil, mockProvider)
+		authRouter, err := NewAuthRouter(Config{Providers: []Provider{mockProvider}})
 		require.NoError(t, err)
 
 		router := setupTestRouter(authRouter)
@@ -308,7 +308,7 @@ func TestAuthenticationFlow(t *testing.T) {
 		mockProvider.EXPECT().Authorization(gomock.Any(), mockToken).Return(false, "unauthorized_user", map[string]any{"email": "unauthorized_user@example.com"}, nil)
 
 		// Create AuthRouter
-		authRouter, err := NewAuthRouter(nil, false, nil, mockProvider)
+		authRouter, err := NewAuthRouter(Config{Providers: []Provider{mockProvider}})
 		require.NoError(t, err)
 
 		router := setupTestRouter(authRouter)
@@ -358,7 +358,7 @@ func TestLoginAutoRedirect(t *testing.T) {
 		mockProvider.EXPECT().AuthURL().Return("/.auth/test").AnyTimes()
 		mockProvider.EXPECT().RedirectURL().Return("/.auth/test/callback").AnyTimes()
 
-		authRouter, err := NewAuthRouter(nil, false, nil, mockProvider)
+		authRouter, err := NewAuthRouter(Config{Providers: []Provider{mockProvider}})
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -389,7 +389,7 @@ func TestLoginAutoRedirect(t *testing.T) {
 		mockProvider.EXPECT().AuthURL().Return("/.auth/test").AnyTimes()
 		mockProvider.EXPECT().RedirectURL().Return("/.auth/test/callback").AnyTimes()
 
-		authRouter, err := NewAuthRouter(nil, true, nil, mockProvider)
+		authRouter, err := NewAuthRouter(Config{NoProviderAutoSelect: true, Providers: []Provider{mockProvider}})
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -419,7 +419,7 @@ func TestLoginAutoRedirect(t *testing.T) {
 		mockProvider.EXPECT().RedirectURL().Return("/.auth/test/callback").AnyTimes()
 
 		// Non-empty passwordHash slice disables auto-select
-		authRouter, err := NewAuthRouter([]string{"dummy"}, false, nil, mockProvider)
+		authRouter, err := NewAuthRouter(Config{PasswordHashes: []string{"dummy"}, Providers: []Provider{mockProvider}})
 		require.NoError(t, err)
 
 		router := gin.New()

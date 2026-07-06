@@ -9,6 +9,7 @@ import (
 	"github.com/ory/fosite"
 	"github.com/ory/fosite/handler/oauth2"
 	"github.com/ory/fosite/handler/pkce"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/models"
 )
 
 // SchemaVersion is the current data-store schema version (SPEC §2.5).
@@ -21,8 +22,27 @@ type Repository interface {
 	pkce.PKCERequestStorage
 	DynamicClientStorage
 	AuthorizeRequestStorage
+	UserStorage
 	MaintenanceStorage
 	Close() error
+}
+
+// UserStorage persists the gateway's single operator account and their
+// passkey credentials (FR-4, SPEC §1.12/§2.1).
+type UserStorage interface {
+	// GetUser returns the single user record, or fosite.ErrNotFound before
+	// the first password login has bootstrapped it.
+	GetUser(ctx context.Context) (*models.User, error)
+	CreateUser(ctx context.Context, user *models.User) error
+	UpdateUser(ctx context.Context, user *models.User) error
+	// AddWebAuthnCredential stores a newly registered passkey.
+	AddWebAuthnCredential(ctx context.Context, credential *models.WebAuthnCredential) error
+	// ListWebAuthnCredentials returns the user's passkeys, oldest first.
+	ListWebAuthnCredentials(ctx context.Context, userID string) ([]models.WebAuthnCredential, error)
+	// UpdateWebAuthnCredential persists ceremony state changes (sign count,
+	// last-used timestamp).
+	UpdateWebAuthnCredential(ctx context.Context, credential *models.WebAuthnCredential) error
+	DeleteWebAuthnCredential(ctx context.Context, id string) error
 }
 
 // MaintenanceStorage covers garbage collection and schema versioning

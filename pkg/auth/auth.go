@@ -1,15 +1,22 @@
 package auth
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
 	"html/template"
 	"net/http"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/ory/fosite"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/models"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/utils"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -22,6 +29,7 @@ type AuthRouter struct {
 	loginTemplate        *template.Template
 	unauthorizedTemplate *template.Template
 	errorTemplate        *template.Template
+	settingsTemplate     *template.Template
 	// When true, do not auto-redirect to the sole provider even if
 	// there is only one provider and no password is set.
 	noProviderAutoSelect bool
@@ -30,10 +38,33 @@ type AuthRouter struct {
 	// stripped before the data is stored in the session cookie. This
 	// prevents oversized cookies when the provider returns many claims.
 	userInfoFields []string
+	// users persists the operator account + passkeys; nil disables
+	// passkey support and the settings page (SPEC §1.12).
+	users    repository.UserStorage
+	webAuthn *webauthn.WebAuthn
+	logger   *zap.Logger
 }
 
-func NewAuthRouter(passwordHash []string, noProviderAutoSelect bool, userInfoFields []string, providers ...Provider) (*AuthRouter, error) {
-	tmpl, err := template.ParseFS(templateFS, "templates/login.html")
+// Config carries all options for the user-authentication surface
+// (SPEC §1.12).
+type Config struct {
+	// PasswordHashes are the bcrypt hashes accepted for password login
+	// (the env-config source of truth — decision F-005e).
+	PasswordHashes       []string
+	NoProviderAutoSelect bool
+	UserInfoFields       []string
+	Providers            []Provider
+	// Users persists the operator account and passkeys. nil disables
+	// passkey login and the settings page.
+	Users repository.UserStorage
+	// ExternalURL is the normalized issuer (SPEC §0); it derives the
+	// WebAuthn RP ID and allowed origin. Required when Users is set.
+	ExternalURL string
+	Logger      *zap.Logger
+}
+
+func NewAuthRouter(cfg Config) (*AuthRouter, error) {
+	tmpl, err := template.ParseFS(templateFS, "templates/login.html", "templates/webauthn_script.html")
 	if err != nil {
 		return nil, err
 	}
@@ -48,14 +79,34 @@ func NewAuthRouter(passwordHash []string, noProviderAutoSelect bool, userInfoFie
 		return nil, err
 	}
 
+	settingsTmpl, err := template.ParseFS(templateFS, "templates/settings.html", "templates/webauthn_script.html")
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Logger == nil {
+		cfg.Logger = zap.NewNop()
+	}
+	var webAuthn *webauthn.WebAuthn
+	if cfg.Users != nil {
+		webAuthn, err = newWebAuthn(cfg.ExternalURL)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &AuthRouter{
-		passwordHash:         passwordHash,
-		providers:            providers,
+		passwordHash:         cfg.PasswordHashes,
+		providers:            cfg.Providers,
 		loginTemplate:        tmpl,
 		unauthorizedTemplate: unauthorizedTmpl,
 		errorTemplate:        errorTmpl,
-		noProviderAutoSelect: noProviderAutoSelect,
-		userInfoFields:       userInfoFields,
+		settingsTemplate:     settingsTmpl,
+		noProviderAutoSelect: cfg.NoProviderAutoSelect,
+		userInfoFields:       cfg.UserInfoFields,
+		users:                cfg.Users,
+		webAuthn:             webAuthn,
+		logger:               cfg.Logger,
 	}, nil
 }
 
@@ -65,20 +116,49 @@ const (
 	OIDCAuthEndpoint     = "/.auth/oidc"
 	OIDCCallbackEndpoint = "/.auth/oidc/callback"
 
+	// Passkey ceremonies and the settings page (SPEC §1.12). The login
+	// ceremony is public; registration and settings are session-gated.
+	WebAuthnLoginBeginEndpoint       = "/.auth/webauthn/login/begin"
+	WebAuthnLoginFinishEndpoint      = "/.auth/webauthn/login/finish"
+	WebAuthnRegisterBeginEndpoint    = "/.auth/webauthn/register/begin"
+	WebAuthnRegisterFinishEndpoint   = "/.auth/webauthn/register/finish"
+	SettingsEndpoint                 = "/.auth/settings"
+	SettingsPasswordEndpoint         = "/.auth/settings/password"
+	SettingsCredentialDeleteEndpoint = "/.auth/settings/credentials/delete"
+
 	PasswordProvider = "password"
-	PasswordUserID   = "password_user"
+	// PasswordUserID is the legacy subject used when no user store is
+	// configured (programmatic use); with a store, the persisted user's ID
+	// is the subject (SPEC §1.7).
+	PasswordUserID = "password_user"
+
+	// defaultUsername names the single operator account (FR-4); shown by
+	// authenticators during passkey registration.
+	defaultUsername = "admin"
 
 	SessionKeyAuthorized  = "authorized"
 	SessionKeyRedirectURL = "redirect_url"
 	SessionKeyOAuthState  = "oauth_state"
 	SessionKeyUserID      = "user_id"
 	SessionKeyUserInfo    = "user_info"
+
+	sessionKeyWebAuthnLogin        = "webauthn_login"
+	sessionKeyWebAuthnRegistration = "webauthn_registration"
 )
 
 func (a *AuthRouter) SetupRoutes(router gin.IRouter) {
 	router.GET(LoginEndpoint, a.handleLogin)
 	router.POST(LoginEndpoint, a.handleLoginPost)
 	router.GET(LogoutEndpoint, a.handleLogout)
+	if a.webAuthn != nil {
+		router.POST(WebAuthnLoginBeginEndpoint, a.handleWebAuthnLoginBegin)
+		router.POST(WebAuthnLoginFinishEndpoint, a.handleWebAuthnLoginFinish)
+		router.POST(WebAuthnRegisterBeginEndpoint, a.RequireAuth(), a.handleWebAuthnRegisterBegin)
+		router.POST(WebAuthnRegisterFinishEndpoint, a.RequireAuth(), a.handleWebAuthnRegisterFinish)
+		router.GET(SettingsEndpoint, a.RequireAuth(), a.handleSettings)
+		router.POST(SettingsPasswordEndpoint, a.RequireAuth(), a.handleSettingsPassword)
+		router.POST(SettingsCredentialDeleteEndpoint, a.RequireAuth(), a.handleSettingsCredentialDelete)
+	}
 	for _, provider := range a.providers {
 		router.GET(provider.RedirectURL(), func(c *gin.Context) {
 			session := sessions.Default(c)
@@ -165,33 +245,47 @@ func (a *AuthRouter) handleLogin(c *gin.Context) {
 
 func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 	password := c.PostForm("password")
-	var errorMessage string
-
 	if password == "" {
-		errorMessage = "Password is required"
-	} else {
-		var isValid bool
-		for _, hash := range a.passwordHash {
-			err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-			if err == nil {
-				isValid = true
-				break
-			}
-		}
-
-		if !isValid {
-			errorMessage = "Invalid password"
-		}
+		a.renderLogin(c, "Password is required")
+		return
 	}
 
-	if errorMessage != "" {
-		a.renderLogin(c, errorMessage)
+	// The bcrypt comparison always runs first so the disabled-fallback
+	// check below cannot be distinguished by response timing (SR-6).
+	var isValid bool
+	for _, hash := range a.passwordHash {
+		err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+		if err == nil {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		a.renderLogin(c, "Invalid password")
 		return
+	}
+
+	// Bootstrap or load the operator account (SPEC §1.12); the subject
+	// becomes the persisted user ID (SPEC §1.7).
+	subject := PasswordUserID
+	if a.users != nil {
+		user, passkeyCount, err := a.ensureUser(c.Request.Context())
+		if err != nil {
+			a.renderError(c, err)
+			return
+		}
+		// Uniform error when the password fallback is disabled — the same
+		// message as a wrong password (SR-6, no state enumeration).
+		if !a.isPasswordLoginActive(user, passkeyCount) {
+			a.renderLogin(c, "Invalid password")
+			return
+		}
+		subject = user.ID
 	}
 
 	session := sessions.Default(c)
 	session.Set(SessionKeyAuthorized, true)
-	session.Set(SessionKeyUserID, PasswordUserID)
+	session.Set(SessionKeyUserID, subject)
 	redirectURL := session.Get(SessionKeyRedirectURL)
 	if redirectURL != nil {
 		session.Delete(SessionKeyRedirectURL)
@@ -206,6 +300,47 @@ func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 	} else {
 		c.Redirect(http.StatusFound, redirectURL.(string))
 	}
+}
+
+// ensureUser loads the operator account, creating it on the first
+// successful password login (bootstrap, SPEC §1.12). It returns the number
+// of registered passkeys alongside.
+func (a *AuthRouter) ensureUser(ctx context.Context) (*models.User, int, error) {
+	user, err := a.users.GetUser(ctx)
+	if errors.Is(err, fosite.ErrNotFound) {
+		id, err := utils.GenerateUserID()
+		if err != nil {
+			return nil, 0, err
+		}
+		user = &models.User{
+			ID:        id,
+			Username:  defaultUsername,
+			CreatedAt: time.Now().UTC(),
+		}
+		if err := a.users.CreateUser(ctx, user); err != nil {
+			return nil, 0, err
+		}
+		a.logger.Info("Bootstrapped operator account", zap.String("username", user.Username))
+		return user, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	credentials, err := a.users.ListWebAuthnCredentials(ctx, user.ID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return user, len(credentials), nil
+}
+
+// isPasswordLoginActive applies the fallback rule (SPEC §1.12): the stored
+// disable flag only takes effect while at least one passkey exists, so the
+// operator can never lock themselves out entirely.
+func (a *AuthRouter) isPasswordLoginActive(user *models.User, passkeyCount int) bool {
+	if len(a.passwordHash) == 0 {
+		return false
+	}
+	return !user.PasswordLoginDisabled || passkeyCount == 0
 }
 
 func (a *AuthRouter) handleLogout(c *gin.Context) {
@@ -229,6 +364,9 @@ func (a *AuthRouter) RequireAuth() gin.HandlerFunc {
 				return
 			}
 			c.Redirect(http.StatusFound, LoginEndpoint)
+			// Without Abort the downstream handler would still run (and on
+			// bodyless redirects even override the status) — fail closed.
+			c.Abort()
 			return
 		}
 
@@ -245,6 +383,9 @@ type loginTemplateData struct {
 	Providers     []Provider
 	HasPassword   bool
 	PasswordError string
+	// PasskeyAvailable shows the passkey button once the operator account
+	// has at least one registered credential (SPEC §1.12).
+	PasskeyAvailable bool
 }
 
 type unauthorizedTemplateData struct {
@@ -258,9 +399,10 @@ type errorTemplateData struct {
 
 func (a *AuthRouter) renderLogin(c *gin.Context, passwordError string) {
 	data := loginTemplateData{
-		Providers:     a.providers,
-		HasPassword:   len(a.passwordHash) > 0,
-		PasswordError: passwordError,
+		Providers:        a.providers,
+		HasPassword:      len(a.passwordHash) > 0,
+		PasswordError:    passwordError,
+		PasskeyAvailable: a.hasPasskeys(c.Request.Context()),
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	if passwordError != "" {

@@ -24,6 +24,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-005b | Token binding & lifecycle → **RFC 8707 `resource`→`aud`, `jti`/`client_id`/`scope` claims, `/revoke` (RFC 7009) + fail-closed proxy revocation check, TTL config, sweeper + schema version**; fixed upstream revoke-by-signature no-op bug. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005c | CIMD + DCR hardening → **`pkg/cimd` resolver (dial-time SSRF guards, limits, cache) as fosite client source; DCR TTL/cap/validation/`DCR_ENABLED`**; reserved-namespace guard (disabled endpoints 404, never proxied). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005d | Key management → **new `pkg/keys`: key dir + atomic manifest, legacy-key migration (kid preserved), interval/alg-switch rotation with retiring window, multi-key JWKS + kid verification end to end (incl. introspection via custom fosite signer), `KEY_ALG` RS256/ES256 + `KEY_ROTATION_INTERVAL`**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
+| F-005e1 | User model + passkey/WebAuthn → **single operator account (bootstrap on first password login, `sub` = user ID), go-webauthn ceremonies + session-gated `/.auth/settings`, disableable password fallback (env stays authoritative) with lockout rescue, §3.1 auth-backend fail-fast**; fixed inherited RequireAuth chain-continuation bug. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 
 ---
 
@@ -66,13 +67,16 @@ The remaining tasks are a hard chain: 1→2→3. Each task below carries its own
 
 #### F-005e — Self-contained auth & abuse protection
 
-**What:** User model + passkey/WebAuthn (`github.com/go-webauthn/webauthn`) with password-bootstrap enrollment (session-gated settings page); rate limits on `/register`, `/token`, login + account lockout (SR-6); structured auth events `login_ok`/`login_fail`/`token_issued`/`register`/`rate_limited`/`revoked` (SR-8).
-**Files:** `pkg/auth/`, `pkg/repository/`, new `pkg/ratelimit/` + tests.
-**Dependencies:** F-005b (user/`sub` claims), F-005d not required.
-- [ ] passkey enrollment + login round-trip (WebAuthn test vectors / virtual authenticator)
+Split into e1/e2 (prep 2026-07-06; the combined scope exceeds ~1000 lines). **Decision (user-approved):** the env config (`PASSWORD`/`PASSWORD_HASH`) remains the authoritative password source after bootstrap — the user record stores identity, passkeys, and the password-disabled flag only (no `password_hash` in the DB; SPEC §2.1 delta). Password login auto-reactivates when no passkeys remain (operator lockout rescue).
+
+#### F-005e2 — Rate limits, lockout & auth events
+
+**What:** Per-client-IP token buckets (`golang.org/x/time/rate`, in-memory per GR-3) on `/register`, `/token`, and login (`RATE_LIMIT_REGISTER`/`_TOKEN`/`_LOGIN`, format `10/m`, `0` disables); per-account lockout `LOGIN_LOCKOUT_THRESHOLD`/`_DURATION` with uniform errors (SR-6); structured auth events `login_ok`/`login_fail`/`token_issued`/`register`/`rate_limited`/`revoked` without secrets (SR-8).
+**Files:** new `pkg/ratelimit/`, `pkg/auth/`, `pkg/idp/`, `main.go`, `pkg/mcp-proxy/main.go` + tests. New dep: `golang.org/x/time` (BSD-3).
+**Dependencies:** F-005e1 (instruments the login paths e1 reworks).
 - [ ] lockout + rate-limit negative tests; uniform login errors (no enumeration)
 - [ ] auth events emitted without secrets (log assertion tests)
-- [ ] split into e1/e2 if implementation exceeds ~1000 lines
+- [ ] 429 + `rate_limited` event on each limited endpoint; `TRUSTED_PROXIES` honoured for client-IP extraction
 
 ---
 

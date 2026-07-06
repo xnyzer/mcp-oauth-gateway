@@ -37,6 +37,33 @@ type Client struct {
 	ExpiresAt time.Time `json:",omitempty"`
 }
 
+// User is the gateway's single operator account (FR-4), bootstrapped on the
+// first successful password login (SPEC §1.12). The password itself stays in
+// the env config (decision F-005e) — the record carries identity and the
+// passkey-fallback state only, never a password hash.
+type User struct {
+	ID       string
+	Username string
+	// PasswordLoginDisabled turns the password fallback off. It is only
+	// honoured while at least one passkey exists (lockout rescue,
+	// SPEC §1.12).
+	PasswordLoginDisabled bool
+	CreatedAt             time.Time
+}
+
+// WebAuthnCredential is a passkey registered to the user (SPEC §2.1). The
+// Credential payload is the marshaled go-webauthn credential (COSE public
+// key, sign count, transports, flags); models stays agnostic of that type.
+type WebAuthnCredential struct {
+	// ID is the base64url-encoded WebAuthn credential ID.
+	ID         string
+	UserID     string
+	Name       string
+	Credential json.RawMessage
+	CreatedAt  time.Time
+	LastUsedAt time.Time `json:",omitempty"`
+}
+
 type AuthorizeRequest struct {
 	ResponseTypes        []string
 	RedirectURI          string

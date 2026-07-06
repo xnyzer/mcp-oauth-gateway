@@ -64,6 +64,21 @@ type authorizeRequestRecord struct {
 	UpdatedAt time.Time
 }
 
+type userRecord struct {
+	ID        string `gorm:"primaryKey;size:512"`
+	User      []byte `gorm:"not null"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type webauthnCredentialRecord struct {
+	ID         string `gorm:"primaryKey;size:1024"`
+	UserID     string `gorm:"size:512;index"`
+	Credential []byte `gorm:"not null"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 func NewSQLRepository(driver string, dsn string) (Repository, error) {
 	if driver == "" {
 		return nil, fmt.Errorf("driver must not be empty")
@@ -93,6 +108,8 @@ func NewSQLRepository(driver string, dsn string) (Repository, error) {
 		&pkceRequestSession{},
 		&authorizeRequestRecord{},
 		&schemaVersionRecord{},
+		&userRecord{},
+		&webauthnCredentialRecord{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to migrate schema: %w", err)
 	}
@@ -472,6 +489,104 @@ func (r *sqlRepository) GetAuthorizeRequest(ctx context.Context, requestID strin
 
 func (r *sqlRepository) DeleteAuthorizeRequest(ctx context.Context, requestID string) error {
 	return r.db.WithContext(ctx).Delete(&authorizeRequestRecord{}, "request_id = ?", requestID).Error
+}
+
+// GetUser returns the single operator account (FR-4); the table never holds
+// more than one row.
+func (r *sqlRepository) GetUser(ctx context.Context) (*models.User, error) {
+	var record userRecord
+	if err := r.db.WithContext(ctx).First(&record).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fosite.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to load user: %w", err)
+	}
+	var user models.User
+	if err := json.Unmarshal(record.User, &user); err != nil {
+		return nil, fmt.Errorf("failed to decode user: %w", err)
+	}
+	return &user, nil
+}
+
+func (r *sqlRepository) CreateUser(ctx context.Context, user *models.User) error {
+	data, err := json.Marshal(user)
+	if err != nil {
+		return fmt.Errorf("failed to encode user: %w", err)
+	}
+	return r.db.WithContext(ctx).Create(&userRecord{ID: user.ID, User: data}).Error
+}
+
+func (r *sqlRepository) UpdateUser(ctx context.Context, user *models.User) error {
+	data, err := json.Marshal(user)
+	if err != nil {
+		return fmt.Errorf("failed to encode user: %w", err)
+	}
+	result := r.db.WithContext(ctx).
+		Model(&userRecord{}).
+		Where("id = ?", user.ID).
+		Update("user", data)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fosite.ErrNotFound
+	}
+	return nil
+}
+
+func (r *sqlRepository) AddWebAuthnCredential(ctx context.Context, credential *models.WebAuthnCredential) error {
+	data, err := json.Marshal(credential)
+	if err != nil {
+		return fmt.Errorf("failed to encode passkey credential: %w", err)
+	}
+	record := webauthnCredentialRecord{
+		ID:         credential.ID,
+		UserID:     credential.UserID,
+		Credential: data,
+	}
+	return r.db.WithContext(ctx).Create(&record).Error
+}
+
+// ListWebAuthnCredentials returns the user's passkeys, oldest first.
+func (r *sqlRepository) ListWebAuthnCredentials(ctx context.Context, userID string) ([]models.WebAuthnCredential, error) {
+	var records []webauthnCredentialRecord
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("created_at").
+		Find(&records).Error; err != nil {
+		return nil, fmt.Errorf("failed to load passkey credentials: %w", err)
+	}
+	credentials := make([]models.WebAuthnCredential, 0, len(records))
+	for _, record := range records {
+		var credential models.WebAuthnCredential
+		if err := json.Unmarshal(record.Credential, &credential); err != nil {
+			return nil, fmt.Errorf("failed to decode passkey credential: %w", err)
+		}
+		credentials = append(credentials, credential)
+	}
+	return credentials, nil
+}
+
+func (r *sqlRepository) UpdateWebAuthnCredential(ctx context.Context, credential *models.WebAuthnCredential) error {
+	data, err := json.Marshal(credential)
+	if err != nil {
+		return fmt.Errorf("failed to encode passkey credential: %w", err)
+	}
+	result := r.db.WithContext(ctx).
+		Model(&webauthnCredentialRecord{}).
+		Where("id = ?", credential.ID).
+		Update("credential", data)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fosite.ErrNotFound
+	}
+	return nil
+}
+
+func (r *sqlRepository) DeleteWebAuthnCredential(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Delete(&webauthnCredentialRecord{}, "id = ?", id).Error
 }
 
 func (r *sqlRepository) Close() error {
