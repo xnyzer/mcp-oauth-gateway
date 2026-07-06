@@ -3,6 +3,7 @@ package main
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	mcpproxy "github.com/xnyzer/mcp-oauth-gateway/pkg/mcp-proxy"
 )
@@ -480,5 +481,59 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 
 	if !forwardAuthorization {
 		t.Fatalf("expected forwardAuthorizationHeader to default to true from env var")
+	}
+}
+
+func TestNewRootCommand_KeyFlagDefaults(t *testing.T) {
+	t.Setenv("KEY_ALG", "")
+	t.Setenv("KEY_ROTATION_INTERVAL", "")
+
+	var keyAlg string
+	var keyRotationInterval time.Duration
+	runner := proxyRunnerFunc(func(cfg mcpproxy.Config) error {
+		keyAlg = cfg.KeyAlg
+		keyRotationInterval = cfg.KeyRotationInterval
+		return nil
+	})
+
+	cmd := newRootCommand(runner)
+	cmd.SetArgs([]string{"http://backend"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected command to succeed, got error: %v", err)
+	}
+
+	if keyAlg != "RS256" {
+		t.Fatalf("expected KEY_ALG default RS256, got %q", keyAlg)
+	}
+	if keyRotationInterval != 2160*time.Hour {
+		t.Fatalf("expected KEY_ROTATION_INTERVAL default 2160h, got %s", keyRotationInterval)
+	}
+}
+
+func TestNewRootCommand_KeyFlagsFromEnv(t *testing.T) {
+	t.Setenv("KEY_ALG", "ES256")
+	t.Setenv("KEY_ROTATION_INTERVAL", "48h")
+
+	var keyAlg string
+	var keyRotationInterval time.Duration
+	runner := proxyRunnerFunc(func(cfg mcpproxy.Config) error {
+		keyAlg = cfg.KeyAlg
+		keyRotationInterval = cfg.KeyRotationInterval
+		return nil
+	})
+
+	cmd := newRootCommand(runner)
+	cmd.SetArgs([]string{"http://backend"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected command to succeed, got error: %v", err)
+	}
+
+	if keyAlg != "ES256" {
+		t.Fatalf("expected KEY_ALG ES256 from env, got %q", keyAlg)
+	}
+	if keyRotationInterval != 48*time.Hour {
+		t.Fatalf("expected KEY_ROTATION_INTERVAL 48h from env, got %s", keyRotationInterval)
 	}
 }

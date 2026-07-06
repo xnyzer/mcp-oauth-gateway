@@ -2,7 +2,7 @@ package proxy
 
 import (
 	"context"
-	"crypto/rsa"
+	"crypto"
 	"errors"
 	"fmt"
 	"net/http"
@@ -24,7 +24,10 @@ type Config struct {
 	// it is compared against the token's iss and aud claims.
 	ExternalURL string
 	Proxy       http.Handler
-	PublicKey   *rsa.PublicKey
+	// VerificationKey resolves a token's kid header to a public key and
+	// its JWS alg (RS256/ES256); ok=false for unknown kids. Backed by the
+	// key manager, it covers the active and all retiring keys (SPEC §2.3.3).
+	VerificationKey func(kid string) (pub crypto.PublicKey, alg string, ok bool)
 	// ProxyHeaders are static headers added to every upstream request (FR-6).
 	ProxyHeaders http.Header
 	// HTTPStreamingOnly rejects GET-SSE requests with 405 (SPEC §1.11.3).
@@ -47,6 +50,9 @@ type ProxyRouter struct {
 }
 
 func NewProxyRouter(cfg Config) (*ProxyRouter, error) {
+	if cfg.VerificationKey == nil {
+		return nil, errors.New("proxy config requires a verification key lookup")
+	}
 	// Defensive re-normalization (SPEC §0): iss/aud comparison and the PRM
 	// document must always use the no-trailing-slash issuer form.
 	cfg.ExternalURL = strings.TrimSuffix(cfg.ExternalURL, "/")
@@ -123,10 +129,16 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 
 	claims := jwt.MapClaims{}
 	token, err := jwt.ParseWithClaims(bearerToken, claims, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+		kid, _ := token.Header["kid"].(string)
+		pub, alg, ok := p.cfg.VerificationKey(kid)
+		if !ok {
+			return nil, fmt.Errorf("token references an unknown signing key")
+		}
+		// The alg must match the key it selects (no algorithm confusion).
+		if token.Method.Alg() != alg {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return p.cfg.PublicKey, nil
+		return pub, nil
 	},
 		jwt.WithIssuer(p.cfg.ExternalURL),
 		jwt.WithAudience(p.cfg.ExternalURL),

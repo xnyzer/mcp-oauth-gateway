@@ -2,6 +2,9 @@ package proxy
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -17,6 +20,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testKid is the kid all test tokens carry; testKeyLookup resolves exactly
+// this kid, mirroring the key manager's active-key entry.
+const testKid = "test-kid"
+
+func testKeyLookup(pub *rsa.PublicKey) func(string) (crypto.PublicKey, string, bool) {
+	return func(kid string) (crypto.PublicKey, string, bool) {
+		if kid == testKid {
+			return pub, "RS256", true
+		}
+		return nil, "", false
+	}
+}
 
 func generateRSAKeyPair() (*rsa.PrivateKey, *rsa.PublicKey, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -34,6 +50,7 @@ func createJWT(privateKey *rsa.PrivateKey, claims jwt.MapClaims) (string, error)
 		claims["aud"] = "https://example.com"
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = testKid
 	return token.SignedString(privateKey)
 }
 
@@ -49,7 +66,7 @@ func TestProxyRouter_RejectsWrongIssuerOrAudience(t *testing.T) {
 	privateKey, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)
 
-	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: http.NotFoundHandler(), PublicKey: publicKey, ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: http.NotFoundHandler(), VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -129,7 +146,7 @@ func TestProxyRouter_HandleProxy_ValidToken(t *testing.T) {
 	proxyHeaders := make(http.Header)
 	proxyHeaders.Set("X-Forwarded-By", "mcp-oauth-gateway")
 
-	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, PublicKey: publicKey, ProxyHeaders: proxyHeaders, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: proxyHeaders, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -222,7 +239,7 @@ func TestProxyRouter_HeaderMapping(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: tt.headerMapping, HeaderMappingBase: "/userinfo"})
+			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: tt.headerMapping, HeaderMappingBase: "/userinfo"})
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -352,7 +369,7 @@ func TestProxyRouter_HeaderMappingBase(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: tt.headerMapping, HeaderMappingBase: tt.headerMappingBase})
+			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: tt.headerMapping, HeaderMappingBase: tt.headerMappingBase})
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -391,7 +408,7 @@ func TestProxyRouter_AuthorizationHeaderDefaultBehavior(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 
-		proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
+		proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
 		require.NoError(t, err)
 
 		gin.SetMode(gin.TestMode)
@@ -423,7 +440,7 @@ func TestProxyRouter_AuthorizationHeaderDefaultBehavior(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 
-		proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: true, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
+		proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: true, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
 		require.NoError(t, err)
 
 		gin.SetMode(gin.TestMode)
@@ -533,7 +550,7 @@ func TestProxyRouter_HeaderMappingStripsClientHeaders(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: tt.headerMapping, HeaderMappingBase: tt.headerMappingBase})
+			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: tt.headerMapping, HeaderMappingBase: tt.headerMappingBase})
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -568,7 +585,7 @@ func TestProxyRouter_ProtectedResourceTrailingSlash(t *testing.T) {
 	_, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)
 
-	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com/", Proxy: http.NotFoundHandler(), PublicKey: publicKey, ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com/", Proxy: http.NotFoundHandler(), VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HTTPStreamingOnly: false, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -594,7 +611,7 @@ func TestProxyRouter_ProtectedResourceMetadataComplete(t *testing.T) {
 	_, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)
 
-	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: http.NotFoundHandler(), PublicKey: publicKey, ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: http.NotFoundHandler(), VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -623,7 +640,7 @@ func TestProxyRouter_UnauthorizedChallenge(t *testing.T) {
 	privateKey, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)
 
-	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: http.NotFoundHandler(), PublicKey: publicKey, ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: http.NotFoundHandler(), VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -675,7 +692,7 @@ func TestProxyRouter_ReservedNamespacesNeverProxied(t *testing.T) {
 		upstreamHit = true
 		w.WriteHeader(http.StatusOK)
 	})
-	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: upstream, PublicKey: publicKey, ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: upstream, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -726,7 +743,7 @@ func TestProxyRouter_TokenActiveCheck(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: okHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo", TokenActive: tt.tokenActive})
+			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: okHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo", TokenActive: tt.tokenActive})
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -775,7 +792,7 @@ func TestProxyRouter_ClockSkewLeeway(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: okHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo", ClockSkew: tt.skew})
+			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: okHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo", ClockSkew: tt.skew})
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -874,7 +891,7 @@ func TestProxyRouter_HTTPStreamingOnlyRejectsSSE(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HTTPStreamingOnly: tt.streamingOnly, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
+			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HTTPStreamingOnly: tt.streamingOnly, ForwardAuthorizationHeader: false, HeaderMapping: nil, HeaderMappingBase: "/userinfo"})
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -898,6 +915,84 @@ func TestProxyRouter_HTTPStreamingOnlyRejectsSSE(t *testing.T) {
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, tt.expectBackend, backendCalled, "backend call mismatch")
+		})
+	}
+}
+
+// TestProxyRouter_MultiKeyVerification covers the kid-based key selection
+// (SPEC §2.3.3): unknown or missing kids and algorithm mismatches are
+// rejected, and ES256 keys verify when the lookup provides them.
+func TestProxyRouter_MultiKeyVerification(t *testing.T) {
+	rsaKey, rsaPub, err := generateRSAKeyPair()
+	require.NoError(t, err)
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// Lookup with one RSA and one EC key, mirroring an active + retiring
+	// key set of mixed algorithms after a KEY_ALG switch.
+	lookup := func(kid string) (crypto.PublicKey, string, bool) {
+		switch kid {
+		case "rsa-kid":
+			return rsaPub, "RS256", true
+		case "ec-kid":
+			return &ecKey.PublicKey, "ES256", true
+		}
+		return nil, "", false
+	}
+
+	sign := func(t *testing.T, method jwt.SigningMethod, key any, kid any) string {
+		t.Helper()
+		token := jwt.NewWithClaims(method, jwt.MapClaims{
+			"iss": "https://example.com",
+			"aud": "https://example.com",
+			"sub": "user",
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+		if kid != nil {
+			token.Header["kid"] = kid
+		}
+		signed, err := token.SignedString(key)
+		require.NoError(t, err)
+		return signed
+	}
+
+	cases := []struct {
+		name       string
+		token      string
+		wantStatus int
+	}{
+		{name: "known RSA kid accepted", token: sign(t, jwt.SigningMethodRS256, rsaKey, "rsa-kid"), wantStatus: http.StatusOK},
+		{name: "known EC kid accepted", token: sign(t, jwt.SigningMethodES256, ecKey, "ec-kid"), wantStatus: http.StatusOK},
+		{name: "unknown kid rejected", token: sign(t, jwt.SigningMethodRS256, rsaKey, "other-kid"), wantStatus: http.StatusUnauthorized},
+		{name: "missing kid rejected", token: sign(t, jwt.SigningMethodRS256, rsaKey, nil), wantStatus: http.StatusUnauthorized},
+		{name: "alg mismatch for kid rejected", token: sign(t, jwt.SigningMethodES256, ecKey, "rsa-kid"), wantStatus: http.StatusUnauthorized},
+		{name: "signature from wrong key rejected", token: sign(t, jwt.SigningMethodRS256, rsaKey, "ec-kid"), wantStatus: http.StatusUnauthorized},
+	}
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: okHandler, VerificationKey: lookup, ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	proxyRouter.SetupRoutes(router)
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", "/mcp", nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantStatus == http.StatusUnauthorized {
+				assert.Contains(t, w.Header().Get("WWW-Authenticate"), `error="invalid_token"`)
+			}
 		})
 	}
 }

@@ -2,10 +2,7 @@ package idp
 
 import (
 	"context"
-	"crypto/rsa"
-	"encoding/base64"
 	"encoding/json"
-	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,9 +12,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ory/fosite"
 	"github.com/ory/fosite/compose"
+	foauth2 "github.com/ory/fosite/handler/oauth2"
 	"github.com/ory/fosite/token/jwt"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/keys"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/utils"
 	"go.uber.org/zap"
@@ -26,12 +25,11 @@ import (
 
 type IDPRouter struct {
 	repo                repository.Repository
-	privKey             *rsa.PrivateKey
+	keys                *keys.Manager
 	logger              *zap.Logger
 	externalURL         string
 	hasher              fosite.Hasher
 	provider            fosite.OAuth2Provider
-	signer              *jwt.DefaultSigner
 	authRouter          *auth.AuthRouter
 	oidcDiscoveryMirror bool
 	refreshEnabled      bool
@@ -81,9 +79,11 @@ func (s *clientSource) GetClient(ctx context.Context, id string) (fosite.Client,
 // Config carries all options for the OAuth authorization-server surface
 // (SPEC §1.2–§1.10).
 type Config struct {
-	Repo    repository.Repository
-	PrivKey *rsa.PrivateKey
-	Logger  *zap.Logger
+	Repo repository.Repository
+	// Keys manages the signing key set (SPEC §2.2/§2.3): tokens are signed
+	// with the active key and validated against active + retiring keys.
+	Keys   *keys.Manager
+	Logger *zap.Logger
 	// ExternalURL is the normalized issuer (no trailing slash, SPEC §0).
 	ExternalURL string
 	Secret      []byte
@@ -151,16 +151,15 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		externalURL: cfg.ExternalURL,
 		logger:      cfg.Logger,
 	}
-	provider, signer := customCompose(fositeConfig, storage, cfg.PrivKey, refreshEnabled)
+	provider := customCompose(fositeConfig, storage, cfg.Keys, refreshEnabled)
 
 	return &IDPRouter{
 		repo:                cfg.Repo,
-		privKey:             cfg.PrivKey,
+		keys:                cfg.Keys,
 		logger:              cfg.Logger,
 		externalURL:         cfg.ExternalURL,
 		hasher:              hasher,
 		provider:            provider,
-		signer:              signer,
 		authRouter:          cfg.AuthRouter,
 		oidcDiscoveryMirror: cfg.OIDCDiscoveryMirror,
 		refreshEnabled:      refreshEnabled,
@@ -170,9 +169,12 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 	}, nil
 }
 
-func customCompose(config *fosite.Config, storage any, key any, refreshEnabled bool) (fosite.OAuth2Provider, *jwt.DefaultSigner) {
-	keyGetter := func(context.Context) (any, error) { return key, nil }
-	signer := &jwt.DefaultSigner{GetPrivateKey: keyGetter}
+func customCompose(config *fosite.Config, storage any, keyManager *keys.Manager, refreshEnabled bool) fosite.OAuth2Provider {
+	// The multi-key signer keeps fosite's own JWT validation (introspection)
+	// working across key rotations (SPEC §2.3.3); jwt.DefaultSigner would
+	// only ever verify against the active key.
+	signer := &keys.FositeSigner{Keys: keyManager}
+	keyGetter := func(context.Context) (any, error) { return keyManager.Active().Key, nil }
 
 	factories := []compose.Factory{
 		compose.OAuth2AuthorizeExplicitFactory,
@@ -184,17 +186,20 @@ func customCompose(config *fosite.Config, storage any, key any, refreshEnabled b
 		factories = append(factories, compose.OAuth2RefreshTokenGrantFactory)
 	}
 
-	provider := compose.Compose(
+	return compose.Compose(
 		config,
 		storage,
 		&compose.CommonStrategy{
-			CoreStrategy:               compose.NewOAuth2JWTStrategy(keyGetter, compose.NewOAuth2HMACStrategy(config), config),
+			CoreStrategy: &foauth2.DefaultJWTStrategy{
+				Signer:          signer,
+				HMACSHAStrategy: compose.NewOAuth2HMACStrategy(config),
+				Config:          config,
+			},
 			OpenIDConnectTokenStrategy: compose.NewOpenIDConnectStrategy(keyGetter, config),
 			Signer:                     signer,
 		},
 		factories...,
 	)
-	return provider, signer
 }
 
 const (
@@ -369,7 +374,7 @@ func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 		json.Unmarshal([]byte(userInfoJSON), &userInfo)
 	}
 
-	jwtSession, err := NewJWTSessionWithKey(a.externalURL, subject, ar.GetClient().GetID(), a.privKey, userInfo)
+	jwtSession, err := NewJWTSession(a.externalURL, subject, ar.GetClient().GetID(), userInfo)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Error("Failed to create JWT session", zap.Error(err))
 		a.writeAuthorizeError(ctx, c.Writer, ar, err)
@@ -445,7 +450,7 @@ func removeAuthorizeRequestID(session sessions.Session, arID string) {
 func (a *IDPRouter) handleToken(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	session, err := NewJWTSessionWithKey("", "", "", a.privKey, nil)
+	session, err := NewJWTSession("", "", "", nil)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Error("Failed to create JWT session for token", zap.Error(err))
 		a.provider.WriteAccessError(ctx, c.Writer, nil, fosite.ErrServerError.WithWrap(err))
@@ -492,7 +497,7 @@ func (a *IDPRouter) handleToken(c *gin.Context) {
 
 func (a *IDPRouter) handleIntrospect(c *gin.Context) {
 	ctx := c.Request.Context()
-	session, err := NewJWTSessionWithKey("", "", "", a.privKey, nil)
+	session, err := NewJWTSession("", "", "", nil)
 	if err != nil {
 		a.provider.WriteIntrospectionError(ctx, c.Writer, fosite.ErrServerError.WithWrap(err))
 		return
@@ -777,54 +782,29 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 	c.JSON(200, res)
 }
 
-type jwk struct {
-	Kty string `json:"kty"`
-	Use string `json:"use"`
-	Kid string `json:"kid"`
-	Alg string `json:"alg"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-}
-
 type jwks struct {
-	Keys []jwk `json:"keys"`
+	Keys []keys.JWK `json:"keys"`
 }
 
+// jwksCacheMaxAge bounds client-side JWKS caching so rotated keys propagate
+// within minutes (SPEC §1.8: MAY send max-age ≤ 300 s).
+const jwksCacheMaxAge = "max-age=300"
+
+// handleJWKS serves the public key set: the active key plus every retiring
+// key, so tokens signed before a rotation stay verifiable until they expire
+// (SPEC §1.8/§2.3.3).
 func (a *IDPRouter) handleJWKS(c *gin.Context) {
-	publicKey := &a.privKey.PublicKey
-
-	// Convert RSA public key components to base64url
-	nBytes := publicKey.N.Bytes()
-	eBytes := big.NewInt(int64(publicKey.E)).Bytes()
-
-	n := base64.RawURLEncoding.EncodeToString(nBytes)
-	e := base64.RawURLEncoding.EncodeToString(eBytes)
-
-	keyID, err := utils.GenerateKeyID(&a.privKey.PublicKey)
+	keySet, err := a.keys.PublicJWKs()
 	if err != nil {
-		a.logger.Error("Failed to generate key ID for JWKS", zap.Error(err))
-		c.JSON(500, gin.H{"error": "failed to generate key ID"})
+		a.logger.Error("Failed to build JWKS key set", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
-
-	k := jwk{
-		Kty: "RSA",
-		Use: "sig",
-		Kid: keyID,
-		Alg: "RS256",
-		N:   n,
-		E:   e,
-	}
-
-	ks := jwks{Keys: []jwk{k}}
-	c.JSON(200, ks)
+	c.Header("Cache-Control", jwksCacheMaxAge)
+	c.JSON(200, jwks{Keys: keySet})
 }
 
-func NewJWTSessionWithKey(iss string, subject string, clientID string, privateKey *rsa.PrivateKey, userInfo map[string]any) (*Session, error) {
-	keyID, err := utils.GenerateKeyID(&privateKey.PublicKey)
-	if err != nil {
-		return nil, err
-	}
+func NewJWTSession(iss string, subject string, clientID string, userInfo map[string]any) (*Session, error) {
 	jti, err := utils.GenerateJTI()
 	if err != nil {
 		return nil, err
@@ -837,7 +817,8 @@ func NewJWTSessionWithKey(iss string, subject string, clientID string, privateKe
 		extra["client_id"] = clientID
 	}
 	// exp, aud, and scope are set by fosite at issuance time from the
-	// session expiry and the granted audience/scopes (SPEC §1.7).
+	// session expiry and the granted audience/scopes (SPEC §1.7); the kid
+	// header is set by the signer at signing time (SPEC §2.3.3).
 	return &Session{
 		DefaultSession: &fosite.DefaultSession{
 			Username: subject,
@@ -852,9 +833,7 @@ func NewJWTSessionWithKey(iss string, subject string, clientID string, privateKe
 			Extra:     extra,
 		},
 		JWTHeader: &jwt.Headers{
-			Extra: map[string]any{
-				"kid": keyID,
-			},
+			Extra: map[string]any{},
 		},
 	}, nil
 }

@@ -76,6 +76,8 @@ func TestRun_ValidatesTTLs(t *testing.T) {
 		{name: "access token TTL too long", mutate: func(c *Config) { c.AccessTokenTTL = 25 * time.Hour }, errContains: "access token TTL"},
 		{name: "auth code TTL too short", mutate: func(c *Config) { c.AuthCodeTTL = 10 * time.Second }, errContains: "auth code TTL"},
 		{name: "refresh token TTL below minimum", mutate: func(c *Config) { c.RefreshTokenTTL = 30 * time.Minute }, errContains: "refresh token TTL"},
+		{name: "unsupported key algorithm", mutate: func(c *Config) { c.KeyAlg = "HS256" }, errContains: "unsupported key algorithm"},
+		{name: "key rotation interval below minimum", mutate: func(c *Config) { c.KeyRotationInterval = 30 * time.Minute }, errContains: "key rotation interval"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

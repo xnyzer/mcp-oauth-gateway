@@ -505,3 +505,66 @@ still 401.
 `pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/main_test.go`, `pkg/models/models.go`,
 `pkg/repository/{interface,kvs,sql}.go`, `pkg/repository/maintenance_test.go`, `SPEC.md`
 (+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).
+
+---
+
+## F-005d — Key management — DONE 2026-07-06
+
+Fourth substep of F-005 (implement the SPEC.md contracts on the fork).
+
+**What was done** (SPEC references in parentheses):
+- **New `pkg/keys` (§2.2):** `Manager` owns the key set — `keys/<kid>.pem` (PKCS#8, 0600, dir
+  0700) plus atomic `keys/manifest.json` (temp file + fsync + rename; crash mid-rotation
+  leaves the old manifest intact). Startup fails fast on a manifest referencing a
+  missing/corrupt key file or a fingerprint/kid mismatch. Manifest gained `active_since`
+  (drives the rotation-interval check); `kid` stays the fork's existing scheme (hex
+  SHA-256-prefix of the PKIX public key) instead of the drafted base64url form, so
+  outstanding tokens keep verifying across the migration — SPEC §2.2 updated accordingly.
+- **Legacy migration (§2.2):** pre-F-005d `data/private_key.pem` is adopted as the active key
+  on first start (kid preserved, original file left in place); `JWT_PRIVATE_KEY` env keeps
+  working as a **static mode** (no directory, rotation disabled with a startup warning,
+  `KEY_ALG` must match the key type).
+- **Rotation (§2.3):** interval-triggered (`KEY_ROTATION_INTERVAL`, default 90 d, `0`
+  disables, else ≥ 1h) — checked at startup and by the existing 5-minute sweeper; a `KEY_ALG`
+  change also rotates at startup. The previous key retires with
+  `not_after = now + ACCESS_TOKEN_TTL + 2×CLOCK_SKEW`; sweeping removes it from the manifest
+  **before** deleting its file (crash-safe order). New tokens sign only with the active key.
+- **ES256 shipped (decision resolved):** fosite v0.49 natively signs/verifies
+  `*ecdsa.PrivateKey` (ES256), so both `KEY_ALG=RS256` (RSA-2048) and `ES256` (P-256) are
+  supported — no follow-up needed.
+- **Multi-key verification end to end (§2.3.3):** the key insight was that fosite's
+  introspection validates JWTs through its `jwt.Signer` — a multi-key JWKS alone would have
+  broken introspection after rotation. `keys.FositeSigner` implements fosite's `jwt.Signer`:
+  signs with the active key (kid header injected **at signing time** — sessions are created at
+  authorize time and cloned for refresh, so a session-borne kid could go stale), verifies via
+  kid lookup against active + retiring with an alg-match guard (no algorithm confusion).
+  `proxy.Config.PublicKey` (single RSA key) was replaced by a
+  `VerificationKey func(kid) (pub, alg, ok)` hook backed by the manager; unknown/missing kid
+  or alg mismatch → 401. `idp.Config.PrivKey` became `Keys *keys.Manager`.
+- **JWKS (§1.8):** serves active + retiring keys (EC params per RFC 7518 §6.2.1, fixed-length
+  coordinates) with `Cache-Control: max-age=300`.
+- **Config (§3.2):** `KEY_ALG` / `KEY_ROTATION_INTERVAL` flags + env, fail-fast validated.
+- **Cleanup:** key helpers moved out of `pkg/utils` (`LoadOrGeneratePrivateKey`,
+  `SavePrivateKey`, `LoadPrivateKey`, `PrivateKeyFromPEM`, `GenerateKeyID` deleted; secret
+  helpers stayed); `NewJWTSessionWithKey` became key-free `NewJWTSession`.
+
+**Verification:** gofmt/vet clean, all 10 packages green. New tests: `pkg/keys` suite
+(first-run init, ES256 init, legacy adoption, missing-key/kid-mismatch fail-fast, rotation
+persistence, interval/alg-switch triggers, retiring sweep incl. file deletion, rotation
+failure leaves manifest intact via read-only dir, static mode, ParseAlg); signer suite
+(active-kid injection, validate-across-rotation, reject-after-sweep, ES256 round-trip, forged
+alg/kid mismatch); idp integration (`TestKeyRotationKeepsOldTokensValid`: pre-rotation token
+introspects active after rotation, JWKS serves both kids, new token carries new kid;
+`TestES256TokenIssuance`); proxy multi-key matrix (RS/ES accept, unknown/missing kid,
+alg-mismatch, wrong-key 401s); config validation + flag default/env tests. Live smoke test
+with the built binary: legacy key adopted with identical kid, `KEY_ALG=ES256` restart rotated
+at startup (JWKS = EC active + RSA retiring, correct `not_after`), full password+consent OAuth
+flow issued an ES256 token that proxied upstream (200; 401 without token), fail-fast on bad
+`KEY_ROTATION_INTERVAL`/`KEY_ALG`, static-mode warning + single-key JWKS + alg-mismatch
+abort.
+
+**Files changed:** new `pkg/keys/{keys,manager,manifest,signer}.go` +
+`pkg/keys/{manager_test,signer_test}.go`; edited `main.go`, `main_test.go`, `pkg/idp/idp.go`,
+`pkg/idp/idp_test.go`, `pkg/proxy/proxy.go`, `pkg/proxy/proxy_test.go`,
+`pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/main_test.go`, `pkg/utils/{keys,rand}.go`,
+`pkg/utils/keys_test.go`, `SPEC.md` (+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).

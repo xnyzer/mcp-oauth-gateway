@@ -23,6 +23,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-005a | Discovery & 401 surface → **complete PRM/AS metadata, `WWW-Authenticate` challenge, RFC 9207 `iss`, issuer normalization, `CLOCK_SKEW`, OIDC mirror** + config-struct refactor. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005b | Token binding & lifecycle → **RFC 8707 `resource`→`aud`, `jti`/`client_id`/`scope` claims, `/revoke` (RFC 7009) + fail-closed proxy revocation check, TTL config, sweeper + schema version**; fixed upstream revoke-by-signature no-op bug. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005c | CIMD + DCR hardening → **`pkg/cimd` resolver (dial-time SSRF guards, limits, cache) as fosite client source; DCR TTL/cap/validation/`DCR_ENABLED`**; reserved-namespace guard (disabled endpoints 404, never proxied). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
+| F-005d | Key management → **new `pkg/keys`: key dir + atomic manifest, legacy-key migration (kid preserved), interval/alg-switch rotation with retiring window, multi-key JWKS + kid verification end to end (incl. introspection via custom fosite signer), `KEY_ALG` RS256/ES256 + `KEY_ROTATION_INTERVAL`**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 
 ---
 
@@ -62,15 +63,6 @@ The remaining tasks are a hard chain: 1→2→3. Each task below carries its own
 **Dependencies:** F-004, F-008, F-011 (all DONE). Implement against the `SPEC.md` contracts (each §1 section carries a Delta note).
 
 **Decisions (prep, user-approved):** passkey bootstrap = first login via `PASSWORD`/`PASSWORD_HASH`, then passkey enrollment on a session-gated settings page (password stays as a disableable fallback); ES256 ships only if Fosite supports it cleanly, otherwise documented follow-up; rate-limit state is in-memory (single-instance deployment, GR-3). New deps: `github.com/go-webauthn/webauthn` (BSD-3), `golang.org/x/time/rate` (BSD).
-
-#### F-005d — Key management
-
-**What:** Key directory + atomic `manifest.json`, migration from the legacy single key, interval-based rotation with retiring window, multi-key JWKS, `KEY_ALG` (RS256/ES256 if Fosite allows) + `KEY_ROTATION_INTERVAL` (§2.2/§2.3).
-**Files:** new `pkg/keys/` (from `pkg/utils/keys.go`), `pkg/idp/` + tests.
-**Dependencies:** F-005b (DONE).
-- [ ] rotation test: pre-rotation token stays valid until `exp`; JWKS serves both keys
-- [ ] legacy key adopted on first start (migration test)
-- [ ] crash-safe manifest rewrite (atomic rename)
 
 #### F-005e — Self-contained auth & abuse protection
 

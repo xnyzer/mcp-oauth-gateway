@@ -234,7 +234,8 @@ missing: rate limiting (F-005e).
 
 ### 1.7 Access token claims (JWT) — FR-5, SR-4
 
-Signed JWS, `alg` RS256 (ES256 optional, part 2), header `kid` = active signing key (§1.8).
+Signed JWS, `alg` RS256 (default) or ES256 (`KEY_ALG`, §2.2), header `kid` = active signing
+key (§1.8), set at signing time.
 
 | Claim | Value | Verified on `/mcp` (§1.11) |
 |---|---|---|
@@ -261,12 +262,13 @@ RFC 7517. Response `200 application/json`: `{"keys": [...]}` — public keys onl
 `kty`, `use: "sig"`, `kid`, `alg`, and the key parameters (`n`/`e` for RSA; `crv`/`x`/`y` for
 EC when ES256 is enabled).
 
-**Rotation contract (target, detail in part 2):** during a rotation window the set contains
+**Rotation contract (detail in part 2):** during a rotation window the set contains
 the **new active key and the previous key(s)** until every token signed with them has
 expired (window ≥ access-token TTL + clock skew). Verifiers select by `kid`. The endpoint MAY
 send `Cache-Control: max-age` ≤ 300 s so rotations propagate quickly.
 
-**Delta:** today a single static RS256 key, `kid` derived from the public key; no rotation.
+**Delta:** **done, F-005d** — the set serves the active key first, then every retiring key
+(EC keys with `crv`/`x`/`y` per RFC 7518 §6.2.1); `Cache-Control: max-age=300` is sent.
 
 ### 1.9 Token revocation — `POST /.idp/revoke` (new)
 
@@ -322,7 +324,9 @@ FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
 
 **Delta:** enforcement, streaming, injection, and header mapping exist; the
 `WWW-Authenticate` challenge and clock-skew leeway are **done (F-005a)**; the fail-closed
-revocation check is **done (F-005b**, §2.4 record-presence lookup**)**.
+revocation check is **done (F-005b**, §2.4 record-presence lookup**)**; signature validation
+against the full JWKS key set selected by `kid` (RS256/ES256, unknown `kid` or alg mismatch
+→ 401) is **done (F-005d)**.
 
 ### 1.12 User authentication & consent — `/.auth/*`
 
@@ -390,14 +394,27 @@ Keys live in the **data directory** (not the DB), permissions `0600`, directory 
 (backup/restore = back up the data directory, NFR):
 
 - `keys/<kid>.pem` — PKCS#8 private key (RSA-2048 default; P-256 when `KEY_ALG=ES256`).
-- `keys/manifest.json` — `{ "active": "<kid>", "retiring": [{"kid": "...", "not_after": ts}] }`.
-- `kid` = base64url SHA-256 fingerprint of the public key (existing scheme).
-- **First run:** no manifest → generate a key, write manifest atomically (temp file + rename).
-  Startup MUST fail (fail-fast) if the manifest references a missing/unreadable key file.
-- Legacy single-key file (current `LoadOrGeneratePrivateKey` path): migrated on first start by
-  adopting it as the active key and writing a manifest — existing deployments keep their key.
+- `keys/manifest.json` —
+  `{ "active": "<kid>", "active_since": ts, "retiring": [{"kid": "...", "not_after": ts}] }`
+  *(F-005d added `active_since` — it drives the §2.3.1 interval check; timestamps are RFC 3339
+  UTC)*.
+- `kid` = hex-encoded first 8 bytes of the SHA-256 fingerprint of the PKIX public key
+  *(F-005d: kept the fork's existing scheme instead of the originally drafted base64url form —
+  outstanding tokens carry it in their header, so the legacy migration preserves their `kid`)*.
+- **First run:** no manifest → generate a key, write manifest atomically (temp file + fsync +
+  rename). Startup MUST fail (fail-fast) if the manifest references a missing/unreadable key
+  file or a file whose fingerprint does not match its `kid`.
+- Legacy single-key file (pre-F-005d `data/private_key.pem`): migrated on first start by
+  adopting it as the active key (kid preserved) and writing a manifest — existing deployments
+  keep their key; the original file is left in place.
+- `JWT_PRIVATE_KEY` (env, existing behaviour): the key is used as a **static** single key —
+  no key directory, automatic rotation disabled (startup WARNING when
+  `KEY_ROTATION_INTERVAL` > 0); `KEY_ALG` must match the key type (fail-fast).
 - `AUTH_HMAC_SECRET` (session cookies + Fosite HMAC): from env (base64) or generated secret
   file in the data directory (existing behaviour).
+
+**Delta:** **done, F-005d** — implemented in `pkg/keys` (`Manager`); key files 0600, key
+directory 0700.
 
 ### 2.3 Key rotation (SR-4, NFR "no abrupt invalidation")
 
@@ -412,6 +429,13 @@ Keys live in the **data directory** (not the DB), permissions `0600`, directory 
 4. Keys past `not_after` are removed from the manifest and their files deleted by the sweeper.
 5. Rotation MUST be atomic (manifest rewrite via temp file + rename); a crash mid-rotation
    leaves the old manifest intact.
+
+**Delta:** **done, F-005d** — rotation checked at startup and by the 5-minute sweeper;
+changing `KEY_ALG` also triggers a rotation at startup (§3.2). Verification is multi-key
+end to end: the proxy resolves `kid` against active + retiring keys, and fosite validates
+through the same key set (custom `jwt.Signer` in `pkg/keys`), so introspection keeps working
+across rotations. Sweep order is crash-safe (manifest rewritten before key files are
+deleted). The manual-rotation ops command remains deferred to F-007.
 
 ### 2.4 Revocation semantics (completes §1.9) — **done, F-005b**
 
@@ -476,8 +500,8 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 | `DCR_MAX_CLIENTS` | `100` | §1.4 cap; `0` = unlimited (not recommended). **Done (F-005c).** |
 | `RATE_LIMIT_REGISTER` / `RATE_LIMIT_TOKEN` / `RATE_LIMIT_LOGIN` | `10/m` / `60/m` / `10/m` | Per-client-IP token buckets (SR-5/SR-6). `0` disables (not recommended). Honour `TRUSTED_PROXIES` for client-IP extraction. |
 | `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_DURATION` | `10` / `15m` | Per-account lockout after N consecutive failures (SR-6); uniform error either way. |
-| `KEY_ALG` | `RS256` | `RS256` or `ES256` (§2.2); switching triggers a rotation (§2.3). |
-| `KEY_ROTATION_INTERVAL` | `2160h` (90 d) | §2.3; `0` disables automatic rotation. |
+| `KEY_ALG` | `RS256` | `RS256` or `ES256` (§2.2); switching triggers a rotation (§2.3). **Done (F-005d).** |
+| `KEY_ROTATION_INTERVAL` | `2160h` (90 d) | §2.3; `0` disables automatic rotation, otherwise ≥ 1h. **Done (F-005d).** |
 | `CLOCK_SKEW` | `30s` | §1.11.1 validation tolerance. |
 | `OIDC_DISCOVERY_MIRROR` | `false` | §1.2 `openid-configuration` mirror. |
 

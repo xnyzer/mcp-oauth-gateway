@@ -219,6 +219,8 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var dcrEnabled bool
 	var dcrClientTTL time.Duration
 	var dcrMaxClients int
+	var keyAlg string
+	var keyRotationInterval time.Duration
 
 	rootCmd := &cobra.Command{
 		Use: "mcp-oauth-gateway",
@@ -295,6 +297,9 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				DCREnabled:       dcrEnabled,
 				DCRClientTTL:     dcrClientTTL,
 				DCRMaxClients:    dcrMaxClients,
+
+				KeyAlg:              keyAlg,
+				KeyRotationInterval: keyRotationInterval,
 			}); err != nil {
 				panic(err)
 			}
@@ -343,6 +348,10 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().BoolVar(&dcrEnabled, "dcr-enabled", getEnvBoolWithDefault("DCR_ENABLED", true), "Serve the deprecated RFC 7591 dynamic client registration endpoint")
 	rootCmd.Flags().DurationVar(&dcrClientTTL, "dcr-client-ttl", getEnvDurationWithDefault("DCR_CLIENT_TTL", 720*time.Hour), "DCR registration lifetime, refreshed on token issuance (0 disables expiry)")
 	rootCmd.Flags().IntVar(&dcrMaxClients, "dcr-max-clients", getEnvIntWithDefault("DCR_MAX_CLIENTS", 100), "Maximum number of stored DCR registrations (0 = unlimited)")
+
+	// Signing keys
+	rootCmd.Flags().StringVar(&keyAlg, "key-alg", getEnvWithDefault("KEY_ALG", "RS256"), "JWS signing algorithm: RS256 or ES256 (switching triggers a key rotation)")
+	rootCmd.Flags().DurationVar(&keyRotationInterval, "key-rotation-interval", getEnvDurationWithDefault("KEY_ROTATION_INTERVAL", 2160*time.Hour), "Automatic signing-key rotation interval, at least 1h (0 disables rotation)")
 
 	// Password authentication
 	rootCmd.Flags().BoolVar(&noProviderAutoSelect, "no-provider-auto-select", getEnvBoolWithDefault("NO_PROVIDER_AUTO_SELECT", false), "Disable auto-redirect when only one OAuth/OIDC provider is configured and no password is set")

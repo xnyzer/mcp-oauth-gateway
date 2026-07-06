@@ -2,7 +2,6 @@ package mcpproxy
 
 import (
 	"context"
-	"crypto/rsa"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -25,6 +24,7 @@ import (
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/backend"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/keys"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/proxy"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/tlsreload"
@@ -105,6 +105,12 @@ type Config struct {
 	DCREnabled    bool
 	DCRClientTTL  time.Duration
 	DCRMaxClients int
+
+	// Signing keys (SPEC §2.2/§2.3). KeyAlg is RS256 (default) or ES256;
+	// switching triggers a rotation at startup. KeyRotationInterval of 0
+	// disables automatic rotation.
+	KeyAlg              string
+	KeyRotationInterval time.Duration
 }
 
 const (
@@ -144,6 +150,12 @@ func validateTTLs(cfg Config) error {
 	}
 	if cfg.DCRMaxClients < 0 {
 		return fmt.Errorf("DCR client cap must not be negative, got: %d", cfg.DCRMaxClients)
+	}
+	if _, err := keys.ParseAlg(cfg.KeyAlg); err != nil {
+		return err
+	}
+	if cfg.KeyRotationInterval != 0 && cfg.KeyRotationInterval < time.Hour {
+		return fmt.Errorf("key rotation interval must be 0 (disabled) or at least 1h, got: %s", cfg.KeyRotationInterval)
 	}
 	return nil
 }
@@ -201,6 +213,9 @@ func Run(cfg Config) error {
 	}
 	if cfg.AuthCodeTTL == 0 {
 		cfg.AuthCodeTTL = 10 * time.Minute
+	}
+	if cfg.KeyAlg == "" {
+		cfg.KeyAlg = string(keys.AlgRS256)
 	}
 	if err := validateTTLs(cfg); err != nil {
 		return err
@@ -320,9 +335,44 @@ func Run(cfg Config) error {
 		return fmt.Errorf("schema version check failed: %w", err)
 	}
 
+	// Signing keys (SPEC §2.2/§2.3): key directory + manifest with
+	// rotation, adopting the legacy single-key file on first start. A key
+	// from the environment stays static (no directory, no rotation).
+	keyAlg, err := keys.ParseAlg(cfg.KeyAlg) // validated in validateTTLs
+	if err != nil {
+		return err
+	}
+	var keyManager *keys.Manager
+	if envKey := os.Getenv("JWT_PRIVATE_KEY"); envKey != "" {
+		envSigner, err := keys.ParsePrivateKeyPEM(envKey)
+		if err != nil {
+			return fmt.Errorf("failed to parse JWT_PRIVATE_KEY environment variable: %w", err)
+		}
+		keyManager, err = keys.NewStaticManager(envSigner, keyAlg)
+		if err != nil {
+			return err
+		}
+		if cfg.KeyRotationInterval > 0 {
+			logger.Warn("JWT_PRIVATE_KEY is set; automatic key rotation is disabled")
+		}
+	} else {
+		keyManager, err = keys.NewManager(keys.Config{
+			Dir:              path.Join(dataPath, "keys"),
+			Alg:              keyAlg,
+			LegacyKeyPath:    path.Join(dataPath, "private_key.pem"),
+			RotationInterval: cfg.KeyRotationInterval,
+			RetireWindow:     cfg.AccessTokenTTL + 2*cfg.ClockSkew,
+			Logger:           logger,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialize signing keys: %w", err)
+		}
+	}
+
 	// Expiry sweeper: garbage-collect session records past their TTL
-	// (SPEC §2.1). Lookups already treat expired records as invalid;
-	// this only reclaims storage.
+	// (SPEC §2.1) and run key maintenance — interval rotation + retiring-
+	// key cleanup (SPEC §2.3). Lookups already treat expired records as
+	// invalid; the record sweep only reclaims storage.
 	refreshSweepTTL := cfg.RefreshTokenTTL
 	if refreshSweepTTL == 0 {
 		refreshSweepTTL = cfg.AccessTokenTTL
@@ -347,22 +397,13 @@ func Run(cfg Config) error {
 				if err := repo.DeleteExpiredClients(ctx, now); err != nil {
 					logger.Warn("failed to sweep expired client registrations", zap.Error(err))
 				}
+				if err := keyManager.Maintain(now); err != nil {
+					logger.Warn("failed to maintain signing keys", zap.Error(err))
+				}
 			}
 		}
 	}()
 
-	var privKey *rsa.PrivateKey
-	if envKey := os.Getenv("JWT_PRIVATE_KEY"); envKey != "" {
-		privKey, err = utils.PrivateKeyFromPEM(envKey)
-		if err != nil {
-			return fmt.Errorf("failed to parse JWT_PRIVATE_KEY environment variable: %w", err)
-		}
-	} else {
-		privKey, err = utils.LoadOrGeneratePrivateKey(path.Join(dataPath, "private_key.pem"))
-		if err != nil {
-			return fmt.Errorf("failed to load or generate private key: %w", err)
-		}
-	}
 	var providers []auth.Provider
 
 	// Add OIDC provider if configured
@@ -423,7 +464,7 @@ func Run(cfg Config) error {
 
 	idpRouter, err := idp.NewIDPRouter(idp.Config{
 		Repo:                repo,
-		PrivKey:             privKey,
+		Keys:                keyManager,
 		Logger:              logger,
 		ExternalURL:         externalURL,
 		Secret:              secret,
@@ -461,7 +502,7 @@ func Run(cfg Config) error {
 	proxyRouter, err := newProxyRouter(proxy.Config{
 		ExternalURL:                externalURL,
 		Proxy:                      beHandler,
-		PublicKey:                  &privKey.PublicKey,
+		VerificationKey:            keyManager.VerificationKey,
 		ProxyHeaders:               proxyHeadersMap,
 		HTTPStreamingOnly:          cfg.HTTPStreamingOnly,
 		ForwardAuthorizationHeader: cfg.ForwardAuthorizationHeader,
