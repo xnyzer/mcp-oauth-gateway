@@ -358,3 +358,47 @@ paths).
 **Files changed:** new `SPEC.md` (~480 lines), new `docker-compose.example.yml`; edited
 `REQUIREMENTS.md` (header), `README.md` (docs list), `CLAUDE.md` (+ `PROGRESS.md` /
 `PROGRESS-ARCHIVE.md` bookkeeping).
+
+---
+
+## F-005a — Discovery & 401 surface (client-compat quick wins) — DONE 2026-07-06
+
+First substep of F-005 (implement the SPEC.md contracts on the fork).
+
+**What was done** (SPEC references in parentheses):
+- **Enabling refactor:** `mcpproxy.Run` (34 positional params), `proxy.NewProxyRouter` (8) and
+  `idp.NewIDPRouter` (6) now take config structs (`mcpproxy.Config`, `proxy.Config`,
+  `idp.Config`) per CODING-STANDARDS §3 — every later F-005 substep adds options without
+  signature churn. All test literals/mocks simplified accordingly.
+- **Issuer normalization (§0):** `EXTERNAL_URL` is validated at startup — absolute, http(s),
+  no path/query/fragment — and normalized **without trailing slash**; single source for AS
+  metadata `issuer`, PRM `resource`, JWT `iss`/`aud` comparison, and the RFC 9207 `iss`.
+  `proxy.NewProxyRouter` re-normalizes defensively.
+- **PRM complete (§1.1):** added `jwks_uri`, `bearer_methods_supported: ["header"]`,
+  `scopes_supported: []`, `resource_name`.
+- **AS metadata complete (§1.2):** added `jwks_uri`, `introspection_endpoint`,
+  `authorization_response_iss_parameter_supported: true`; optional **OIDC Discovery mirror**
+  (`OIDC_DISCOVERY_MIRROR`, default false) serves the same document under
+  `/.well-known/openid-configuration`. `revocation_endpoint` deliberately deferred to F-005b
+  (metadata must not advertise a 404).
+- **`WWW-Authenticate` on the proxy 401 (§1.11.2):** `Bearer resource_metadata="<PRM URL>"`;
+  with a presented-but-invalid token additionally `error="invalid_token"` (RFC 6750 §3 —
+  no error attribute when no token was sent).
+- **RFC 9207 `iss` (§1.5):** success via `AuthorizeResponder.AddParameter`; error redirects
+  via an `issRedirectWriter` wrapper around fosite's `WriteAuthorizeError` (fosite v0.49 has
+  no native RFC 9207 support). All 7 error call sites routed through the wrapper.
+- **`CLOCK_SKEW` (§1.11.1):** `jwt.WithLeeway` in proxy token validation; new duration
+  flag/env (default 30 s, validated 0–5 m fail-fast; malformed env value panics at startup).
+
+**Verification:** gofmt/vet clean, build green, all 8 packages green. New tests:
+metadata field-completeness (AS + PRM), OIDC-mirror on/off, 401 challenge (missing / malformed
+/ expired token variants), clock-skew leeway (0 s rejects, 30 s accepts a just-expired token),
+issuer normalization negative cases (path/query/relative), `iss` asserted in success and error
+redirects of the existing flow tests. Live smoke test: gateway started with a trailing-slash
+`EXTERNAL_URL` → normalized issuer in metadata, mirror 200, both 401 challenge variants
+correct.
+
+**Files changed:** `main.go`, `main_test.go`, `pkg/mcp-proxy/main.go`,
+`pkg/mcp-proxy/main_test.go`, `pkg/idp/idp.go`, `pkg/idp/idp_test.go`, `pkg/proxy/proxy.go`,
+`pkg/proxy/proxy_test.go`, `SPEC.md` (Delta notes updated to reflect implemented state)
+(+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).

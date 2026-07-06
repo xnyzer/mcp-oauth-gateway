@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	mcpproxy "github.com/xnyzer/mcp-oauth-gateway/pkg/mcp-proxy"
@@ -20,6 +22,20 @@ func getEnvBoolWithDefault(key string, defaultValue bool) bool {
 		return strings.EqualFold(value, "true") || value == "1"
 	}
 	return defaultValue
+}
+
+// getEnvDurationWithDefault fails fast on a malformed duration instead of
+// silently falling back (config validation, CODING-STANDARDS §7).
+func getEnvDurationWithDefault(key string, defaultValue time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		panic(fmt.Sprintf("invalid duration in %s: %q", key, value))
+	}
+	return parsed
 }
 
 func splitCSV(s string) []string {
@@ -123,41 +139,7 @@ func parseHeaderMapping(s string) map[string]string {
 	return result
 }
 
-type proxyRunnerFunc func(
-	listen string,
-	tlsListen string,
-	autoTLS bool,
-	tlsHost string,
-	tlsDirectoryURL string,
-	tlsAcceptTOS bool,
-	tlsCertFile string,
-	tlsKeyFile string,
-	dataPath string,
-	repositoryBackend string,
-	repositoryDSN string,
-	externalURL string,
-	oidcConfigurationURL string,
-	oidcClientID string,
-	oidcClientSecret string,
-	oidcScopes []string,
-	oidcUserIDField string,
-	oidcProviderName string,
-	oidcAllowedUsers []string,
-	oidcAllowedUsersGlob []string,
-	oidcAllowedAttributes map[string][]string,
-	oidcAllowedAttributesGlob map[string][]string,
-	noProviderAutoSelect bool,
-	password string,
-	passwordHash string,
-	trustedProxy []string,
-	proxyHeaders []string,
-	proxyBearerToken string,
-	forwardAuthorizationHeader bool,
-	proxyTarget []string,
-	httpStreamingOnly bool,
-	headerMapping map[string]string,
-	headerMappingBase string,
-) error
+type proxyRunnerFunc func(cfg mcpproxy.Config) error
 
 func main() {
 	if err := newRootCommand(mcpproxy.Run).Execute(); err != nil {
@@ -198,6 +180,8 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var headerMappingBase string
 	var httpStreamingOnly bool
 	var trustedProxies string
+	var oidcDiscoveryMirror bool
+	var clockSkew time.Duration
 
 	rootCmd := &cobra.Command{
 		Use: "mcp-oauth-gateway",
@@ -222,41 +206,48 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 
 			headerMappingMap := parseHeaderMapping(headerMapping)
 
-			if err := run(
-				listen,
-				tlsListen,
-				(!noAutoTLS) || tlsCertFile != "" || tlsKeyFile != "",
-				tlsHost,
-				tlsDirectoryURL,
-				tlsAcceptTOS,
-				tlsCertFile,
-				tlsKeyFile,
-				dataPath,
-				repositoryBackend,
-				repositoryDSN,
-				externalURL,
-				oidcConfigurationURL,
-				oidcClientID,
-				oidcClientSecret,
-				oidcScopesList,
-				oidcUserIDField,
-				oidcProviderName,
-				oidcAllowedUsersList,
-				oidcAllowedUsersGlobList,
-				oidcAllowedAttributesMap,
-				oidcAllowedAttributesGlobMap,
-				noProviderAutoSelect,
-				password,
-				passwordHash,
-				trustedProxiesList,
-				proxyHeadersList,
-				proxyBearerToken,
-				forwardAuthorizationHeader,
-				args,
-				httpStreamingOnly,
-				headerMappingMap,
-				headerMappingBase,
-			); err != nil {
+			if err := run(mcpproxy.Config{
+				Listen:          listen,
+				TLSListen:       tlsListen,
+				AutoTLS:         (!noAutoTLS) || tlsCertFile != "" || tlsKeyFile != "",
+				TLSHost:         tlsHost,
+				TLSDirectoryURL: tlsDirectoryURL,
+				TLSAcceptTOS:    tlsAcceptTOS,
+				TLSCertFile:     tlsCertFile,
+				TLSKeyFile:      tlsKeyFile,
+
+				DataPath:          dataPath,
+				RepositoryBackend: repositoryBackend,
+				RepositoryDSN:     repositoryDSN,
+				ExternalURL:       externalURL,
+
+				OIDCConfigurationURL:      oidcConfigurationURL,
+				OIDCClientID:              oidcClientID,
+				OIDCClientSecret:          oidcClientSecret,
+				OIDCScopes:                oidcScopesList,
+				OIDCUserIDField:           oidcUserIDField,
+				OIDCProviderName:          oidcProviderName,
+				OIDCAllowedUsers:          oidcAllowedUsersList,
+				OIDCAllowedUsersGlob:      oidcAllowedUsersGlobList,
+				OIDCAllowedAttributes:     oidcAllowedAttributesMap,
+				OIDCAllowedAttributesGlob: oidcAllowedAttributesGlobMap,
+
+				NoProviderAutoSelect: noProviderAutoSelect,
+				Password:             password,
+				PasswordHash:         passwordHash,
+
+				TrustedProxies:             trustedProxiesList,
+				ProxyHeaders:               proxyHeadersList,
+				ProxyBearerToken:           proxyBearerToken,
+				ForwardAuthorizationHeader: forwardAuthorizationHeader,
+				ProxyTargets:               args,
+				HTTPStreamingOnly:          httpStreamingOnly,
+				HeaderMapping:              headerMappingMap,
+				HeaderMappingBase:          headerMappingBase,
+
+				OIDCDiscoveryMirror: oidcDiscoveryMirror,
+				ClockSkew:           clockSkew,
+			}); err != nil {
 				panic(err)
 			}
 		},
@@ -286,6 +277,10 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&oidcAllowedUsersGlob, "oidc-allowed-users-glob", getEnvWithDefault("OIDC_ALLOWED_USERS_GLOB", ""), "Comma-separated list of glob patterns for allowed OIDC users")
 	rootCmd.Flags().StringVar(&oidcAllowedAttributes, "oidc-allowed-attributes", getEnvWithDefault("OIDC_ALLOWED_ATTRIBUTES", ""), "Comma-separated list of allowed attribute key=value pairs (e.g., /groups=admin,/roles=editor). Keys are JSON pointers.")
 	rootCmd.Flags().StringVar(&oidcAllowedAttributesGlob, "oidc-allowed-attributes-glob", getEnvWithDefault("OIDC_ALLOWED_ATTRIBUTES_GLOB", ""), "Comma-separated list of attribute key=pattern pairs for glob matching (e.g., /groups=*-admins,/email=*@example.com). Keys are JSON pointers.")
+
+	// Discovery & token validation
+	rootCmd.Flags().BoolVar(&oidcDiscoveryMirror, "oidc-discovery-mirror", getEnvBoolWithDefault("OIDC_DISCOVERY_MIRROR", false), "Additionally serve the AS metadata under /.well-known/openid-configuration")
+	rootCmd.Flags().DurationVar(&clockSkew, "clock-skew", getEnvDurationWithDefault("CLOCK_SKEW", 30*time.Second), "Leeway for token time-claim validation (0-5m)")
 
 	// Password authentication
 	rootCmd.Flags().BoolVar(&noProviderAutoSelect, "no-provider-auto-select", getEnvBoolWithDefault("NO_PROVIDER_AUTO_SELECT", false), "Disable auto-redirect when only one OAuth/OIDC provider is configured and no password is set")

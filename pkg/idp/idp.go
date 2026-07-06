@@ -24,35 +24,44 @@ import (
 )
 
 type IDPRouter struct {
-	repo        repository.Repository
-	privKey     *rsa.PrivateKey
-	logger      *zap.Logger
-	externalURL string
-	hasher      fosite.Hasher
-	provider    fosite.OAuth2Provider
-	signer      *jwt.DefaultSigner
-	authRouter  *auth.AuthRouter
+	repo                repository.Repository
+	privKey             *rsa.PrivateKey
+	logger              *zap.Logger
+	externalURL         string
+	hasher              fosite.Hasher
+	provider            fosite.OAuth2Provider
+	signer              *jwt.DefaultSigner
+	authRouter          *auth.AuthRouter
+	oidcDiscoveryMirror bool
 }
 
-func NewIDPRouter(
-	repo repository.Repository,
-	privKey *rsa.PrivateKey,
-	logger *zap.Logger,
-	externalURL string,
-	secret []byte,
-	authRouter *auth.AuthRouter,
-) (*IDPRouter, error) {
+// Config carries all options for the OAuth authorization-server surface
+// (SPEC §1.2–§1.10).
+type Config struct {
+	Repo    repository.Repository
+	PrivKey *rsa.PrivateKey
+	Logger  *zap.Logger
+	// ExternalURL is the normalized issuer (no trailing slash, SPEC §0).
+	ExternalURL string
+	Secret      []byte
+	AuthRouter  *auth.AuthRouter
+	// OIDCDiscoveryMirror additionally serves the AS metadata under
+	// /.well-known/openid-configuration (SPEC §1.2, off by default).
+	OIDCDiscoveryMirror bool
+}
+
+func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 	hasher := &fosite.BCrypt{
 		Config: &fosite.Config{
 			HashCost: bcrypt.DefaultCost,
 		},
 	}
-	config := &fosite.Config{
-		GlobalSecret:                   secret,
+	fositeConfig := &fosite.Config{
+		GlobalSecret:                   cfg.Secret,
 		AccessTokenLifespan:            24 * time.Hour,
 		RefreshTokenLifespan:           30 * 24 * time.Hour,
 		RefreshTokenScopes:             []string{},
-		AccessTokenIssuer:              externalURL,
+		AccessTokenIssuer:              cfg.ExternalURL,
 		EnforcePKCE:                    false,
 		EnforcePKCEForPublicClients:    true,
 		EnablePKCEPlainChallengeMethod: false,
@@ -60,17 +69,18 @@ func NewIDPRouter(
 		MinParameterEntropy:            fosite.MinParameterEntropy,
 		ClientSecretsHasher:            hasher,
 	}
-	provider, signer := customCompose(config, repo, privKey)
+	provider, signer := customCompose(fositeConfig, cfg.Repo, cfg.PrivKey)
 
 	return &IDPRouter{
-		repo:        repo,
-		privKey:     privKey,
-		logger:      logger,
-		externalURL: externalURL,
-		hasher:      hasher,
-		provider:    provider,
-		signer:      signer,
-		authRouter:  authRouter,
+		repo:                cfg.Repo,
+		privKey:             cfg.PrivKey,
+		logger:              cfg.Logger,
+		externalURL:         cfg.ExternalURL,
+		hasher:              hasher,
+		provider:            provider,
+		signer:              signer,
+		authRouter:          cfg.AuthRouter,
+		oidcDiscoveryMirror: cfg.OIDCDiscoveryMirror,
 	}, nil
 }
 
@@ -101,6 +111,7 @@ const (
 	IntrospectionEndpoint            = "/.idp/introspect"
 	RegistrationEndpoint             = "/.idp/register"
 	OauthAuthorizationServerEndpoint = "/.well-known/oauth-authorization-server"
+	OIDCDiscoveryEndpoint            = "/.well-known/openid-configuration"
 	JWKSEndpoint                     = "/.well-known/jwks.json"
 	sessionKeyAuthorizeRequestIDs    = "idp_authorize_request_ids"
 )
@@ -113,7 +124,40 @@ func (a *IDPRouter) SetupRoutes(router gin.IRouter) {
 	router.POST(IntrospectionEndpoint, a.handleIntrospect)
 	router.POST(RegistrationEndpoint, a.handleRegister)
 	router.GET(OauthAuthorizationServerEndpoint, a.handleOauthAuthorizationServer)
+	if a.oidcDiscoveryMirror {
+		router.GET(OIDCDiscoveryEndpoint, a.handleOauthAuthorizationServer)
+	}
 	router.GET(JWKSEndpoint, a.handleJWKS)
+}
+
+// issRedirectWriter appends the RFC 9207 `iss` parameter to redirect
+// responses written by fosite's WriteAuthorizeError, which has no built-in
+// RFC 9207 support in v0.49. Non-redirect responses pass through untouched.
+type issRedirectWriter struct {
+	http.ResponseWriter
+	issuer string
+}
+
+func (w *issRedirectWriter) WriteHeader(statusCode int) {
+	if statusCode >= 300 && statusCode < 400 {
+		if location := w.Header().Get("Location"); location != "" {
+			if u, err := url.Parse(location); err == nil {
+				q := u.Query()
+				if q.Get("iss") == "" {
+					q.Set("iss", w.issuer)
+					u.RawQuery = q.Encode()
+					w.Header().Set("Location", u.String())
+				}
+			}
+		}
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+// writeAuthorizeError delegates to fosite while ensuring redirected errors
+// carry the RFC 9207 `iss` parameter (SPEC §1.5).
+func (a *IDPRouter) writeAuthorizeError(ctx context.Context, w http.ResponseWriter, ar fosite.AuthorizeRequester, err error) {
+	a.provider.WriteAuthorizeError(ctx, &issRedirectWriter{ResponseWriter: w, issuer: a.externalURL}, ar, err)
 }
 
 func (a *IDPRouter) handleAuth(c *gin.Context) {
@@ -127,7 +171,7 @@ func (a *IDPRouter) handleAuth(c *gin.Context) {
 	if c.Request.URL.Query().Get("state") == "" {
 		state, err := utils.GenerateState()
 		if err != nil {
-			a.provider.WriteAuthorizeError(ctx, c.Writer, nil, fosite.ErrServerError.WithWrap(err))
+			a.writeAuthorizeError(ctx, c.Writer, nil, fosite.ErrServerError.WithWrap(err))
 			return
 		}
 		q := c.Request.URL.Query()
@@ -137,13 +181,13 @@ func (a *IDPRouter) handleAuth(c *gin.Context) {
 
 	ar, err := a.provider.NewAuthorizeRequest(ctx, c.Request)
 	if err != nil {
-		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, err)
+		a.writeAuthorizeError(ctx, c.Writer, ar, err)
 		return
 	}
 
 	if err := a.repo.CreateAuthorizeRequest(ctx, ar); err != nil {
 		a.logger.Error("Failed to create authorize requester", zap.Error(err))
-		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
+		a.writeAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
 		return
 	}
 	session := sessions.Default(c)
@@ -151,7 +195,7 @@ func (a *IDPRouter) handleAuth(c *gin.Context) {
 	if err := session.Save(); err != nil {
 		a.logger.Error("Failed to save authorize request in session", zap.Error(err))
 		_ = a.repo.DeleteAuthorizeRequest(ctx, ar.GetID())
-		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
+		a.writeAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
 		return
 	}
 	c.Redirect(302, strings.ReplaceAll(AuthorizationReturnEndpoint, ":ar_id", ar.GetID()))
@@ -205,21 +249,23 @@ func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 	jwtSession, err := NewJWTSessionWithKey(a.externalURL, subject, a.privKey, userInfo)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Error("Failed to create JWT session", zap.Error(err))
-		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, err)
+		a.writeAuthorizeError(ctx, c.Writer, ar, err)
 		return
 	}
 
 	response, err := a.provider.NewAuthorizeResponse(ctx, ar, jwtSession)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Error("Failed to generate authorization response", zap.Error(err))
-		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, err)
+		a.writeAuthorizeError(ctx, c.Writer, ar, err)
 		return
 	}
+	// RFC 9207: identify the issuer in the authorization response (SPEC §1.5).
+	response.AddParameter("iss", a.externalURL)
 
 	removeAuthorizeRequestID(session, arID)
 	if err := session.Save(); err != nil {
 		a.logger.Error("Failed to remove authorize request from session", zap.Error(err))
-		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
+		a.writeAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
 		return
 	}
 
@@ -417,16 +463,19 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 }
 
 type authorizationServerResponse struct {
-	Issuer                            string   `json:"issuer"`
-	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
-	TokenEndpoint                     string   `json:"token_endpoint"`
-	RegistrationEndpoint              string   `json:"registration_endpoint"`
-	ScopesSupported                   []string `json:"scopes_supported"`
-	ResponseTypesSupported            []string `json:"response_types_supported"`
-	ResponseModesSupported            []string `json:"response_modes_supported"`
-	GrantTypesSupported               []string `json:"grant_types_supported"`
-	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
-	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
+	Issuer                                     string   `json:"issuer"`
+	AuthorizationEndpoint                      string   `json:"authorization_endpoint"`
+	TokenEndpoint                              string   `json:"token_endpoint"`
+	RegistrationEndpoint                       string   `json:"registration_endpoint"`
+	JWKSURI                                    string   `json:"jwks_uri"`
+	IntrospectionEndpoint                      string   `json:"introspection_endpoint"`
+	ScopesSupported                            []string `json:"scopes_supported"`
+	ResponseTypesSupported                     []string `json:"response_types_supported"`
+	ResponseModesSupported                     []string `json:"response_modes_supported"`
+	GrantTypesSupported                        []string `json:"grant_types_supported"`
+	TokenEndpointAuthMethodsSupported          []string `json:"token_endpoint_auth_methods_supported"`
+	CodeChallengeMethodsSupported              []string `json:"code_challenge_methods_supported"`
+	AuthorizationResponseIssParameterSupported bool     `json:"authorization_response_iss_parameter_supported"`
 }
 
 func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
@@ -448,18 +497,33 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
 		return
 	}
+	jwksURI, err := url.JoinPath(a.externalURL, JWKSEndpoint)
+	if err != nil {
+		a.logger.Error("Failed to create JWKS URL", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		return
+	}
+	introspectionEndpoint, err := url.JoinPath(a.externalURL, IntrospectionEndpoint)
+	if err != nil {
+		a.logger.Error("Failed to create introspection endpoint URL", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		return
+	}
 
 	res := &authorizationServerResponse{
-		Issuer:                            a.externalURL,
-		AuthorizationEndpoint:             authorizationEndpoint,
-		TokenEndpoint:                     tokenEndpoint,
-		RegistrationEndpoint:              registrationEndpoint,
-		ScopesSupported:                   []string{},
-		ResponseTypesSupported:            []string{"code"},
-		ResponseModesSupported:            []string{"query"},
-		GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
-		TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post", "none"},
-		CodeChallengeMethodsSupported:     []string{"S256"},
+		Issuer:                                     a.externalURL,
+		AuthorizationEndpoint:                      authorizationEndpoint,
+		TokenEndpoint:                              tokenEndpoint,
+		RegistrationEndpoint:                       registrationEndpoint,
+		JWKSURI:                                    jwksURI,
+		IntrospectionEndpoint:                      introspectionEndpoint,
+		ScopesSupported:                            []string{},
+		ResponseTypesSupported:                     []string{"code"},
+		ResponseModesSupported:                     []string{"query"},
+		GrantTypesSupported:                        []string{"authorization_code", "refresh_token"},
+		TokenEndpointAuthMethodsSupported:          []string{"client_secret_basic", "client_secret_post", "none"},
+		CodeChallengeMethodsSupported:              []string{"S256"},
+		AuthorizationResponseIssParameterSupported: true,
 	}
 	c.JSON(200, res)
 }

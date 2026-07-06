@@ -1,7 +1,6 @@
 package mcpproxy
 
 import (
-	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -27,27 +26,30 @@ func TestRun_NormalizesExternalURLTrailingSlash(t *testing.T) {
 		wantErr     bool
 		errContains string
 	}{
-		{name: "no trailing slash", input: "https://example.com", wantURL: "https://example.com/"},
-		{name: "with trailing slash", input: "https://example.com/", wantURL: "https://example.com/"},
+		{name: "no trailing slash", input: "https://example.com", wantURL: "https://example.com"},
+		{name: "with trailing slash", input: "https://example.com/", wantURL: "https://example.com"},
 		{name: "with path", input: "https://example.com/foo", wantErr: true, errContains: "must not have a path"},
+		{name: "with query", input: "https://example.com/?x=1", wantErr: true, errContains: "must not have a query"},
+		{name: "relative", input: "example.com", wantErr: true, errContains: "must use http or https"},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			var receivedURL string
-			newProxyRouter = func(externalURL string, proxyHandler http.Handler, publicKey *rsa.PublicKey, proxyHeaders http.Header, httpStreamingOnly bool, forwardAuthorizationHeader bool, headerMapping map[string]string, headerMappingBase string) (*proxy.ProxyRouter, error) {
-				receivedURL = externalURL
+			newProxyRouter = func(cfg proxy.Config) (*proxy.ProxyRouter, error) {
+				receivedURL = cfg.ExternalURL
 				return nil, errors.New("stop early")
 			}
 
-			err := Run(
-				":0", ":0", false, "", "", false, "", "",
-				t.TempDir(), "local", "",
-				tt.input,
-				"", "", "", nil, "", "", nil, nil, nil, nil,
-				false, "", "", nil, nil, "", false,
-				[]string{"http://example.com"}, false, nil, "/userinfo",
-			)
+			err := Run(Config{
+				Listen:            ":0",
+				TLSListen:         ":0",
+				DataPath:          t.TempDir(),
+				RepositoryBackend: "local",
+				ExternalURL:       tt.input,
+				ProxyTargets:      []string{"http://example.com"},
+				HeaderMappingBase: "/userinfo",
+			})
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -69,46 +71,21 @@ func TestRun_PassesHTTPStreamingOnlyToProxyRouter(t *testing.T) {
 	})
 
 	var streamingOnlyReceived bool
-	newProxyRouter = func(externalURL string, proxyHandler http.Handler, publicKey *rsa.PublicKey, proxyHeaders http.Header, httpStreamingOnly bool, forwardAuthorizationHeader bool, headerMapping map[string]string, headerMappingBase string) (*proxy.ProxyRouter, error) {
-		streamingOnlyReceived = httpStreamingOnly
+	newProxyRouter = func(cfg proxy.Config) (*proxy.ProxyRouter, error) {
+		streamingOnlyReceived = cfg.HTTPStreamingOnly
 		return nil, errors.New("proxy router init failed")
 	}
 
-	err := Run(
-		":0",
-		":0",
-		false,
-		"",
-		"",
-		false,
-		"",
-		"",
-		t.TempDir(),
-		"local",
-		"",
-		"http://localhost",
-		"",
-		"",
-		"",
-		nil,
-		"",
-		"",
-		nil,
-		nil,
-		nil,
-		nil,
-		false,
-		"",
-		"",
-		nil,
-		nil,
-		"",
-		false,
-		[]string{"http://example.com"},
-		true,
-		nil,
-		"/userinfo",
-	)
+	err := Run(Config{
+		Listen:            ":0",
+		TLSListen:         ":0",
+		DataPath:          t.TempDir(),
+		RepositoryBackend: "local",
+		ExternalURL:       "http://localhost",
+		ProxyTargets:      []string{"http://example.com"},
+		HTTPStreamingOnly: true,
+		HeaderMappingBase: "/userinfo",
+	})
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to create proxy router")

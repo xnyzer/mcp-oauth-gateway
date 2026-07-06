@@ -14,9 +14,9 @@
 - **Base URL / issuer:** every absolute URL below is relative to the configured public base URL
   (`EXTERNAL_URL`). The OAuth **issuer is `EXTERNAL_URL` normalized without a trailing slash**;
   the same normalized value MUST be used in AS metadata (`issuer`), token `iss` claims, and the
-  RFC 9207 `iss` authorization-response parameter. (Delta: the code currently normalizes the
-  external URL to path `/`, which can yield a trailing slash — F-005 MUST pin the no-trailing-
-  slash form everywhere.)
+  RFC 9207 `iss` authorization-response parameter. (Delta: **done, F-005a** — the external URL
+  is validated as absolute http(s) without path/query/fragment and normalized without a
+  trailing slash at startup.)
 - **Endpoint paths:** the fork's `/.idp/*` and `/.auth/*` prefixes are **kept** (decision,
   F-004 prep): clients discover endpoint paths via RFC 8414/9728 metadata, and the prefixes
   cannot collide with paths proxied to the upstream MCP server. `REQUIREMENTS.md` FR-2/FR-3
@@ -73,8 +73,8 @@ RFC 9728. Response `200`, `Content-Type: application/json`:
 | `scopes_supported` | `[]` (until scopes are defined) | keep consistent with §1.2 |
 | `resource_name` | `"mcp-oauth-gateway"` | **target**, optional cosmetic |
 
-**Delta:** currently only `resource` + `authorization_servers` are served. F-005 adds the
-remaining fields. The PRM URL is referenced by the `WWW-Authenticate` challenge (§1.11).
+**Delta:** **done, F-005a** — all fields above are served. The PRM URL is referenced by the
+`WWW-Authenticate` challenge (§1.11).
 
 ### 1.2 AS metadata — `GET /.well-known/oauth-authorization-server`
 
@@ -101,8 +101,8 @@ RFC 8414. Response `200 application/json`:
 the same document for clients that only probe that path (the gateway issues no ID tokens; this
 is a discovery convenience, not OIDC conformance). Off by default; config flag in part 3.
 
-**Delta:** `jwks_uri`, `revocation_endpoint`, `introspection_endpoint`,
-`authorization_response_iss_parameter_supported`, and the OIDC mirror are missing today.
+**Delta:** **done, F-005a** — except `revocation_endpoint`, which is advertised together with
+the `/revoke` endpoint itself (F-005b; metadata must not advertise a 404).
 
 ### 1.3 Client identification — CIMD (primary mechanism)
 
@@ -190,9 +190,10 @@ blanket grants in v1).
 `iss`; non-redirectable ones (unknown client, invalid/missing `redirect_uri`) render an HTML
 error page (§1.12 template) with `400` and MUST NOT redirect.
 
-**Delta:** flow exists (Fosite); missing: `iss` parameter, `resource` validation, CIMD client
-support; PKCE presence is enforced by Fosite config for public clients — F-005 MUST enforce it
-for **all** clients.
+**Delta:** flow exists (Fosite); `iss` parameter **done (F-005a**, on success and error
+redirects**)**. Still missing: `resource` validation (F-005b), CIMD client support (F-005c);
+PKCE presence is enforced by Fosite config for public clients — F-005 MUST enforce it for
+**all** clients.
 
 ### 1.6 Token endpoint — `POST /.idp/token`
 
@@ -308,9 +309,9 @@ FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
    `HEADER_MAPPING_BASE`, default `/userinfo`) to request headers; inbound copies of those
    headers are stripped first (anti-spoofing).
 
-**Delta:** enforcement, streaming, injection, and header mapping exist; the 401 is a bare
-JSON without `WWW-Authenticate` (gap-list item); skew handling and revocation checks are
-F-005 work.
+**Delta:** enforcement, streaming, injection, and header mapping exist; the
+`WWW-Authenticate` challenge and clock-skew leeway are **done (F-005a)**; revocation checks
+land with F-005b.
 
 ### 1.12 User authentication & consent — `/.auth/*`
 

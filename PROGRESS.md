@@ -20,6 +20,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-010 | Rebrand the fork → **binary/CLI/Docker/UI/ClientInfo/bbolt namespace renamed to `mcp-oauth-gateway`** (NOTICE/FORK attribution kept; Go builder image pinned to 1.26). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 | F-011 | Trim bundled auth providers → **Google/GitHub removed** (~680 lines + 10 flags/env vars + 1 transitive dep); **generic OIDC kept, off by default**; password login verified as default (smoke test). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 | F-004 | Complete the spec → **`SPEC.md` created** (API contracts incl. CIMD/RFC 8707/9207/7009 + `WWW-Authenticate`; data model + `jti` revocation + key rotation; full config schema) + `docker-compose.example.yml`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
+| F-005a | Discovery & 401 surface → **complete PRM/AS metadata, `WWW-Authenticate` challenge, RFC 9207 `iss`, issuer normalization, `CLOCK_SKEW`, OIDC mirror** + config-struct refactor. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 
 ---
 
@@ -57,6 +58,46 @@ The remaining tasks are a hard chain: 1→2→3. Each task below carries its own
 - **Self-contained auth** — replace the bcrypt single-shared-secret with passkey/WebAuthn + a real user model.
 
 **Dependencies:** F-004, F-008, F-011 (all DONE). Implement against the `SPEC.md` contracts (each §1 section carries a Delta note).
+
+**Decisions (prep, user-approved):** passkey bootstrap = first login via `PASSWORD`/`PASSWORD_HASH`, then passkey enrollment on a session-gated settings page (password stays as a disableable fallback); ES256 ships only if Fosite supports it cleanly, otherwise documented follow-up; rate-limit state is in-memory (single-instance deployment, GR-3). New deps: `github.com/go-webauthn/webauthn` (BSD-3), `golang.org/x/time/rate` (BSD).
+
+#### F-005b — Token binding & lifecycle
+
+**What:** RFC 8707 `resource`→`aud` at authorize + token endpoints (gateway = sole resource; `invalid_target` otherwise, §1.5–1.7); claims `jti`/`client_id`/`scope`; `/.idp/revoke` (RFC 7009) + revoked-`jti` deny-list with fail-closed proxy check (§1.9/§2.4); introspection alignment (§1.10); `ACCESS_TOKEN_TTL`/`AUTH_CODE_TTL`/`REFRESH_TOKEN_TTL`; expiry sweeper + schema-version marker (§2.1/§2.5); advertise `revocation_endpoint`.
+**Files:** `pkg/idp/`, `pkg/proxy/`, `pkg/repository/`, `pkg/mcp-proxy/main.go` + tests.
+**Dependencies:** F-005a (DONE).
+- [ ] wrong `resource` → `invalid_target` (negative tests)
+- [ ] revoked token → 401 on proxy; store error during deny-list check → 503 (fail-closed)
+- [ ] refresh revocation cascades to the grant's access tokens
+- [ ] TTLs configurable and validated fail-fast
+
+#### F-005c — CIMD + DCR hardening (SR-5)
+
+**What:** CIMD resolver per §1.3 (5 s/64 KiB/no redirects, SSRF guards, document validation, positive/negative cache) integrated at authorize/token; `CIMD_*` config. DCR: client TTL refreshed on use, cap, `DCR_ENABLED`, redirect-URI scheme validation (§1.4).
+**Files:** new `pkg/cimd/`, `pkg/idp/`, `pkg/repository/` + tests.
+**Dependencies:** F-005b.
+- [ ] SSRF negative tests (private/loopback/metadata IPs, redirects, oversize, non-https)
+- [ ] CIMD client full authorize+token round-trip in tests
+- [ ] DCR expiry/cap enforced (negative tests); `DCR_ENABLED=false` removes endpoint + metadata entry
+
+#### F-005d — Key management
+
+**What:** Key directory + atomic `manifest.json`, migration from the legacy single key, interval-based rotation with retiring window, multi-key JWKS, `KEY_ALG` (RS256/ES256 if Fosite allows) + `KEY_ROTATION_INTERVAL` (§2.2/§2.3).
+**Files:** new `pkg/keys/` (from `pkg/utils/keys.go`), `pkg/idp/` + tests.
+**Dependencies:** F-005b (sweeper).
+- [ ] rotation test: pre-rotation token stays valid until `exp`; JWKS serves both keys
+- [ ] legacy key adopted on first start (migration test)
+- [ ] crash-safe manifest rewrite (atomic rename)
+
+#### F-005e — Self-contained auth & abuse protection
+
+**What:** User model + passkey/WebAuthn (`github.com/go-webauthn/webauthn`) with password-bootstrap enrollment (session-gated settings page); rate limits on `/register`, `/token`, login + account lockout (SR-6); structured auth events `login_ok`/`login_fail`/`token_issued`/`register`/`rate_limited`/`revoked` (SR-8).
+**Files:** `pkg/auth/`, `pkg/repository/`, new `pkg/ratelimit/` + tests.
+**Dependencies:** F-005b (user/`sub` claims), F-005d not required.
+- [ ] passkey enrollment + login round-trip (WebAuthn test vectors / virtual authenticator)
+- [ ] lockout + rate-limit negative tests; uniform login errors (no enumeration)
+- [ ] auth events emitted without secrets (log assertion tests)
+- [ ] split into e1/e2 if implementation exceeds ~1000 lines
 
 ---
 

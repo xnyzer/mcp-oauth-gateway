@@ -28,6 +28,10 @@ import (
 )
 
 func setupTestServer(t *testing.T) (*httptest.Server, repository.Repository, string) {
+	return setupTestServerMirror(t, false)
+}
+
+func setupTestServerMirror(t *testing.T, oidcDiscoveryMirror bool) (*httptest.Server, repository.Repository, string) {
 	// Create temp directory and repository
 	tmpDir, err := os.MkdirTemp("", "idp_test_*")
 	require.NoError(t, err)
@@ -72,7 +76,15 @@ func setupTestServer(t *testing.T) (*httptest.Server, repository.Repository, str
 	require.NoError(t, err)
 
 	logger, _ := zap.NewDevelopment()
-	idpRouter, err := NewIDPRouter(repo, privKey, logger, "http://localhost:8080", secret[:], authRouter)
+	idpRouter, err := NewIDPRouter(Config{
+		Repo:                repo,
+		PrivKey:             privKey,
+		Logger:              logger,
+		ExternalURL:         "http://localhost:8080",
+		Secret:              secret[:],
+		AuthRouter:          authRouter,
+		OIDCDiscoveryMirror: oidcDiscoveryMirror,
+	})
 	require.NoError(t, err)
 
 	idpRouter.SetupRoutes(router)
@@ -120,6 +132,47 @@ func TestOAuthServerMetadata(t *testing.T) {
 	require.True(t, ok)
 	require.Contains(t, challengeMethods, "S256")
 	require.NotContains(t, challengeMethods, "plain")
+
+	// SPEC §1.2: field-complete AS metadata.
+	registrationEndpoint, ok := metadata["registration_endpoint"].(string)
+	require.True(t, ok)
+	require.Contains(t, registrationEndpoint, ".idp/register")
+
+	jwksURI, ok := metadata["jwks_uri"].(string)
+	require.True(t, ok)
+	require.Equal(t, "http://localhost:8080/.well-known/jwks.json", jwksURI)
+
+	introspectionEndpoint, ok := metadata["introspection_endpoint"].(string)
+	require.True(t, ok)
+	require.Contains(t, introspectionEndpoint, ".idp/introspect")
+
+	issSupported, ok := metadata["authorization_response_iss_parameter_supported"].(bool)
+	require.True(t, ok)
+	require.True(t, issSupported, "RFC 9207 iss support must be advertised")
+
+	responseModes, ok := metadata["response_modes_supported"].([]any)
+	require.True(t, ok)
+	require.Contains(t, responseModes, "query")
+}
+
+func TestOIDCDiscoveryMirror(t *testing.T) {
+	// Off by default: the mirror path is not served.
+	server, _, _ := setupTestServer(t)
+	resp, err := http.Get(server.URL + OIDCDiscoveryEndpoint)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	// Enabled: same AS metadata document under the OIDC path (SPEC §1.2).
+	mirrorServer, _, _ := setupTestServerMirror(t, true)
+	resp, err = http.Get(mirrorServer.URL + OIDCDiscoveryEndpoint)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var metadata map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&metadata))
+	require.Equal(t, "http://localhost:8080", metadata["issuer"])
 }
 
 func TestJWKSEndpoint(t *testing.T) {
@@ -230,6 +283,8 @@ func TestPrivateClient(t *testing.T) {
 	require.NotEmpty(t, code)
 	receivedState := callbackURL.Query().Get("state")
 	require.Equal(t, state, receivedState)
+	// RFC 9207: the success redirect identifies the issuer (SPEC §1.5).
+	require.Equal(t, "http://localhost:8080", callbackURL.Query().Get("iss"))
 
 	// Step 5: Exchange authorization code for tokens using manual HTTP request
 	tokenReq := url.Values{}
@@ -451,6 +506,8 @@ func TestPublicClientRequiresPKCE(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, callbackURL.Query().Get("code"))
 	require.NotEmpty(t, callbackURL.Query().Get("error"))
+	// RFC 9207: error redirects identify the issuer, too (SPEC §1.5).
+	require.Equal(t, "http://localhost:8080", callbackURL.Query().Get("iss"))
 }
 
 func mustCookieJar(t *testing.T) http.CookieJar {

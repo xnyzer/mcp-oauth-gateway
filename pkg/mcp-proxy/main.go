@@ -37,41 +37,80 @@ var ServerShutdownTimeout = 5 * time.Second
 
 var newProxyRouter = proxy.NewProxyRouter
 
-func Run(
-	listen string,
-	tlsListen string,
-	autoTLS bool,
-	tlsHost string,
-	tlsDirectoryURL string,
-	tlsAcceptTOS bool,
-	tlsCertFile string,
-	tlsKeyFile string,
-	dataPath string,
-	repositoryBackend string,
-	repositoryDSN string,
-	externalURL string,
-	oidcConfigurationURL string,
-	oidcClientID string,
-	oidcClientSecret string,
-	oidcScopes []string,
-	oidcUserIDField string,
-	oidcProviderName string,
-	oidcAllowedUsers []string,
-	oidcAllowedUsersGlob []string,
-	oidcAllowedAttributes map[string][]string,
-	oidcAllowedAttributesGlob map[string][]string,
-	noProviderAutoSelect bool,
-	password string,
-	passwordHash string,
-	trustedProxy []string,
-	proxyHeaders []string,
-	proxyBearerToken string,
-	forwardAuthorizationHeader bool,
-	proxyTarget []string,
-	httpStreamingOnly bool,
-	headerMapping map[string]string,
-	headerMappingBase string,
-) error {
+// Config carries the full gateway configuration (SPEC §3). Field names
+// mirror the CLI flags / env vars defined in main.go.
+type Config struct {
+	Listen          string
+	TLSListen       string
+	AutoTLS         bool
+	TLSHost         string
+	TLSDirectoryURL string
+	TLSAcceptTOS    bool
+	TLSCertFile     string
+	TLSKeyFile      string
+
+	DataPath          string
+	RepositoryBackend string
+	RepositoryDSN     string
+
+	// ExternalURL is the public base URL; Run normalizes it to the issuer
+	// form — absolute, http(s), no path/query/fragment, no trailing slash
+	// (SPEC §0) — and fails fast otherwise.
+	ExternalURL string
+
+	OIDCConfigurationURL      string
+	OIDCClientID              string
+	OIDCClientSecret          string
+	OIDCScopes                []string
+	OIDCUserIDField           string
+	OIDCProviderName          string
+	OIDCAllowedUsers          []string
+	OIDCAllowedUsersGlob      []string
+	OIDCAllowedAttributes     map[string][]string
+	OIDCAllowedAttributesGlob map[string][]string
+
+	NoProviderAutoSelect bool
+	Password             string
+	PasswordHash         string
+
+	TrustedProxies             []string
+	ProxyHeaders               []string
+	ProxyBearerToken           string
+	ForwardAuthorizationHeader bool
+	ProxyTargets               []string
+	HTTPStreamingOnly          bool
+	HeaderMapping              map[string]string
+	HeaderMappingBase          string
+
+	// OIDCDiscoveryMirror serves the AS metadata additionally under
+	// /.well-known/openid-configuration (SPEC §1.2, off by default).
+	OIDCDiscoveryMirror bool
+	// ClockSkew is the leeway for token time-claim validation
+	// (SPEC §1.11.1; 0–5m, default set in main.go).
+	ClockSkew time.Duration
+}
+
+const maxClockSkew = 5 * time.Minute
+
+func Run(cfg Config) error {
+	listen := cfg.Listen
+	tlsListen := cfg.TLSListen
+	autoTLS := cfg.AutoTLS
+	tlsHost := cfg.TLSHost
+	tlsDirectoryURL := cfg.TLSDirectoryURL
+	tlsAcceptTOS := cfg.TLSAcceptTOS
+	tlsCertFile := cfg.TLSCertFile
+	tlsKeyFile := cfg.TLSKeyFile
+	dataPath := cfg.DataPath
+	repositoryBackend := cfg.RepositoryBackend
+	repositoryDSN := cfg.RepositoryDSN
+	externalURL := cfg.ExternalURL
+	trustedProxy := cfg.TrustedProxies
+	proxyHeaders := cfg.ProxyHeaders
+	proxyBearerToken := cfg.ProxyBearerToken
+	proxyTarget := cfg.ProxyTargets
+	headerMapping := cfg.HeaderMapping
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -79,11 +118,26 @@ func Run(
 	if err != nil {
 		return fmt.Errorf("failed to parse external URL: %w", err)
 	}
+	if parsedExternalURL.Scheme != "http" && parsedExternalURL.Scheme != "https" {
+		return fmt.Errorf("external URL must use http or https, got: %q", parsedExternalURL.Scheme)
+	}
+	if parsedExternalURL.Host == "" {
+		return fmt.Errorf("external URL must be absolute, got: %s", externalURL)
+	}
 	if parsedExternalURL.Path != "" && parsedExternalURL.Path != "/" {
 		return fmt.Errorf("external URL must not have a path, got: %s", parsedExternalURL.Path)
 	}
-	parsedExternalURL.Path = "/"
+	if parsedExternalURL.RawQuery != "" || parsedExternalURL.Fragment != "" {
+		return fmt.Errorf("external URL must not have a query or fragment, got: %s", externalURL)
+	}
+	// SPEC §0: the issuer is the external URL without a trailing slash; the
+	// same form is used in metadata, token iss/aud, and the RFC 9207 iss.
+	parsedExternalURL.Path = ""
 	externalURL = parsedExternalURL.String()
+
+	if cfg.ClockSkew < 0 || cfg.ClockSkew > maxClockSkew {
+		return fmt.Errorf("clock skew must be between 0 and %s, got: %s", maxClockSkew, cfg.ClockSkew)
+	}
 
 	if (tlsCertFile == "") != (tlsKeyFile == "") {
 		return fmt.Errorf("both TLS certificate and key files must be provided together")
@@ -209,19 +263,19 @@ func Run(
 	var providers []auth.Provider
 
 	// Add OIDC provider if configured
-	if oidcConfigurationURL != "" && oidcClientID != "" && oidcClientSecret != "" {
+	if cfg.OIDCConfigurationURL != "" && cfg.OIDCClientID != "" && cfg.OIDCClientSecret != "" {
 		oidcProvider, err := auth.NewOIDCProvider(
-			oidcConfigurationURL,
-			oidcScopes,
-			oidcUserIDField,
-			oidcProviderName,
+			cfg.OIDCConfigurationURL,
+			cfg.OIDCScopes,
+			cfg.OIDCUserIDField,
+			cfg.OIDCProviderName,
 			externalURL,
-			oidcClientID,
-			oidcClientSecret,
-			oidcAllowedUsers,
-			oidcAllowedUsersGlob,
-			oidcAllowedAttributes,
-			oidcAllowedAttributesGlob,
+			cfg.OIDCClientID,
+			cfg.OIDCClientSecret,
+			cfg.OIDCAllowedUsers,
+			cfg.OIDCAllowedUsersGlob,
+			cfg.OIDCAllowedAttributes,
+			cfg.OIDCAllowedAttributesGlob,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create OIDC provider: %w", err)
@@ -232,8 +286,8 @@ func Run(
 	var passwordHashes []string
 
 	// Handle password argument - generate bcrypt hash if provided
-	if password != "" {
-		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if cfg.Password != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(cfg.Password), bcrypt.DefaultCost)
 		if err != nil {
 			return fmt.Errorf("failed to generate password hash: %w", err)
 		}
@@ -241,23 +295,41 @@ func Run(
 	}
 
 	// Handle password-hash argument - use directly if provided
-	if passwordHash != "" {
-		passwordHashes = append(passwordHashes, passwordHash)
+	if cfg.PasswordHash != "" {
+		passwordHashes = append(passwordHashes, cfg.PasswordHash)
 	}
 
 	// Collect the top-level userinfo keys that are actually needed so the
 	// session cookie doesn't store the entire provider response.
-	userInfoFields := userInfoFieldsFromConfig(oidcUserIDField, headerMapping)
+	userInfoFields := userInfoFieldsFromConfig(cfg.OIDCUserIDField, headerMapping)
 
-	authRouter, err := auth.NewAuthRouter(passwordHashes, noProviderAutoSelect, userInfoFields, providers...)
+	authRouter, err := auth.NewAuthRouter(passwordHashes, cfg.NoProviderAutoSelect, userInfoFields, providers...)
 	if err != nil {
 		return fmt.Errorf("failed to create auth router: %w", err)
 	}
-	idpRouter, err := idp.NewIDPRouter(repo, privKey, logger, externalURL, secret, authRouter)
+	idpRouter, err := idp.NewIDPRouter(idp.Config{
+		Repo:                repo,
+		PrivKey:             privKey,
+		Logger:              logger,
+		ExternalURL:         externalURL,
+		Secret:              secret,
+		AuthRouter:          authRouter,
+		OIDCDiscoveryMirror: cfg.OIDCDiscoveryMirror,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create IDP router: %w", err)
 	}
-	proxyRouter, err := newProxyRouter(externalURL, beHandler, &privKey.PublicKey, proxyHeadersMap, httpStreamingOnly, forwardAuthorizationHeader, headerMapping, headerMappingBase)
+	proxyRouter, err := newProxyRouter(proxy.Config{
+		ExternalURL:                externalURL,
+		Proxy:                      beHandler,
+		PublicKey:                  &privKey.PublicKey,
+		ProxyHeaders:               proxyHeadersMap,
+		HTTPStreamingOnly:          cfg.HTTPStreamingOnly,
+		ForwardAuthorizationHeader: cfg.ForwardAuthorizationHeader,
+		HeaderMapping:              headerMapping,
+		HeaderMappingBase:          cfg.HeaderMappingBase,
+		ClockSkew:                  cfg.ClockSkew,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create proxy router: %w", err)
 	}

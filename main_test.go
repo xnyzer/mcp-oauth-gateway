@@ -3,6 +3,8 @@ package main
 import (
 	"reflect"
 	"testing"
+
+	mcpproxy "github.com/xnyzer/mcp-oauth-gateway/pkg/mcp-proxy"
 )
 
 func TestSplitWithEscapes(t *testing.T) {
@@ -397,42 +399,9 @@ func TestNewRootCommand_HTTPStreamingOnlyFlag(t *testing.T) {
 
 	var streamingOnly bool
 	var receivedTargets []string
-	runner := proxyRunnerFunc(func(listen string,
-		tlsListen string,
-		autoTLS bool,
-		tlsHost string,
-		tlsDirectoryURL string,
-		tlsAcceptTOS bool,
-		tlsCertFile string,
-		tlsKeyFile string,
-		dataPath string,
-		repositoryBackend string,
-		repositoryDSN string,
-		externalURL string,
-		oidcConfigurationURL string,
-		oidcClientID string,
-		oidcClientSecret string,
-		oidcScopes []string,
-		oidcUserIDField string,
-		oidcProviderName string,
-		oidcAllowedUsers []string,
-		oidcAllowedUsersGlob []string,
-		oidcAllowedAttributes map[string][]string,
-		oidcAllowedAttributesGlob map[string][]string,
-		noProviderAutoSelect bool,
-		password string,
-		passwordHash string,
-		trustedProxy []string,
-		proxyHeaders []string,
-		proxyBearerToken string,
-		forwardAuthorizationHeader bool,
-		proxyTarget []string,
-		httpStreamingOnly bool,
-		headerMapping map[string]string,
-		headerMappingBase string,
-	) error {
-		streamingOnly = httpStreamingOnly
-		receivedTargets = proxyTarget
+	runner := proxyRunnerFunc(func(cfg mcpproxy.Config) error {
+		streamingOnly = cfg.HTTPStreamingOnly
+		receivedTargets = cfg.ProxyTargets
 		return nil
 	})
 
@@ -455,41 +424,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFromEnv(t *testing.T) {
 	t.Setenv("HTTP_STREAMING_ONLY", "true")
 
 	var streamingOnly bool
-	runner := proxyRunnerFunc(func(listen string,
-		tlsListen string,
-		autoTLS bool,
-		tlsHost string,
-		tlsDirectoryURL string,
-		tlsAcceptTOS bool,
-		tlsCertFile string,
-		tlsKeyFile string,
-		dataPath string,
-		repositoryBackend string,
-		repositoryDSN string,
-		externalURL string,
-		oidcConfigurationURL string,
-		oidcClientID string,
-		oidcClientSecret string,
-		oidcScopes []string,
-		oidcUserIDField string,
-		oidcProviderName string,
-		oidcAllowedUsers []string,
-		oidcAllowedUsersGlob []string,
-		oidcAllowedAttributes map[string][]string,
-		oidcAllowedAttributesGlob map[string][]string,
-		noProviderAutoSelect bool,
-		password string,
-		passwordHash string,
-		trustedProxy []string,
-		proxyHeaders []string,
-		proxyBearerToken string,
-		forwardAuthorizationHeader bool,
-		proxyTarget []string,
-		httpStreamingOnly bool,
-		headerMapping map[string]string,
-		headerMappingBase string,
-	) error {
-		streamingOnly = httpStreamingOnly
+	runner := proxyRunnerFunc(func(cfg mcpproxy.Config) error {
+		streamingOnly = cfg.HTTPStreamingOnly
 		return nil
 	})
 
@@ -509,41 +445,8 @@ func TestNewRootCommand_ForwardAuthorizationFlag(t *testing.T) {
 	t.Setenv("PROXY_FORWARD_AUTHORIZATION", "")
 
 	var forwardAuthorization bool
-	runner := proxyRunnerFunc(func(listen string,
-		tlsListen string,
-		autoTLS bool,
-		tlsHost string,
-		tlsDirectoryURL string,
-		tlsAcceptTOS bool,
-		tlsCertFile string,
-		tlsKeyFile string,
-		dataPath string,
-		repositoryBackend string,
-		repositoryDSN string,
-		externalURL string,
-		oidcConfigurationURL string,
-		oidcClientID string,
-		oidcClientSecret string,
-		oidcScopes []string,
-		oidcUserIDField string,
-		oidcProviderName string,
-		oidcAllowedUsers []string,
-		oidcAllowedUsersGlob []string,
-		oidcAllowedAttributes map[string][]string,
-		oidcAllowedAttributesGlob map[string][]string,
-		noProviderAutoSelect bool,
-		password string,
-		passwordHash string,
-		trustedProxy []string,
-		proxyHeaders []string,
-		proxyBearerToken string,
-		forwardAuthorizationHeader bool,
-		proxyTarget []string,
-		httpStreamingOnly bool,
-		headerMapping map[string]string,
-		headerMappingBase string,
-	) error {
-		forwardAuthorization = forwardAuthorizationHeader
+	runner := proxyRunnerFunc(func(cfg mcpproxy.Config) error {
+		forwardAuthorization = cfg.ForwardAuthorizationHeader
 		return nil
 	})
 
@@ -563,41 +466,8 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 	t.Setenv("PROXY_FORWARD_AUTHORIZATION", "true")
 
 	var forwardAuthorization bool
-	runner := proxyRunnerFunc(func(listen string,
-		tlsListen string,
-		autoTLS bool,
-		tlsHost string,
-		tlsDirectoryURL string,
-		tlsAcceptTOS bool,
-		tlsCertFile string,
-		tlsKeyFile string,
-		dataPath string,
-		repositoryBackend string,
-		repositoryDSN string,
-		externalURL string,
-		oidcConfigurationURL string,
-		oidcClientID string,
-		oidcClientSecret string,
-		oidcScopes []string,
-		oidcUserIDField string,
-		oidcProviderName string,
-		oidcAllowedUsers []string,
-		oidcAllowedUsersGlob []string,
-		oidcAllowedAttributes map[string][]string,
-		oidcAllowedAttributesGlob map[string][]string,
-		noProviderAutoSelect bool,
-		password string,
-		passwordHash string,
-		trustedProxy []string,
-		proxyHeaders []string,
-		proxyBearerToken string,
-		forwardAuthorizationHeader bool,
-		proxyTarget []string,
-		httpStreamingOnly bool,
-		headerMapping map[string]string,
-		headerMappingBase string,
-	) error {
-		forwardAuthorization = forwardAuthorizationHeader
+	runner := proxyRunnerFunc(func(cfg mcpproxy.Config) error {
+		forwardAuthorization = cfg.ForwardAuthorizationHeader
 		return nil
 	})
 
