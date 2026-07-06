@@ -48,12 +48,14 @@ The remaining tasks are a hard chain: 1→2. Each task below carries its own `**
 **Idea:** End-to-end verify, then a mandatory security review before any public exposure.
 
 **Possible implementation:**
-- Local/tooling: discovery valid; DCR works; authorize+token+PKCE round-trip; JWKS; expired/invalid token → 401 (fail-closed); rate-limits fire.
-- **Claude web custom connector first** (easier to debug), then **Claude iOS**. (A faithful-baseline PoC already connected end-to-end in F-001 — see archive.)
+- Local/tooling: discovery valid; **CIMD client identification** (primary — what Claude uses, F-005c) and DCR fallback both work; authorize+token+PKCE round-trip; JWKS; expired/invalid token → 401 (fail-closed); rate-limits fire; key rotation keeps outstanding tokens valid (F-005d).
+- **Passkey/WebAuthn in real browsers:** enrollment + login in Safari and Chrome (desktop), then iOS — so far only covered by the virtual authenticator (F-005e1).
+- **Claude web custom connector first** (easier to debug), then **Claude iOS**. (A faithful-baseline PoC already connected end-to-end in F-001 — see archive; the codebase has changed substantially since.)
 - Negative tests (no token / tampered token / replay).
-- **Security review** before any public exposure.
+- **Security review** before any public exposure — at minimum a full `/audit-code` run (adversarial, not the per-step self-review).
+- If the MCP authorization spec **2026-07-28 RC** has landed by then: re-verify the contracts against it (watch item, REQUIREMENTS §0); otherwise this check moves to the F-007 release gate.
 
-**Dependencies:** F-005.
+**Dependencies:** F-005 (DONE).
 
 ---
 
@@ -64,9 +66,11 @@ The remaining tasks are a hard chain: 1→2. Each task below carries its own `**
 **Idea:** Finalise documentation and release artifacts.
 
 **Possible implementation:**
-- README usage docs (front an MCP server; add as a connector), SECURITY.md, SemVer, NOTICE.
-- CI with OAuth/MCP conformance tests (extend the existing `.github/workflows/ci.yml`).
+- README usage docs (front an MCP server; add as a connector; **complete config reference** for the §3 env vars — F-005 added ~20), SECURITY.md, SemVer, NOTICE.
+- **Manual key-rotation ops command** (deferred here from F-005d — SPEC §2.3: v1 rotates on interval only).
+- CI: add **golangci-lint** (CODING-STANDARDS §11 expects it; the workflow only runs gofmt/vet/build/test today) + OAuth/MCP conformance tests (extend the existing `.github/workflows/ci.yml`).
 - Verify all dependencies are permissive-licensed (no GPL/AGPL; MPL-2.0 accepted — see F-008b).
+- **Release gate:** re-verify against the MCP authorization spec **2026-07-28 RC** (watch item, REQUIREMENTS §0), unless already done in F-006.
 
 **Dependencies:** F-006.
 
