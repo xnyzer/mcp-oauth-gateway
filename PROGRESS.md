@@ -4,7 +4,7 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State:** the base gateway now exists — a working **hard fork of `sigbit/mcp-auth-proxy`** (Go + Ory Fosite) builds and tests green on `main`, and `SPEC.md` defines the implementable contracts. F-001/F-002/F-003/F-004/F-008/F-009/F-010/F-011 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-005).** F-numbers are stable IDs; the document order, not the number, is the path.
+**State:** the gateway is **feature-complete against `SPEC.md`** — the hard fork of `sigbit/mcp-auth-proxy` (Go + Ory Fosite) builds and tests green on `main`, and F-005 closed every gap from the F-001 review (discovery/401 surface, token binding + revocation, CIMD + DCR hardening, key rotation + ES256, passkey auth, rate limits + auth events). F-001–F-005 and F-008–F-011 are done (rationale archived in `PROGRESS-ARCHIVE.md`). **Open tasks below are ordered for top-to-bottom execution — start at the top (F-006: verify against Claude + security review).** F-numbers are stable IDs; the document order, not the number, is the path.
 
 ---
 
@@ -25,6 +25,8 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-005c | CIMD + DCR hardening → **`pkg/cimd` resolver (dial-time SSRF guards, limits, cache) as fosite client source; DCR TTL/cap/validation/`DCR_ENABLED`**; reserved-namespace guard (disabled endpoints 404, never proxied). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005d | Key management → **new `pkg/keys`: key dir + atomic manifest, legacy-key migration (kid preserved), interval/alg-switch rotation with retiring window, multi-key JWKS + kid verification end to end (incl. introspection via custom fosite signer), `KEY_ALG` RS256/ES256 + `KEY_ROTATION_INTERVAL`**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005e1 | User model + passkey/WebAuthn → **single operator account (bootstrap on first password login, `sub` = user ID), go-webauthn ceremonies + session-gated `/.auth/settings`, disableable password fallback (env stays authoritative) with lockout rescue, §3.1 auth-backend fail-fast**; fixed inherited RequireAuth chain-continuation bug. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
+| F-005e2 | Rate limits, lockout & auth events → **new `pkg/ratelimit` (per-IP token buckets on `/register`/`/token`/login, 429 + `rate_limited`) + per-account lockout with byte-identical uniform errors; `pkg/authevent` structured events (`login_ok`/`login_fail`/`token_issued`/`register`/`rate_limited`/`revoked`) without secrets**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
+| F-005 | **Implement on the chosen base — complete** (all six substeps a/b/c/d/e1/e2 done; every gap from the F-001 review closed). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 
 ---
 
@@ -32,51 +34,10 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 
 | Order | Task | Ready? |
 |-------|------|--------|
-| 1 | **F-005** — Implement the gap list on the fork | ✅ ready (F-004 done) |
-| 2 | **F-006** — Verify against Claude + security review | ⛔ after F-005 |
-| 3 | **F-007** — Release hygiene | ⛔ after F-006 |
+| 1 | **F-006** — Verify against Claude + security review | ✅ ready (F-005 done) |
+| 2 | **F-007** — Release hygiene | ⛔ after F-006 |
 
-The remaining tasks are a hard chain: 1→2→3. Each task below carries its own `**Dependencies:**` line.
-
----
-
-### F-005 — Implement on the chosen base (sigbit fork)
-
-**Problem:** The base fork (F-008) exists but does not yet meet our spec/security bar. The work is **closing the gaps** — glue only, no hand-rolled crypto (see `THREAT-MODEL.md`).
-
-**Idea:** Build on the fork. Keep/verify what sigbit already does (in-process fail-closed enforcement, streaming proxy, embedded persistence, ACME); add and harden the missing pieces below.
-
-**Possible implementation:**
-- Discovery (PRM/AS metadata), DCR, authorize+token (PKCE), JWKS, login (passkey), consent.
-- Upstream proxy with streaming passthrough + configurable upstream auth injection.
-- Rate-limiting, DCR-client expiry/caps, structured auth logging.
-
-**Gap list vs the sigbit fork base (from F-001 code review):**
-- **RFC 8707 audience-binding** — sigbit hardcodes `aud` to `externalURL`; bind tokens to the actual MCP resource.
-- **CIMD client-registration** — absent; add Client ID Metadata Document resolution (CIMD-first per spec 2025-11-25, see F-003/F-009).
-- **`WWW-Authenticate` on the `/mcp` 401** — sigbit returns a bare 401 JSON; emit `Bearer resource_metadata="…"` so clients can discover the PRM.
-- **`/revoke` route (RFC 7009)** — storage supports it but no HTTP endpoint is wired.
-- **Complete PRM/AS-metadata** — advertise `jwks_uri`/introspection/revocation; PRM is currently thin.
-- **RFC 9207 `iss`** in the authorize response.
-- **Key management** — rotation + optional ES256 (sigbit ships a single static RS256 key).
-- **Self-contained auth** — replace the bcrypt single-shared-secret with passkey/WebAuthn + a real user model.
-
-**Dependencies:** F-004, F-008, F-011 (all DONE). Implement against the `SPEC.md` contracts (each §1 section carries a Delta note).
-
-**Decisions (prep, user-approved):** passkey bootstrap = first login via `PASSWORD`/`PASSWORD_HASH`, then passkey enrollment on a session-gated settings page (password stays as a disableable fallback); ES256 ships only if Fosite supports it cleanly, otherwise documented follow-up; rate-limit state is in-memory (single-instance deployment, GR-3). New deps: `github.com/go-webauthn/webauthn` (BSD-3), `golang.org/x/time/rate` (BSD).
-
-#### F-005e — Self-contained auth & abuse protection
-
-Split into e1/e2 (prep 2026-07-06; the combined scope exceeds ~1000 lines). **Decision (user-approved):** the env config (`PASSWORD`/`PASSWORD_HASH`) remains the authoritative password source after bootstrap — the user record stores identity, passkeys, and the password-disabled flag only (no `password_hash` in the DB; SPEC §2.1 delta). Password login auto-reactivates when no passkeys remain (operator lockout rescue).
-
-#### F-005e2 — Rate limits, lockout & auth events
-
-**What:** Per-client-IP token buckets (`golang.org/x/time/rate`, in-memory per GR-3) on `/register`, `/token`, and login (`RATE_LIMIT_REGISTER`/`_TOKEN`/`_LOGIN`, format `10/m`, `0` disables); per-account lockout `LOGIN_LOCKOUT_THRESHOLD`/`_DURATION` with uniform errors (SR-6); structured auth events `login_ok`/`login_fail`/`token_issued`/`register`/`rate_limited`/`revoked` without secrets (SR-8).
-**Files:** new `pkg/ratelimit/`, `pkg/auth/`, `pkg/idp/`, `main.go`, `pkg/mcp-proxy/main.go` + tests. New dep: `golang.org/x/time` (BSD-3).
-**Dependencies:** F-005e1 (instruments the login paths e1 reworks).
-- [ ] lockout + rate-limit negative tests; uniform login errors (no enumeration)
-- [ ] auth events emitted without secrets (log assertion tests)
-- [ ] 429 + `rate_limited` event on each limited endpoint; `TRUSTED_PROXIES` honoured for client-IP extraction
+The remaining tasks are a hard chain: 1→2. Each task below carries its own `**Dependencies:**` line.
 
 ---
 
@@ -127,7 +88,7 @@ F-009 Update REQUIREMENTS/spec for MCP 2025-11-25 (CIMD-first) (DONE)
 F-010 Rebrand the fork to mcp-oauth-gateway (DONE)
 F-011 Trim bundled auth providers to the self-contained model (DONE)
 F-004 Complete the spec (make it implementable) (DONE)
-F-005 Implement on the chosen base (sigbit fork)
+F-005 Implement on the chosen base (sigbit fork) (DONE)
 F-006 Verify against Claude + security review
 F-007 Release hygiene
 -->

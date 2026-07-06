@@ -15,6 +15,7 @@ import (
 	foauth2 "github.com/ory/fosite/handler/oauth2"
 	"github.com/ory/fosite/token/jwt"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/authevent"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/keys"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
@@ -36,6 +37,8 @@ type IDPRouter struct {
 	dcrEnabled          bool
 	dcrClientTTL        time.Duration
 	dcrMaxClients       int
+	tokenRateLimit      gin.HandlerFunc
+	registerRateLimit   gin.HandlerFunc
 }
 
 // CIMDResolver resolves a Client ID Metadata Document for an https://
@@ -107,6 +110,10 @@ type Config struct {
 	// unlimited (SR-5).
 	DCRClientTTL  time.Duration
 	DCRMaxClients int
+	// TokenRateLimit / RegisterRateLimit guard the public token and
+	// registration endpoints (SR-5); nil disables.
+	TokenRateLimit    gin.HandlerFunc
+	RegisterRateLimit gin.HandlerFunc
 }
 
 const (
@@ -166,7 +173,17 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		dcrEnabled:          cfg.DCREnabled,
 		dcrClientTTL:        cfg.DCRClientTTL,
 		dcrMaxClients:       cfg.DCRMaxClients,
+		tokenRateLimit:      cfg.TokenRateLimit,
+		registerRateLimit:   cfg.RegisterRateLimit,
 	}, nil
+}
+
+// withRateLimit prepends a rate-limit middleware when configured.
+func withRateLimit(limit gin.HandlerFunc, handlers ...gin.HandlerFunc) []gin.HandlerFunc {
+	if limit == nil {
+		return handlers
+	}
+	return append([]gin.HandlerFunc{limit}, handlers...)
 }
 
 func customCompose(config *fosite.Config, storage any, keyManager *keys.Manager, refreshEnabled bool) fosite.OAuth2Provider {
@@ -219,11 +236,11 @@ func (a *IDPRouter) SetupRoutes(router gin.IRouter) {
 	router.GET(AuthorizationEndpoint, a.handleAuth)
 	router.GET(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturnForm)
 	router.POST(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturn)
-	router.POST(TokenEndpoint, a.handleToken)
+	router.POST(TokenEndpoint, withRateLimit(a.tokenRateLimit, a.handleToken)...)
 	router.POST(IntrospectionEndpoint, a.handleIntrospect)
 	router.POST(RevocationEndpoint, a.handleRevoke)
 	if a.dcrEnabled {
-		router.POST(RegistrationEndpoint, a.handleRegister)
+		router.POST(RegistrationEndpoint, withRateLimit(a.registerRateLimit, a.handleRegister)...)
 	}
 	router.GET(OauthAuthorizationServerEndpoint, a.handleOauthAuthorizationServer)
 	if a.oidcDiscoveryMirror {
@@ -492,6 +509,10 @@ func (a *IDPRouter) handleToken(c *gin.Context) {
 		}
 	}
 
+	authevent.Log(a.logger, authevent.TokenIssued,
+		zap.String("client_id", accessRequest.GetClient().GetID()),
+		zap.Strings("grant_types", accessRequest.GetGrantTypes()),
+		zap.String("client_ip", c.ClientIP()))
 	a.provider.WriteAccessResponse(ctx, c.Writer, accessRequest, response)
 }
 
@@ -520,6 +541,10 @@ func (a *IDPRouter) handleRevoke(c *gin.Context) {
 	err := a.provider.NewRevocationRequest(ctx, c.Request)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Warn("Token revocation failed")
+	} else {
+		// Accepted revocation request (also for unknown tokens — RFC 7009
+		// hides existence, so the event does too).
+		authevent.Log(a.logger, authevent.Revoked, zap.String("client_ip", c.ClientIP()))
 	}
 	a.provider.WriteRevocationResponse(ctx, c.Writer, err)
 }
@@ -667,6 +692,9 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
 		return
 	}
+	authevent.Log(a.logger, authevent.Register,
+		zap.String("client_id", clientID),
+		zap.String("client_ip", c.ClientIP()))
 
 	registrationClientURI, err := url.JoinPath(RegistrationEndpoint, clientID)
 	if err != nil {

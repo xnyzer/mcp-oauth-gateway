@@ -221,6 +221,11 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var dcrMaxClients int
 	var keyAlg string
 	var keyRotationInterval time.Duration
+	var rateLimitRegister string
+	var rateLimitToken string
+	var rateLimitLogin string
+	var loginLockoutThreshold int
+	var loginLockoutDuration time.Duration
 
 	rootCmd := &cobra.Command{
 		Use: "mcp-oauth-gateway",
@@ -300,6 +305,12 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 
 				KeyAlg:              keyAlg,
 				KeyRotationInterval: keyRotationInterval,
+
+				RateLimitRegister:     rateLimitRegister,
+				RateLimitToken:        rateLimitToken,
+				RateLimitLogin:        rateLimitLogin,
+				LoginLockoutThreshold: loginLockoutThreshold,
+				LoginLockoutDuration:  loginLockoutDuration,
 			}); err != nil {
 				panic(err)
 			}
@@ -352,6 +363,13 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	// Signing keys
 	rootCmd.Flags().StringVar(&keyAlg, "key-alg", getEnvWithDefault("KEY_ALG", "RS256"), "JWS signing algorithm: RS256 or ES256 (switching triggers a key rotation)")
 	rootCmd.Flags().DurationVar(&keyRotationInterval, "key-rotation-interval", getEnvDurationWithDefault("KEY_ROTATION_INTERVAL", 2160*time.Hour), "Automatic signing-key rotation interval, at least 1h (0 disables rotation)")
+
+	// Abuse protection: per-client-IP rate limits + login lockout
+	rootCmd.Flags().StringVar(&rateLimitRegister, "rate-limit-register", getEnvWithDefault("RATE_LIMIT_REGISTER", "10/m"), "Per-IP rate limit for client registration, format N/s|m|h (0 disables)")
+	rootCmd.Flags().StringVar(&rateLimitToken, "rate-limit-token", getEnvWithDefault("RATE_LIMIT_TOKEN", "60/m"), "Per-IP rate limit for the token endpoint, format N/s|m|h (0 disables)")
+	rootCmd.Flags().StringVar(&rateLimitLogin, "rate-limit-login", getEnvWithDefault("RATE_LIMIT_LOGIN", "10/m"), "Per-IP rate limit for the login surfaces, format N/s|m|h (0 disables)")
+	rootCmd.Flags().IntVar(&loginLockoutThreshold, "login-lockout-threshold", getEnvIntWithDefault("LOGIN_LOCKOUT_THRESHOLD", 10), "Consecutive failed password logins before the account locks (0 disables)")
+	rootCmd.Flags().DurationVar(&loginLockoutDuration, "login-lockout-duration", getEnvDurationWithDefault("LOGIN_LOCKOUT_DURATION", 15*time.Minute), "How long the account stays locked (1m-24h)")
 
 	// Password authentication
 	rootCmd.Flags().BoolVar(&noProviderAutoSelect, "no-provider-auto-select", getEnvBoolWithDefault("NO_PROVIDER_AUTO_SELECT", false), "Disable auto-redirect when only one OAuth/OIDC provider is configured and no password is set")

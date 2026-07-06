@@ -26,6 +26,7 @@ import (
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/keys"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/proxy"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/ratelimit"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/tlsreload"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/utils"
@@ -111,6 +112,17 @@ type Config struct {
 	// disables automatic rotation.
 	KeyAlg              string
 	KeyRotationInterval time.Duration
+
+	// Abuse protection (SPEC §3.2, SR-5/SR-6). Rate limits are per-client-
+	// IP expressions like "10/m"; "0" or empty disables one. The lockout
+	// locks the operator account after LoginLockoutThreshold consecutive
+	// failed password logins for LoginLockoutDuration; threshold 0
+	// disables it.
+	RateLimitRegister     string
+	RateLimitToken        string
+	RateLimitLogin        string
+	LoginLockoutThreshold int
+	LoginLockoutDuration  time.Duration
 }
 
 const (
@@ -157,7 +169,38 @@ func validateTTLs(cfg Config) error {
 	if cfg.KeyRotationInterval != 0 && cfg.KeyRotationInterval < time.Hour {
 		return fmt.Errorf("key rotation interval must be 0 (disabled) or at least 1h, got: %s", cfg.KeyRotationInterval)
 	}
+	for name, value := range map[string]string{
+		"register rate limit": cfg.RateLimitRegister,
+		"token rate limit":    cfg.RateLimitToken,
+		"login rate limit":    cfg.RateLimitLogin,
+	} {
+		if value == "" {
+			continue // empty means disabled (programmatic use)
+		}
+		if _, err := ratelimit.ParseLimit(value); err != nil {
+			return fmt.Errorf("invalid %s: %w", name, err)
+		}
+	}
+	if cfg.LoginLockoutThreshold < 0 {
+		return fmt.Errorf("login lockout threshold must not be negative, got: %d", cfg.LoginLockoutThreshold)
+	}
+	if cfg.LoginLockoutThreshold > 0 && (cfg.LoginLockoutDuration < time.Minute || cfg.LoginLockoutDuration > 24*time.Hour) {
+		return fmt.Errorf("login lockout duration must be between 1m and 24h, got: %s", cfg.LoginLockoutDuration)
+	}
 	return nil
+}
+
+// parseLimit re-parses an already-validated rate expression; empty means
+// disabled.
+func parseLimit(value string) ratelimit.Limit {
+	if value == "" {
+		return ratelimit.Limit{}
+	}
+	limit, err := ratelimit.ParseLimit(value)
+	if err != nil {
+		return ratelimit.Limit{} // unreachable: validateTTLs ran first
+	}
+	return limit
 }
 
 func Run(cfg Config) error {
@@ -369,6 +412,13 @@ func Run(cfg Config) error {
 		}
 	}
 
+	// Abuse protection (SR-5/SR-6): per-IP token buckets on the public
+	// endpoints and the login lockout. In-memory by design (GR-3).
+	registerLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitRegister))
+	tokenLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitToken))
+	loginLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitLogin))
+	loginLockout := ratelimit.NewLockout(cfg.LoginLockoutThreshold, cfg.LoginLockoutDuration)
+
 	// Expiry sweeper: garbage-collect session records past their TTL
 	// (SPEC §2.1) and run key maintenance — interval rotation + retiring-
 	// key cleanup (SPEC §2.3). Lookups already treat expired records as
@@ -400,6 +450,10 @@ func Run(cfg Config) error {
 				if err := keyManager.Maintain(now); err != nil {
 					logger.Warn("failed to maintain signing keys", zap.Error(err))
 				}
+				registerLimiter.Sweep(now)
+				tokenLimiter.Sweep(now)
+				loginLimiter.Sweep(now)
+				loginLockout.Sweep(now)
 			}
 		}
 	}()
@@ -465,6 +519,8 @@ func Run(cfg Config) error {
 		Users:                repo,
 		ExternalURL:          externalURL,
 		Logger:               logger,
+		LoginRateLimit:       ratelimit.Middleware(loginLimiter, "login", logger),
+		Lockout:              loginLockout,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create auth router: %w", err)
@@ -495,6 +551,8 @@ func Run(cfg Config) error {
 		DCREnabled:          cfg.DCREnabled,
 		DCRClientTTL:        cfg.DCRClientTTL,
 		DCRMaxClients:       cfg.DCRMaxClients,
+		TokenRateLimit:      ratelimit.Middleware(tokenLimiter, "token", logger),
+		RegisterRateLimit:   ratelimit.Middleware(registerLimiter, "register", logger),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create IDP router: %w", err)

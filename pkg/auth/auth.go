@@ -13,7 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/ory/fosite"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/authevent"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/models"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/ratelimit"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/utils"
 	"go.uber.org/zap"
@@ -43,6 +45,11 @@ type AuthRouter struct {
 	users    repository.UserStorage
 	webAuthn *webauthn.WebAuthn
 	logger   *zap.Logger
+	// loginRateLimit guards the login surfaces (SR-6); nil disables.
+	loginRateLimit gin.HandlerFunc
+	// lockout locks the operator account after consecutive failed password
+	// logins (SR-6); nil disables.
+	lockout *ratelimit.Lockout
 }
 
 // Config carries all options for the user-authentication surface
@@ -61,6 +68,13 @@ type Config struct {
 	// WebAuthn RP ID and allowed origin. Required when Users is set.
 	ExternalURL string
 	Logger      *zap.Logger
+	// LoginRateLimit is applied to the password login and the passkey
+	// login ceremony (SR-6); nil disables.
+	LoginRateLimit gin.HandlerFunc
+	// Lockout locks the account after consecutive failed password logins
+	// (SR-6); nil disables. Passkey logins are exempt — assertions are
+	// cryptographic, not guessable.
+	Lockout *ratelimit.Lockout
 }
 
 func NewAuthRouter(cfg Config) (*AuthRouter, error) {
@@ -107,7 +121,17 @@ func NewAuthRouter(cfg Config) (*AuthRouter, error) {
 		users:                cfg.Users,
 		webAuthn:             webAuthn,
 		logger:               cfg.Logger,
+		loginRateLimit:       cfg.LoginRateLimit,
+		lockout:              cfg.Lockout,
 	}, nil
+}
+
+// withRateLimit prepends the login rate-limit middleware when configured.
+func (a *AuthRouter) withRateLimit(handlers ...gin.HandlerFunc) []gin.HandlerFunc {
+	if a.loginRateLimit == nil {
+		return handlers
+	}
+	return append([]gin.HandlerFunc{a.loginRateLimit}, handlers...)
 }
 
 const (
@@ -148,11 +172,11 @@ const (
 
 func (a *AuthRouter) SetupRoutes(router gin.IRouter) {
 	router.GET(LoginEndpoint, a.handleLogin)
-	router.POST(LoginEndpoint, a.handleLoginPost)
+	router.POST(LoginEndpoint, a.withRateLimit(a.handleLoginPost)...)
 	router.GET(LogoutEndpoint, a.handleLogout)
 	if a.webAuthn != nil {
-		router.POST(WebAuthnLoginBeginEndpoint, a.handleWebAuthnLoginBegin)
-		router.POST(WebAuthnLoginFinishEndpoint, a.handleWebAuthnLoginFinish)
+		router.POST(WebAuthnLoginBeginEndpoint, a.withRateLimit(a.handleWebAuthnLoginBegin)...)
+		router.POST(WebAuthnLoginFinishEndpoint, a.withRateLimit(a.handleWebAuthnLoginFinish)...)
 		router.POST(WebAuthnRegisterBeginEndpoint, a.RequireAuth(), a.handleWebAuthnRegisterBegin)
 		router.POST(WebAuthnRegisterFinishEndpoint, a.RequireAuth(), a.handleWebAuthnRegisterFinish)
 		router.GET(SettingsEndpoint, a.RequireAuth(), a.handleSettings)
@@ -243,6 +267,10 @@ func (a *AuthRouter) handleLogin(c *gin.Context) {
 	a.renderLogin(c, "")
 }
 
+// lockoutKey identifies the single operator account in the lockout store
+// (FR-4 — there is exactly one account to protect).
+const lockoutKey = "operator"
+
 func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 	password := c.PostForm("password")
 	if password == "" {
@@ -250,8 +278,9 @@ func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 		return
 	}
 
-	// The bcrypt comparison always runs first so the disabled-fallback
-	// check below cannot be distinguished by response timing (SR-6).
+	// The bcrypt comparison always runs first so neither the lockout state
+	// nor the disabled-fallback check below can be distinguished by
+	// response timing (SR-6).
 	var isValid bool
 	for _, hash := range a.passwordHash {
 		err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
@@ -260,8 +289,14 @@ func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 			break
 		}
 	}
-	if !isValid {
-		a.renderLogin(c, "Invalid password")
+	now := time.Now().UTC()
+	// A locked account rejects even the correct password, with the same
+	// uniform error (SR-6 — the lockout must not become an oracle).
+	if !isValid || a.lockout.Locked(lockoutKey, now) {
+		if !isValid {
+			a.lockout.Fail(lockoutKey, now)
+		}
+		a.loginFailed(c, "password")
 		return
 	}
 
@@ -275,13 +310,18 @@ func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 			return
 		}
 		// Uniform error when the password fallback is disabled — the same
-		// message as a wrong password (SR-6, no state enumeration).
+		// message as a wrong password (SR-6, no state enumeration). Not a
+		// guessing signal, so it does not count toward the lockout.
 		if !a.isPasswordLoginActive(user, passkeyCount) {
-			a.renderLogin(c, "Invalid password")
+			a.loginFailed(c, "password")
 			return
 		}
 		subject = user.ID
 	}
+	a.lockout.Reset(lockoutKey)
+	authevent.Log(a.logger, authevent.LoginOK,
+		zap.String("method", "password"),
+		zap.String("client_ip", c.ClientIP()))
 
 	session := sessions.Default(c)
 	session.Set(SessionKeyAuthorized, true)
@@ -300,6 +340,15 @@ func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 	} else {
 		c.Redirect(http.StatusFound, redirectURL.(string))
 	}
+}
+
+// loginFailed emits the login_fail event (SR-8) and renders the uniform
+// login error (SR-6).
+func (a *AuthRouter) loginFailed(c *gin.Context, method string) {
+	authevent.Log(a.logger, authevent.LoginFail,
+		zap.String("method", method),
+		zap.String("client_ip", c.ClientIP()))
+	a.renderLogin(c, "Invalid password")
 }
 
 // ensureUser loads the operator account, creating it on the first

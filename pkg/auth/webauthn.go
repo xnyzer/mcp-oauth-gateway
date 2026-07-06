@@ -15,6 +15,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/ory/fosite"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/authevent"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/models"
 	"go.uber.org/zap"
 )
@@ -143,6 +144,9 @@ func (a *AuthRouter) handleWebAuthnLoginFinish(c *gin.Context) {
 	// Fail-closed: any error in the ceremony denies the login (SR-3).
 	deny := func(err error) {
 		a.logger.Warn("Passkey login failed", zap.Error(err))
+		authevent.Log(a.logger, authevent.LoginFail,
+			zap.String("method", "passkey"),
+			zap.String("client_ip", c.ClientIP()))
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "passkey login failed"})
 	}
 
@@ -184,6 +188,9 @@ func (a *AuthRouter) handleWebAuthnLoginFinish(c *gin.Context) {
 		deny(err)
 		return
 	}
+	authevent.Log(a.logger, authevent.LoginOK,
+		zap.String("method", "passkey"),
+		zap.String("client_ip", c.ClientIP()))
 	c.JSON(http.StatusOK, gin.H{"redirect": redirectURL})
 }
 

@@ -166,10 +166,11 @@ issued_at + registration TTL; `0` only if expiry is disabled), echo of the accep
 - **Validation:** redirect URIs validated as in §1.3.3; grant/response types restricted to the
   §1.2 sets; unknown `token_endpoint_auth_method` → `invalid_client_metadata` (400).
 
-**Delta:** **done, F-005c** — except the per-IP rate limit (F-005e). TTL (refreshed on token
-issuance), cap (503, no eviction), redirect-URI scheme validation, grant/response-type
-whitelist, `client_secret_expires_at`, and `DCR_ENABLED` (endpoint + metadata entry removed
-when off) are implemented; expired registrations are treated as absent on lookup.
+**Delta:** **done, F-005c** — TTL (refreshed on token issuance), cap (503, no eviction),
+redirect-URI scheme validation, grant/response-type whitelist, `client_secret_expires_at`,
+and `DCR_ENABLED` (endpoint + metadata entry removed when off) are implemented; expired
+registrations are treated as absent on lookup. The per-IP rate limit (429 +
+`temporarily_unavailable`) is **done (F-005e2)**.
 
 ### 1.5 Authorization endpoint — `GET /.idp/auth`
 
@@ -229,8 +230,8 @@ PKCE mismatch, rotated refresh token), `unauthorized_client`, `unsupported_grant
 `invalid_target`.
 
 **Delta:** `resource`→`aud` binding and TTL configuration **done (F-005b)**; CIMD client
-resolution at the token endpoint **done (F-005c**, via the shared client source**)**. Still
-missing: rate limiting (F-005e).
+resolution at the token endpoint **done (F-005c**, via the shared client source**)**; per-IP
+rate limiting (429) and the `token_issued` event **done (F-005e2)**.
 
 ### 1.7 Access token claims (JWT) — FR-5, SR-4
 
@@ -336,10 +337,14 @@ FR-4/SR-6. Session-cookie based (`Secure`, `HttpOnly`, `SameSite=Lax`; HMAC key 
 - `GET /.auth/login` — login page. Backends: **passkey/WebAuthn** (preferred, offered once a
   credential is enrolled), **password** (bcrypt hash(es) from the env config — see below),
   and **generic OIDC** (off by default, active only when configured — decision F-011).
-- `POST /.auth/login` — password verification. **Rate limiting / lockout (SR-6, F-005e2):**
-  per-IP and per-account limits (defaults in part 3); uniform error message and timing (no
-  user/state enumeration — a disabled password fallback answers exactly like a wrong
-  password, and the bcrypt comparison always runs first).
+- `POST /.auth/login` — password verification. **Rate limiting / lockout (SR-6, done
+  F-005e2):** per-IP token bucket on the login surfaces (password + passkey ceremony) and a
+  per-account lockout after `LOGIN_LOCKOUT_THRESHOLD` consecutive failed password logins
+  (passkey assertions are exempt — cryptographic, not guessable). Uniform error message and
+  timing (no user/state enumeration): a locked account and a disabled password fallback both
+  answer exactly like a wrong password, and the bcrypt comparison always runs first. The
+  disabled-fallback rejection does not count toward the lockout (it is a correct password,
+  not a guessing signal).
 - `GET /.auth/logout` — session invalidation.
 - `/.auth/oidc`, `/.auth/oidc/callback` — generic OIDC login backend (unchanged contract,
   off by default).
@@ -376,7 +381,7 @@ are fixed server-side texts selected by code) and MUST NOT reveal whether a user
 **Delta:** **done, F-005e1** — passkey login/enrollment, operator bootstrap, `sub` = user ID,
 fallback semantics, and the startup auth-backend check are implemented (side fix: the
 session-gate middleware previously continued the handler chain after its login redirect;
-it now aborts). Rate limiting and lockout follow in F-005e2.
+it now aborts). Rate limiting, lockout, and the auth events are **done (F-005e2)**.
 
 ### 1.13 Health — `GET /healthz`
 
@@ -526,8 +531,8 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 | `DCR_ENABLED` | `true` | §1.4. `false` removes `registration_endpoint` from metadata and 404s `/.idp/register`. At least one of CIMD/DCR must stay enabled. **Done (F-005c).** |
 | `DCR_CLIENT_TTL` | `720h` (30 d) | §1.4/§2.1. `0` disables expiry. **Done (F-005c).** |
 | `DCR_MAX_CLIENTS` | `100` | §1.4 cap; `0` = unlimited (not recommended). **Done (F-005c).** |
-| `RATE_LIMIT_REGISTER` / `RATE_LIMIT_TOKEN` / `RATE_LIMIT_LOGIN` | `10/m` / `60/m` / `10/m` | Per-client-IP token buckets (SR-5/SR-6). `0` disables (not recommended). Honour `TRUSTED_PROXIES` for client-IP extraction. |
-| `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_DURATION` | `10` / `15m` | Per-account lockout after N consecutive failures (SR-6); uniform error either way. |
+| `RATE_LIMIT_REGISTER` / `RATE_LIMIT_TOKEN` / `RATE_LIMIT_LOGIN` | `10/m` / `60/m` / `10/m` | Per-client-IP token buckets (SR-5/SR-6), format `N/s\|m\|h`; `0` disables (not recommended). Over-limit → `429` + `temporarily_unavailable`. Honour `TRUSTED_PROXIES` for client-IP extraction; state is in-memory (GR-3). **Done (F-005e2).** |
+| `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_DURATION` | `10` / `15m` | Per-account lockout after N consecutive failed password logins (SR-6, §1.12); uniform error either way. Threshold `0` disables; duration 1m–24h. **Done (F-005e2).** |
 | `KEY_ALG` | `RS256` | `RS256` or `ES256` (§2.2); switching triggers a rotation (§2.3). **Done (F-005d).** |
 | `KEY_ROTATION_INTERVAL` | `2160h` (90 d) | §2.3; `0` disables automatic rotation, otherwise ≥ 1h. **Done (F-005d).** |
 | `CLOCK_SKEW` | `30s` | §1.11.1 validation tolerance. |
@@ -544,5 +549,8 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
   in F-011 (`GOOGLE_*`, `GITHUB_*`) is gone pre-release (no compatibility obligation).
 - **Health/observability:** `/healthz` (§1.13); structured JSON logs to stdout with
   `login_ok`, `login_fail`, `token_issued`, `register`, `rate_limited`, `revoked` events
-  (SR-8) — field names fixed in F-005 to stay generic (GR-4).
+  (SR-8) — **done (F-005e2)**: one fixed `"auth event"` message with a generic `event` field
+  (GR-4) plus non-secret context (`method`, `endpoint`, `client_id`, `client_ip`); `revoked`
+  fires per accepted revocation request (RFC 7009 hides token existence, so the event does
+  too).
 

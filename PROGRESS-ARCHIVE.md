@@ -633,3 +633,82 @@ edited `pkg/auth/auth.go`, `pkg/auth/auth_test.go`, `pkg/auth/templates/login.ht
 `pkg/models/models.go`, `pkg/repository/{interface,kvs,sql}.go`, `pkg/mcp-proxy/main.go`,
 `pkg/mcp-proxy/main_test.go`, `pkg/idp/idp_test.go`, `pkg/utils/rand.go`, `go.mod`,
 `go.sum`, `SPEC.md` (+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).
+
+---
+
+## F-005e2 — Rate limits, lockout & auth events — DONE 2026-07-06
+
+Sixth and final substep of F-005; second half of the F-005e split.
+
+**What was done** (SPEC references in parentheses):
+- **New `pkg/ratelimit` (SR-5/SR-6, §3.2):** `ParseLimit` for `N/s|m|h` expressions (`0`
+  disables, fail-fast otherwise); keyed per-client-IP token buckets on
+  `golang.org/x/time/rate` (burst = full window); a gin `Middleware` answering `429` +
+  `temporarily_unavailable` and emitting the `rate_limited` event; and a per-account
+  `Lockout` (consecutive-failure counter, lock for `LOGIN_LOCKOUT_DURATION`, reset on
+  success). Disabled limits/lockouts are typed nils — call sites need no special-casing.
+  All state in-memory by design (GR-3, single-instance).
+- **New `pkg/authevent` (SR-8, §3.3):** one fixed `"auth event"` log message with a generic
+  `event` field (GR-4) + non-secret context. Events wired: `login_ok`/`login_fail`
+  (password + passkey, `method` field) in `pkg/auth`; `token_issued` (client_id,
+  grant_types) and `register` (client_id) in `pkg/idp`; `revoked` per accepted revocation
+  request (RFC 7009 hides token existence, so the event does too); `rate_limited`
+  (endpoint) in the middleware.
+- **Login hardening (§1.12):** rate limit applied to the password login **and** the passkey
+  ceremony endpoints; lockout counts consecutive failed password logins only (passkey
+  assertions are cryptographic, not guessable — exempt, documented). A locked account
+  rejects even the correct password with a **byte-identical** response to a wrong password
+  (SR-6, no lockout oracle); bcrypt always runs first (timing uniformity). The
+  disabled-fallback rejection does not count toward the lockout (correct password, not a
+  guessing signal).
+- **Endpoint wiring:** `TokenRateLimit`/`RegisterRateLimit` handler hooks in `idp.Config`,
+  `LoginRateLimit`/`Lockout` in `auth.Config` — routers stay decoupled from the limiter
+  types. The 5-minute sweeper also prunes idle rate-limit buckets and expired lockout
+  entries.
+- **Config (§3.2):** `RATE_LIMIT_REGISTER`/`_TOKEN`/`_LOGIN` (defaults `10/m`/`60/m`/`10/m`),
+  `LOGIN_LOCKOUT_THRESHOLD` (default 10; `0` disables) / `LOGIN_LOCKOUT_DURATION` (default
+  15m; 1m–24h) — flags + env, fail-fast validated.
+- **Dep:** `golang.org/x/time` (BSD-3).
+
+**Verification:** gofmt/vet clean, all 11 packages green. New tests: ParseLimit matrix;
+limiter burst/deny/per-key/sweep; lockout threshold/expiry/reset/sweep; middleware 429 +
+`rate_limited` event + **TRUSTED_PROXIES client-IP keying** (X-Forwarded-For buckets);
+lockout byte-identical uniform response, unlock after duration, streak reset on success;
+login rate limit covering the passkey ceremony; register/token 429 matrix with per-endpoint
+events; `token_issued`/`register`/`revoked` events; log assertions that no entry carries
+passwords, tokens, or client secrets. Live smoke test with the built binary: fail-fast on a
+malformed rate limit, `/register` 429 after the bucket, lockout rejects the correct password
+uniformly, 429 on the login surface, structured `auth event` JSON lines with correct fields,
+no passwords in the log, lockout expiry re-admits, `login_ok` emitted.
+
+**Files changed:** new `pkg/ratelimit/{ratelimit,lockout,middleware,ratelimit_test}.go`,
+`pkg/authevent/authevent.go`, `pkg/auth/abuse_test.go`; edited `main.go`, `main_test.go`,
+`pkg/auth/{auth,webauthn}.go`, `pkg/idp/idp.go`, `pkg/idp/idp_test.go`,
+`pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/main_test.go`, `go.mod`, `go.sum`, `SPEC.md`
+(+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).
+
+---
+
+## F-005 — Implement on the chosen base (sigbit fork) — DONE 2026-07-06 (parent task)
+
+Completed via six substeps (full detail in their sections above): **F-005a** discovery & 401
+surface, **F-005b** token binding & lifecycle, **F-005c** CIMD + DCR hardening, **F-005d**
+key management, **F-005e1** user model + passkey/WebAuthn, **F-005e2** rate limits, lockout
+& auth events.
+
+**Original gap list (from the F-001 code review) — all closed:**
+- RFC 8707 audience-binding → F-005b
+- CIMD client-registration → F-005c
+- `WWW-Authenticate` on the `/mcp` 401 → F-005a
+- `/revoke` route (RFC 7009) → F-005b (incl. upstream revoke-no-op bugfix)
+- Complete PRM/AS-metadata → F-005a/b
+- RFC 9207 `iss` → F-005a
+- Key management (rotation + ES256) → F-005d
+- Self-contained auth (passkey/WebAuthn + user model) → F-005e1, hardened by F-005e2
+
+**Prep decisions (user-approved), all honoured:** passkey bootstrap via password + session-
+gated settings page; ES256 shipped (fosite supports it natively); in-memory rate-limit
+state; deps `go-webauthn/webauthn` (BSD-3) + `golang.org/x/time` (BSD-3). Two inherited
+security bugs found and fixed along the way: revoke-by-signature no-op (F-005b) and the
+RequireAuth chain-continuation after redirect (F-005e1). Next: F-006 (verify against Claude
++ security review).

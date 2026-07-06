@@ -79,6 +79,11 @@ func TestRun_ValidatesTTLs(t *testing.T) {
 		{name: "refresh token TTL below minimum", mutate: func(c *Config) { c.RefreshTokenTTL = 30 * time.Minute }, errContains: "refresh token TTL"},
 		{name: "unsupported key algorithm", mutate: func(c *Config) { c.KeyAlg = "HS256" }, errContains: "unsupported key algorithm"},
 		{name: "key rotation interval below minimum", mutate: func(c *Config) { c.KeyRotationInterval = 30 * time.Minute }, errContains: "key rotation interval"},
+		{name: "malformed register rate limit", mutate: func(c *Config) { c.RateLimitRegister = "10/x" }, errContains: "register rate limit"},
+		{name: "malformed token rate limit", mutate: func(c *Config) { c.RateLimitToken = "fast" }, errContains: "token rate limit"},
+		{name: "malformed login rate limit", mutate: func(c *Config) { c.RateLimitLogin = "-1/m" }, errContains: "login rate limit"},
+		{name: "negative lockout threshold", mutate: func(c *Config) { c.LoginLockoutThreshold = -1 }, errContains: "lockout threshold"},
+		{name: "lockout duration too short", mutate: func(c *Config) { c.LoginLockoutThreshold = 10; c.LoginLockoutDuration = time.Second }, errContains: "lockout duration"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
