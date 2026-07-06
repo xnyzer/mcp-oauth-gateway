@@ -182,6 +182,9 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var trustedProxies string
 	var oidcDiscoveryMirror bool
 	var clockSkew time.Duration
+	var accessTokenTTL time.Duration
+	var authCodeTTL time.Duration
+	var refreshTokenTTL time.Duration
 
 	rootCmd := &cobra.Command{
 		Use: "mcp-oauth-gateway",
@@ -247,6 +250,9 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 
 				OIDCDiscoveryMirror: oidcDiscoveryMirror,
 				ClockSkew:           clockSkew,
+				AccessTokenTTL:      accessTokenTTL,
+				AuthCodeTTL:         authCodeTTL,
+				RefreshTokenTTL:     refreshTokenTTL,
 			}); err != nil {
 				panic(err)
 			}
@@ -281,6 +287,11 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	// Discovery & token validation
 	rootCmd.Flags().BoolVar(&oidcDiscoveryMirror, "oidc-discovery-mirror", getEnvBoolWithDefault("OIDC_DISCOVERY_MIRROR", false), "Additionally serve the AS metadata under /.well-known/openid-configuration")
 	rootCmd.Flags().DurationVar(&clockSkew, "clock-skew", getEnvDurationWithDefault("CLOCK_SKEW", 30*time.Second), "Leeway for token time-claim validation (0-5m)")
+
+	// Token lifetimes
+	rootCmd.Flags().DurationVar(&accessTokenTTL, "access-token-ttl", getEnvDurationWithDefault("ACCESS_TOKEN_TTL", time.Hour), "Access token lifetime (1m-24h)")
+	rootCmd.Flags().DurationVar(&authCodeTTL, "auth-code-ttl", getEnvDurationWithDefault("AUTH_CODE_TTL", 10*time.Minute), "Authorization code lifetime (30s-1h)")
+	rootCmd.Flags().DurationVar(&refreshTokenTTL, "refresh-token-ttl", getEnvDurationWithDefault("REFRESH_TOKEN_TTL", 720*time.Hour), "Refresh token lifetime (1h-8760h; 0 disables the refresh grant)")
 
 	// Password authentication
 	rootCmd.Flags().BoolVar(&noProviderAutoSelect, "no-provider-auto-select", getEnvBoolWithDefault("NO_PROVIDER_AUTO_SELECT", false), "Disable auto-redirect when only one OAuth/OIDC provider is configured and no password is set")

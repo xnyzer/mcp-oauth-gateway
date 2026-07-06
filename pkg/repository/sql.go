@@ -28,6 +28,7 @@ type authorizeCodeSession struct {
 
 type accessTokenSession struct {
 	Signature string `gorm:"primaryKey;size:512"`
+	RequestID string `gorm:"size:512;index"`
 	Request   []byte `gorm:"not null"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -36,6 +37,7 @@ type accessTokenSession struct {
 type refreshTokenSession struct {
 	Signature       string `gorm:"primaryKey;size:512"`
 	AccessSignature string `gorm:"size:512"`
+	RequestID       string `gorm:"size:512;index"`
 	Request         []byte `gorm:"not null"`
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
@@ -90,6 +92,7 @@ func NewSQLRepository(driver string, dsn string) (Repository, error) {
 		&clientRecord{},
 		&pkceRequestSession{},
 		&authorizeRequestRecord{},
+		&schemaVersionRecord{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to migrate schema: %w", err)
 	}
@@ -137,6 +140,7 @@ func (r *sqlRepository) CreateAccessTokenSession(ctx context.Context, signature 
 
 	session := accessTokenSession{
 		Signature: signature,
+		RequestID: fositeReq.GetID(),
 		Request:   data,
 	}
 
@@ -170,6 +174,7 @@ func (r *sqlRepository) CreateRefreshTokenSession(ctx context.Context, signature
 	session := refreshTokenSession{
 		Signature:       signature,
 		AccessSignature: accessSignature,
+		RequestID:       req.GetID(),
 		Request:         data,
 	}
 
@@ -220,12 +225,63 @@ func (r *sqlRepository) RotateRefreshToken(ctx context.Context, requestID string
 		Update("request", data).Error
 }
 
+// RevokeRefreshToken deletes all refresh-token sessions of the grant —
+// fosite passes the request ID, records are keyed by signature (RFC 7009).
 func (r *sqlRepository) RevokeRefreshToken(ctx context.Context, requestID string) error {
-	return r.db.WithContext(ctx).Delete(&refreshTokenSession{}, "signature = ?", requestID).Error
+	return r.db.WithContext(ctx).Delete(&refreshTokenSession{}, "request_id = ?", requestID).Error
 }
 
+// RevokeAccessToken deletes all access-token sessions of the grant.
 func (r *sqlRepository) RevokeAccessToken(ctx context.Context, requestID string) error {
-	return r.db.WithContext(ctx).Delete(&accessTokenSession{}, "signature = ?", requestID).Error
+	return r.db.WithContext(ctx).Delete(&accessTokenSession{}, "request_id = ?", requestID).Error
+}
+
+// DeleteExpiredSessions garbage-collects session records past their cutoff
+// (SPEC §2.1). Expiry on use is enforced by fosite; this reclaims storage.
+func (r *sqlRepository) DeleteExpiredSessions(ctx context.Context, accessBefore, refreshBefore, codeBefore time.Time) error {
+	sweeps := []struct {
+		model  any
+		before time.Time
+	}{
+		{&accessTokenSession{}, accessBefore},
+		{&refreshTokenSession{}, refreshBefore},
+		{&authorizeCodeSession{}, codeBefore},
+		{&pkceRequestSession{}, codeBefore},
+		{&authorizeRequestRecord{}, codeBefore},
+	}
+	for _, s := range sweeps {
+		// julianday() compares datetimes regardless of their stored UTC
+		// offset (SQLite stores time.Time values as strings).
+		if err := r.db.WithContext(ctx).Delete(s.model, "julianday(created_at) < julianday(?)", s.before).Error; err != nil {
+			return fmt.Errorf("failed to sweep expired records: %w", err)
+		}
+	}
+	return nil
+}
+
+type schemaVersionRecord struct {
+	ID      int `gorm:"primaryKey"`
+	Version int `gorm:"not null"`
+}
+
+// EnsureSchemaVersion writes the schema version on first run and fails fast
+// when the store was written by a newer gateway (SPEC §2.5).
+func (r *sqlRepository) EnsureSchemaVersion(ctx context.Context, version int) error {
+	var record schemaVersionRecord
+	err := r.db.WithContext(ctx).First(&record, "id = ?", 1).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return r.db.WithContext(ctx).Create(&schemaVersionRecord{ID: 1, Version: version}).Error
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read schema version: %w", err)
+	}
+	if record.Version > version {
+		return fmt.Errorf("data store schema version %d is newer than supported version %d — downgrades are unsupported", record.Version, version)
+	}
+	if record.Version < version {
+		return r.db.WithContext(ctx).Model(&schemaVersionRecord{}).Where("id = ?", 1).Update("version", version).Error
+	}
+	return nil
 }
 
 func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client) error {

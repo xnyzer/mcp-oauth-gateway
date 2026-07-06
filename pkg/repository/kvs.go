@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -148,24 +149,106 @@ func (r *kvsRepository) RotateRefreshToken(ctx context.Context, requestID string
 	return r.update(ctx, "refresh_token-"+signature, req)
 }
 
-// RevokeRefreshToken revokes a refresh token as specified in:
-// https://tools.ietf.org/html/rfc7009#section-2.1
-// If the particular
-// token is a refresh token and the authorization server supports the
-// revocation of access tokens, then the authorization server SHOULD
-// also invalidate all access tokens based on the same authorization
-// grant (see Implementation Note).
-func (r *kvsRepository) RevokeRefreshToken(ctx context.Context, requestID string) error {
-	return r.delete(ctx, "refresh_token-"+requestID)
+// deleteMatching removes every record under prefix whose decoded request
+// matches. Runs in a single bbolt write transaction.
+func (r *kvsRepository) deleteMatching(prefix string, match func(models.Request) bool) error {
+	return r.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		cursor := bucket.Cursor()
+		var stale [][]byte
+		for k, v := cursor.Seek([]byte(prefix)); k != nil && bytes.HasPrefix(k, []byte(prefix)); k, v = cursor.Next() {
+			var req models.Request
+			if err := json.Unmarshal(v, &req); err != nil {
+				continue // undecodable records are reclaimed by the sweeper, not revocation
+			}
+			if match(req) {
+				stale = append(stale, append([]byte(nil), k...))
+			}
+		}
+		for _, k := range stale {
+			if err := bucket.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
-// RevokeAccessToken revokes an access token as specified in:
+// RevokeRefreshToken revokes a refresh token as specified in:
 // https://tools.ietf.org/html/rfc7009#section-2.1
-// If the token passed to the request
-// is an access token, the server MAY revoke the respective refresh
-// token as well.
+// fosite passes the grant's request ID; records are keyed by signature, so
+// the matching records are found by their stored request ID.
+func (r *kvsRepository) RevokeRefreshToken(ctx context.Context, requestID string) error {
+	return r.deleteMatching("refresh_token-", func(req models.Request) bool { return req.ID == requestID })
+}
+
+// RevokeAccessToken revokes all access tokens of the grant as specified in:
+// https://tools.ietf.org/html/rfc7009#section-2.1
 func (r *kvsRepository) RevokeAccessToken(ctx context.Context, requestID string) error {
-	return r.delete(ctx, "access_token-"+requestID)
+	return r.deleteMatching("access_token-", func(req models.Request) bool { return req.ID == requestID })
+}
+
+// DeleteExpiredSessions garbage-collects session records past their cutoff
+// (SPEC §2.1). Expiry on use is enforced by fosite; this reclaims storage.
+func (r *kvsRepository) DeleteExpiredSessions(ctx context.Context, accessBefore, refreshBefore, codeBefore time.Time) error {
+	cutoffs := []struct {
+		prefix string
+		before time.Time
+	}{
+		{"access_token-", accessBefore},
+		{"refresh_token-", refreshBefore},
+		{"authorize_code-", codeBefore},
+		{"pkce_request-", codeBefore},
+	}
+	for _, c := range cutoffs {
+		before := c.before
+		if err := r.deleteMatching(c.prefix, func(req models.Request) bool {
+			return req.RequestedAt.Before(before)
+		}); err != nil {
+			return fmt.Errorf("failed to sweep %s records: %w", c.prefix, err)
+		}
+	}
+	// Authorize requests use a different value type (models.AuthorizeRequest).
+	return r.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		cursor := bucket.Cursor()
+		prefix := []byte("authorize_request-")
+		var stale [][]byte
+		for k, v := cursor.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = cursor.Next() {
+			var ar models.AuthorizeRequest
+			if err := json.Unmarshal(v, &ar); err != nil || ar.Request == nil || ar.Request.RequestedAt.Before(codeBefore) {
+				stale = append(stale, append([]byte(nil), k...))
+			}
+		}
+		for _, k := range stale {
+			if err := bucket.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+const kvsSchemaVersionKey = "meta-schema_version"
+
+// EnsureSchemaVersion writes the schema version on first run and fails fast
+// when the store was written by a newer gateway (SPEC §2.5).
+func (r *kvsRepository) EnsureSchemaVersion(ctx context.Context, version int) error {
+	var stored int
+	err := r.get(ctx, kvsSchemaVersionKey, &stored)
+	if errors.Is(err, fosite.ErrNotFound) {
+		return r.create(ctx, kvsSchemaVersionKey, version)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read schema version: %w", err)
+	}
+	if stored > version {
+		return fmt.Errorf("data store schema version %d is newer than supported version %d — downgrades are unsupported", stored, version)
+	}
+	if stored < version {
+		return r.update(ctx, kvsSchemaVersionKey, version)
+	}
+	return nil
 }
 
 func (r *kvsRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client) error {

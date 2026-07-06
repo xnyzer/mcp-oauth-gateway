@@ -40,3 +40,12 @@ func GenerateState() (string, error) {
 	}
 	return hex.EncodeToString(bytes), nil
 }
+
+// GenerateJTI returns a unique JWT token identifier (SPEC §1.7).
+func GenerateJTI() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}

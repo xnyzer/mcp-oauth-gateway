@@ -16,10 +16,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/ory/fosite"
 	"github.com/stretchr/testify/require"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
@@ -84,6 +86,9 @@ func setupTestServerMirror(t *testing.T, oidcDiscoveryMirror bool) (*httptest.Se
 		Secret:              secret[:],
 		AuthRouter:          authRouter,
 		OIDCDiscoveryMirror: oidcDiscoveryMirror,
+		AccessTokenTTL:      time.Hour,
+		AuthCodeTTL:         10 * time.Minute,
+		RefreshTokenTTL:     30 * 24 * time.Hour,
 	})
 	require.NoError(t, err)
 
@@ -637,6 +642,175 @@ func TestAccessTokenAudienceClaim(t *testing.T) {
 	aud, ok := claims["aud"].([]any)
 	require.True(t, ok, "aud claim should be present as an array")
 	require.Contains(t, aud, "http://localhost:8080", "aud should contain the external URL")
+
+	// SPEC §1.7: jti and client_id claims.
+	jti, _ := claims["jti"].(string)
+	require.NotEmpty(t, jti, "jti claim should be present")
+	require.Equal(t, regResp.ClientID, claims["client_id"], "client_id claim should identify the requesting client")
+}
+
+func TestResourceParameterValidation(t *testing.T) {
+	server, _, _ := setupTestServer(t)
+	regResp := registerTestClient(t, server.URL)
+
+	client := &http.Client{
+		Jar: mustCookieJar(t),
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// RFC 8707: a foreign resource is rejected with invalid_target (SPEC §1.5).
+	badResourceURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state&resource=%s",
+		server.URL, AuthorizationEndpoint, regResp.ClientID,
+		url.QueryEscape("http://localhost:8080/callback"),
+		url.QueryEscape("https://other.example.com"))
+	resp, err := client.Get(badResourceURL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Contains(t, []int{http.StatusFound, http.StatusSeeOther}, resp.StatusCode)
+	redirect, err := url.Parse(resp.Header.Get("Location"))
+	require.NoError(t, err)
+	require.Equal(t, "invalid_target", redirect.Query().Get("error"))
+	require.Equal(t, "http://localhost:8080", redirect.Query().Get("iss"))
+
+	// The issuer itself is a valid resource: the flow proceeds to consent.
+	okResourceURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state&resource=%s",
+		server.URL, AuthorizationEndpoint, regResp.ClientID,
+		url.QueryEscape("http://localhost:8080/callback"),
+		url.QueryEscape("http://localhost:8080"))
+	callbackURL := testAuthFlowWithURL(t, server.URL, okResourceURL)
+	code := callbackURL.Query().Get("code")
+	require.NotEmpty(t, code)
+
+	// Token endpoint: a foreign resource at exchange fails with invalid_target (SPEC §1.6).
+	tokenReq := url.Values{}
+	tokenReq.Set("grant_type", "authorization_code")
+	tokenReq.Set("code", code)
+	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
+	tokenReq.Set("client_id", regResp.ClientID)
+	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("resource", "https://other.example.com")
+
+	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
+	require.NoError(t, err)
+	defer tokenResp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, tokenResp.StatusCode)
+	var tokenErr map[string]any
+	require.NoError(t, json.NewDecoder(tokenResp.Body).Decode(&tokenErr))
+	require.Equal(t, "invalid_target", tokenErr["error"])
+}
+
+func TestRevocationEndpoint(t *testing.T) {
+	server, repo, _ := setupTestServer(t)
+	regResp := registerTestClient(t, server.URL)
+
+	issueTokens := func(t *testing.T) map[string]any {
+		t.Helper()
+		authURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state",
+			server.URL, AuthorizationEndpoint, regResp.ClientID,
+			url.QueryEscape("http://localhost:8080/callback"))
+		callbackURL := testAuthFlowWithURL(t, server.URL, authURL)
+		tokenReq := url.Values{}
+		tokenReq.Set("grant_type", "authorization_code")
+		tokenReq.Set("code", callbackURL.Query().Get("code"))
+		tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
+		tokenReq.Set("client_id", regResp.ClientID)
+		tokenReq.Set("client_secret", regResp.ClientSecret)
+		tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
+		require.NoError(t, err)
+		defer tokenResp.Body.Close()
+		require.Equal(t, http.StatusOK, tokenResp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(tokenResp.Body).Decode(&result))
+		return result
+	}
+
+	post := func(t *testing.T, endpoint string, form url.Values, withAuth bool) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, server.URL+endpoint, strings.NewReader(form.Encode()))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if withAuth {
+			req.SetBasicAuth(regResp.ClientID, regResp.ClientSecret)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		return resp
+	}
+
+	introspectActive := func(t *testing.T, token string) bool {
+		t.Helper()
+		resp := post(t, IntrospectionEndpoint, url.Values{"token": {token}}, true)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var result map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		active, _ := result["active"].(bool)
+		return active
+	}
+
+	t.Run("revoking an access token deletes its record", func(t *testing.T) {
+		tokens := issueTokens(t)
+		accessToken := tokens["access_token"].(string)
+		require.True(t, introspectActive(t, accessToken))
+
+		resp := post(t, RevocationEndpoint, url.Values{"token": {accessToken}, "token_type_hint": {"access_token"}}, true)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		require.False(t, introspectActive(t, accessToken), "revoked access token must introspect inactive")
+
+		sig := strings.Split(accessToken, ".")[2]
+		_, err := repo.GetAccessTokenSession(t.Context(), sig, nil)
+		require.ErrorIs(t, err, fosite.ErrNotFound, "server-side record must be gone")
+	})
+
+	t.Run("revoking a refresh token cascades to the grant's access tokens", func(t *testing.T) {
+		tokens := issueTokens(t)
+		accessToken := tokens["access_token"].(string)
+		refreshToken, _ := tokens["refresh_token"].(string)
+		require.NotEmpty(t, refreshToken)
+
+		resp := post(t, RevocationEndpoint, url.Values{"token": {refreshToken}, "token_type_hint": {"refresh_token"}}, true)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		require.False(t, introspectActive(t, accessToken), "grant's access token must be revoked with the refresh token")
+
+		refreshReq := url.Values{}
+		refreshReq.Set("grant_type", "refresh_token")
+		refreshReq.Set("refresh_token", refreshToken)
+		refreshReq.Set("client_id", regResp.ClientID)
+		refreshReq.Set("client_secret", regResp.ClientSecret)
+		refreshResp, err := http.PostForm(server.URL+TokenEndpoint, refreshReq)
+		require.NoError(t, err)
+		defer refreshResp.Body.Close()
+		require.NotEqual(t, http.StatusOK, refreshResp.StatusCode, "revoked refresh token must not mint new tokens")
+	})
+
+	t.Run("unknown token still yields 200 (no token-existence oracle)", func(t *testing.T) {
+		resp := post(t, RevocationEndpoint, url.Values{"token": {"unknown-token"}}, true)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("missing client authentication is rejected", func(t *testing.T) {
+		resp := post(t, RevocationEndpoint, url.Values{"token": {"whatever"}}, false)
+		defer resp.Body.Close()
+		// fosite responds 400 invalid_request for absent credentials;
+		// 401 invalid_client for wrong ones — both are rejections.
+		require.Contains(t, []int{http.StatusBadRequest, http.StatusUnauthorized}, resp.StatusCode)
+	})
+}
+
+func TestIntrospectionRequiresClientAuth(t *testing.T) {
+	server, _, _ := setupTestServer(t)
+
+	resp, err := http.PostForm(server.URL+IntrospectionEndpoint, url.Values{"token": {"whatever"}})
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "anonymous introspection must be rejected (SPEC §1.10)")
 }
 
 func TestAccessTokenPreservesUserIdentity(t *testing.T) {

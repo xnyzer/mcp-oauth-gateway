@@ -33,6 +33,7 @@ type IDPRouter struct {
 	signer              *jwt.DefaultSigner
 	authRouter          *auth.AuthRouter
 	oidcDiscoveryMirror bool
+	refreshEnabled      bool
 }
 
 // Config carries all options for the OAuth authorization-server surface
@@ -48,7 +49,17 @@ type Config struct {
 	// OIDCDiscoveryMirror additionally serves the AS metadata under
 	// /.well-known/openid-configuration (SPEC §1.2, off by default).
 	OIDCDiscoveryMirror bool
+	// AccessTokenTTL and AuthCodeTTL default to 1h / 10m when zero.
+	// RefreshTokenTTL of 0 disables the refresh grant (SPEC §3.2).
+	AccessTokenTTL  time.Duration
+	AuthCodeTTL     time.Duration
+	RefreshTokenTTL time.Duration
 }
+
+const (
+	defaultAccessTokenTTL = time.Hour
+	defaultAuthCodeTTL    = 10 * time.Minute
+)
 
 func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 	hasher := &fosite.BCrypt{
@@ -56,10 +67,20 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 			HashCost: bcrypt.DefaultCost,
 		},
 	}
+	accessTokenTTL := cfg.AccessTokenTTL
+	if accessTokenTTL == 0 {
+		accessTokenTTL = defaultAccessTokenTTL
+	}
+	authCodeTTL := cfg.AuthCodeTTL
+	if authCodeTTL == 0 {
+		authCodeTTL = defaultAuthCodeTTL
+	}
+	refreshEnabled := cfg.RefreshTokenTTL > 0
 	fositeConfig := &fosite.Config{
 		GlobalSecret:                   cfg.Secret,
-		AccessTokenLifespan:            24 * time.Hour,
-		RefreshTokenLifespan:           30 * 24 * time.Hour,
+		AccessTokenLifespan:            accessTokenTTL,
+		AuthorizeCodeLifespan:          authCodeTTL,
+		RefreshTokenLifespan:           cfg.RefreshTokenTTL,
 		RefreshTokenScopes:             []string{},
 		AccessTokenIssuer:              cfg.ExternalURL,
 		EnforcePKCE:                    false,
@@ -68,8 +89,10 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		ScopeStrategy:                  fosite.HierarchicScopeStrategy,
 		MinParameterEntropy:            fosite.MinParameterEntropy,
 		ClientSecretsHasher:            hasher,
+		// Space-separated scope claim (SPEC §1.7).
+		JWTScopeClaimKey: jwt.JWTScopeFieldString,
 	}
-	provider, signer := customCompose(fositeConfig, cfg.Repo, cfg.PrivKey)
+	provider, signer := customCompose(fositeConfig, cfg.Repo, cfg.PrivKey, refreshEnabled)
 
 	return &IDPRouter{
 		repo:                cfg.Repo,
@@ -81,12 +104,23 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		signer:              signer,
 		authRouter:          cfg.AuthRouter,
 		oidcDiscoveryMirror: cfg.OIDCDiscoveryMirror,
+		refreshEnabled:      refreshEnabled,
 	}, nil
 }
 
-func customCompose(config *fosite.Config, storage any, key any) (fosite.OAuth2Provider, *jwt.DefaultSigner) {
+func customCompose(config *fosite.Config, storage any, key any, refreshEnabled bool) (fosite.OAuth2Provider, *jwt.DefaultSigner) {
 	keyGetter := func(context.Context) (any, error) { return key, nil }
 	signer := &jwt.DefaultSigner{GetPrivateKey: keyGetter}
+
+	factories := []compose.Factory{
+		compose.OAuth2AuthorizeExplicitFactory,
+		compose.OAuth2TokenIntrospectionFactory,
+		compose.OAuth2PKCEFactory,
+		compose.OAuth2TokenRevocationFactory,
+	}
+	if refreshEnabled {
+		factories = append(factories, compose.OAuth2RefreshTokenGrantFactory)
+	}
 
 	provider := compose.Compose(
 		config,
@@ -96,10 +130,7 @@ func customCompose(config *fosite.Config, storage any, key any) (fosite.OAuth2Pr
 			OpenIDConnectTokenStrategy: compose.NewOpenIDConnectStrategy(keyGetter, config),
 			Signer:                     signer,
 		},
-		compose.OAuth2AuthorizeExplicitFactory,
-		compose.OAuth2RefreshTokenGrantFactory,
-		compose.OAuth2TokenIntrospectionFactory,
-		compose.OAuth2PKCEFactory,
+		factories...,
 	)
 	return provider, signer
 }
@@ -109,6 +140,7 @@ const (
 	AuthorizationReturnEndpoint      = "/.idp/auth/:ar_id"
 	TokenEndpoint                    = "/.idp/token"
 	IntrospectionEndpoint            = "/.idp/introspect"
+	RevocationEndpoint               = "/.idp/revoke"
 	RegistrationEndpoint             = "/.idp/register"
 	OauthAuthorizationServerEndpoint = "/.well-known/oauth-authorization-server"
 	OIDCDiscoveryEndpoint            = "/.well-known/openid-configuration"
@@ -122,12 +154,33 @@ func (a *IDPRouter) SetupRoutes(router gin.IRouter) {
 	router.POST(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturn)
 	router.POST(TokenEndpoint, a.handleToken)
 	router.POST(IntrospectionEndpoint, a.handleIntrospect)
+	router.POST(RevocationEndpoint, a.handleRevoke)
 	router.POST(RegistrationEndpoint, a.handleRegister)
 	router.GET(OauthAuthorizationServerEndpoint, a.handleOauthAuthorizationServer)
 	if a.oidcDiscoveryMirror {
 		router.GET(OIDCDiscoveryEndpoint, a.handleOauthAuthorizationServer)
 	}
 	router.GET(JWKSEndpoint, a.handleJWKS)
+}
+
+// errInvalidTarget is the RFC 8707 error for resource values the gateway
+// does not serve.
+var errInvalidTarget = &fosite.RFC6749Error{
+	ErrorField:       "invalid_target",
+	DescriptionField: "The requested resource is not served by this authorization server.",
+	CodeField:        http.StatusBadRequest,
+}
+
+// validateResource enforces SPEC §1.5/§1.6: the gateway fronts exactly one
+// resource — itself. Absent values default to the issuer; anything else is
+// rejected with invalid_target (RFC 8707).
+func (a *IDPRouter) validateResource(resources []string) error {
+	for _, resource := range resources {
+		if resource != "" && strings.TrimSuffix(resource, "/") != a.externalURL {
+			return errInvalidTarget
+		}
+	}
+	return nil
 }
 
 // issRedirectWriter appends the RFC 9207 `iss` parameter to redirect
@@ -181,6 +234,12 @@ func (a *IDPRouter) handleAuth(c *gin.Context) {
 
 	ar, err := a.provider.NewAuthorizeRequest(ctx, c.Request)
 	if err != nil {
+		a.writeAuthorizeError(ctx, c.Writer, ar, err)
+		return
+	}
+
+	// RFC 8707: the only valid resource is the gateway itself (SPEC §1.5).
+	if err := a.validateResource(c.Request.URL.Query()["resource"]); err != nil {
 		a.writeAuthorizeError(ctx, c.Writer, ar, err)
 		return
 	}
@@ -246,7 +305,7 @@ func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 		json.Unmarshal([]byte(userInfoJSON), &userInfo)
 	}
 
-	jwtSession, err := NewJWTSessionWithKey(a.externalURL, subject, a.privKey, userInfo)
+	jwtSession, err := NewJWTSessionWithKey(a.externalURL, subject, ar.GetClient().GetID(), a.privKey, userInfo)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Error("Failed to create JWT session", zap.Error(err))
 		a.writeAuthorizeError(ctx, c.Writer, ar, err)
@@ -322,10 +381,20 @@ func removeAuthorizeRequestID(session sessions.Session, arID string) {
 func (a *IDPRouter) handleToken(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	session, err := NewJWTSessionWithKey("", "", a.privKey, nil)
+	session, err := NewJWTSessionWithKey("", "", "", a.privKey, nil)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Error("Failed to create JWT session for token", zap.Error(err))
 		a.provider.WriteAccessError(ctx, c.Writer, nil, fosite.ErrServerError.WithWrap(err))
+		return
+	}
+
+	// RFC 8707: the only valid resource is the gateway itself (SPEC §1.6).
+	if err := c.Request.ParseForm(); err != nil {
+		a.provider.WriteAccessError(ctx, c.Writer, nil, fosite.ErrInvalidRequest.WithWrap(err))
+		return
+	}
+	if err := a.validateResource(c.Request.PostForm["resource"]); err != nil {
+		a.provider.WriteAccessError(ctx, c.Writer, nil, err)
 		return
 	}
 
@@ -348,7 +417,7 @@ func (a *IDPRouter) handleToken(c *gin.Context) {
 
 func (a *IDPRouter) handleIntrospect(c *gin.Context) {
 	ctx := c.Request.Context()
-	session, err := NewJWTSessionWithKey("", "", a.privKey, nil)
+	session, err := NewJWTSessionWithKey("", "", "", a.privKey, nil)
 	if err != nil {
 		a.provider.WriteIntrospectionError(ctx, c.Writer, fosite.ErrServerError.WithWrap(err))
 		return
@@ -361,6 +430,18 @@ func (a *IDPRouter) handleIntrospect(c *gin.Context) {
 	}
 
 	a.provider.WriteIntrospectionResponse(ctx, c.Writer, ir)
+}
+
+// handleRevoke implements RFC 7009 (SPEC §1.9). fosite authenticates the
+// client, resolves the token (access or refresh), and revokes the grant via
+// the repository; unknown tokens still yield 200 (no token-existence oracle).
+func (a *IDPRouter) handleRevoke(c *gin.Context) {
+	ctx := c.Request.Context()
+	err := a.provider.NewRevocationRequest(ctx, c.Request)
+	if err != nil {
+		a.logger.With(utils.Err(err)...).Warn("Token revocation failed")
+	}
+	a.provider.WriteRevocationResponse(ctx, c.Writer, err)
 }
 
 type registrationRequest struct {
@@ -469,6 +550,7 @@ type authorizationServerResponse struct {
 	RegistrationEndpoint                       string   `json:"registration_endpoint"`
 	JWKSURI                                    string   `json:"jwks_uri"`
 	IntrospectionEndpoint                      string   `json:"introspection_endpoint"`
+	RevocationEndpoint                         string   `json:"revocation_endpoint"`
 	ScopesSupported                            []string `json:"scopes_supported"`
 	ResponseTypesSupported                     []string `json:"response_types_supported"`
 	ResponseModesSupported                     []string `json:"response_modes_supported"`
@@ -510,6 +592,18 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 		return
 	}
 
+	revocationEndpoint, err := url.JoinPath(a.externalURL, RevocationEndpoint)
+	if err != nil {
+		a.logger.Error("Failed to create revocation endpoint URL", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		return
+	}
+
+	grantTypes := []string{"authorization_code"}
+	if a.refreshEnabled {
+		grantTypes = append(grantTypes, "refresh_token")
+	}
+
 	res := &authorizationServerResponse{
 		Issuer:                                     a.externalURL,
 		AuthorizationEndpoint:                      authorizationEndpoint,
@@ -517,10 +611,11 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 		RegistrationEndpoint:                       registrationEndpoint,
 		JWKSURI:                                    jwksURI,
 		IntrospectionEndpoint:                      introspectionEndpoint,
+		RevocationEndpoint:                         revocationEndpoint,
 		ScopesSupported:                            []string{},
 		ResponseTypesSupported:                     []string{"code"},
 		ResponseModesSupported:                     []string{"query"},
-		GrantTypesSupported:                        []string{"authorization_code", "refresh_token"},
+		GrantTypesSupported:                        grantTypes,
 		TokenEndpointAuthMethodsSupported:          []string{"client_secret_basic", "client_secret_post", "none"},
 		CodeChallengeMethodsSupported:              []string{"S256"},
 		AuthorizationResponseIssParameterSupported: true,
@@ -571,15 +666,24 @@ func (a *IDPRouter) handleJWKS(c *gin.Context) {
 	c.JSON(200, ks)
 }
 
-func NewJWTSessionWithKey(iss string, subject string, privateKey *rsa.PrivateKey, userInfo map[string]any) (*Session, error) {
+func NewJWTSessionWithKey(iss string, subject string, clientID string, privateKey *rsa.PrivateKey, userInfo map[string]any) (*Session, error) {
 	keyID, err := utils.GenerateKeyID(&privateKey.PublicKey)
 	if err != nil {
 		return nil, err
 	}
-	var extra map[string]any
-	if userInfo != nil {
-		extra = map[string]any{"userinfo": userInfo}
+	jti, err := utils.GenerateJTI()
+	if err != nil {
+		return nil, err
 	}
+	extra := map[string]any{}
+	if userInfo != nil {
+		extra["userinfo"] = userInfo
+	}
+	if clientID != "" {
+		extra["client_id"] = clientID
+	}
+	// exp, aud, and scope are set by fosite at issuance time from the
+	// session expiry and the granted audience/scopes (SPEC §1.7).
 	return &Session{
 		DefaultSession: &fosite.DefaultSession{
 			Username: subject,
@@ -588,8 +692,7 @@ func NewJWTSessionWithKey(iss string, subject string, privateKey *rsa.PrivateKey
 		JWTClaims: &jwt.JWTClaims{
 			Issuer:    iss,
 			Subject:   subject,
-			Audience:  []string{},
-			ExpiresAt: time.Now().Add(time.Hour),
+			JTI:       jti,
 			IssuedAt:  time.Now(),
 			NotBefore: time.Now(),
 			Extra:     extra,
@@ -630,6 +733,7 @@ func (s *Session) Clone() fosite.Session {
 		JWTClaims: &jwt.JWTClaims{
 			Issuer:    s.JWTClaims.Issuer,
 			Subject:   s.JWTClaims.Subject,
+			JTI:       s.JWTClaims.JTI,
 			Audience:  s.JWTClaims.Audience,
 			ExpiresAt: s.JWTClaims.ExpiresAt,
 			IssuedAt:  s.JWTClaims.IssuedAt,
@@ -639,6 +743,12 @@ func (s *Session) Clone() fosite.Session {
 		JWTHeader: &jwt.Headers{
 			Extra: make(map[string]any),
 		},
+	}
+
+	// Refresh grants clone the stored session; each issued token gets a
+	// fresh jti so token identifiers stay unique (SPEC §1.7).
+	if jti, err := utils.GenerateJTI(); err == nil {
+		clone.JWTClaims.JTI = jti
 	}
 
 	for k, v := range s.JWTHeader.Extra {

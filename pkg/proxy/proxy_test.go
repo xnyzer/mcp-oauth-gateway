@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -662,6 +664,54 @@ func TestProxyRouter_UnauthorizedChallenge(t *testing.T) {
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusUnauthorized, w.Code)
 	assert.Contains(t, w.Header().Get("WWW-Authenticate"), `error="invalid_token"`)
+}
+
+func TestProxyRouter_TokenActiveCheck(t *testing.T) {
+	privateKey, publicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	validToken, err := createJWT(privateKey, jwt.MapClaims{
+		"sub": "test-user",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+
+	cases := []struct {
+		name        string
+		tokenActive func(ctx context.Context, rawToken string) error
+		wantCode    int
+	}{
+		{name: "active token passes", tokenActive: func(context.Context, string) error { return nil }, wantCode: http.StatusOK},
+		{name: "nil check skips lookup", tokenActive: nil, wantCode: http.StatusOK},
+		{name: "revoked token is rejected", tokenActive: func(context.Context, string) error { return ErrTokenInactive }, wantCode: http.StatusUnauthorized},
+		{name: "store failure fails closed", tokenActive: func(context.Context, string) error { return errors.New("store down") }, wantCode: http.StatusServiceUnavailable},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: okHandler, PublicKey: publicKey, ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo", TokenActive: tt.tokenActive})
+			require.NoError(t, err)
+
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			proxyRouter.SetupRoutes(router)
+
+			req, err := http.NewRequest("POST", "/mcp", nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+validToken)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, tt.wantCode, w.Code)
+			if tt.wantCode == http.StatusUnauthorized {
+				assert.Contains(t, w.Header().Get("WWW-Authenticate"), `error="invalid_token"`)
+			}
+			if tt.wantCode == http.StatusServiceUnavailable {
+				assert.Contains(t, w.Body.String(), "temporarily_unavailable")
+			}
+		})
+	}
 }
 
 func TestProxyRouter_ClockSkewLeeway(t *testing.T) {

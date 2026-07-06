@@ -21,6 +21,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-011 | Trim bundled auth providers → **Google/GitHub removed** (~680 lines + 10 flags/env vars + 1 transitive dep); **generic OIDC kept, off by default**; password login verified as default (smoke test). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 | F-004 | Complete the spec → **`SPEC.md` created** (API contracts incl. CIMD/RFC 8707/9207/7009 + `WWW-Authenticate`; data model + `jti` revocation + key rotation; full config schema) + `docker-compose.example.yml`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-03 |
 | F-005a | Discovery & 401 surface → **complete PRM/AS metadata, `WWW-Authenticate` challenge, RFC 9207 `iss`, issuer normalization, `CLOCK_SKEW`, OIDC mirror** + config-struct refactor. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
+| F-005b | Token binding & lifecycle → **RFC 8707 `resource`→`aud`, `jti`/`client_id`/`scope` claims, `/revoke` (RFC 7009) + fail-closed proxy revocation check, TTL config, sweeper + schema version**; fixed upstream revoke-by-signature no-op bug. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 
 ---
 
@@ -61,21 +62,11 @@ The remaining tasks are a hard chain: 1→2→3. Each task below carries its own
 
 **Decisions (prep, user-approved):** passkey bootstrap = first login via `PASSWORD`/`PASSWORD_HASH`, then passkey enrollment on a session-gated settings page (password stays as a disableable fallback); ES256 ships only if Fosite supports it cleanly, otherwise documented follow-up; rate-limit state is in-memory (single-instance deployment, GR-3). New deps: `github.com/go-webauthn/webauthn` (BSD-3), `golang.org/x/time/rate` (BSD).
 
-#### F-005b — Token binding & lifecycle
-
-**What:** RFC 8707 `resource`→`aud` at authorize + token endpoints (gateway = sole resource; `invalid_target` otherwise, §1.5–1.7); claims `jti`/`client_id`/`scope`; `/.idp/revoke` (RFC 7009) + revoked-`jti` deny-list with fail-closed proxy check (§1.9/§2.4); introspection alignment (§1.10); `ACCESS_TOKEN_TTL`/`AUTH_CODE_TTL`/`REFRESH_TOKEN_TTL`; expiry sweeper + schema-version marker (§2.1/§2.5); advertise `revocation_endpoint`.
-**Files:** `pkg/idp/`, `pkg/proxy/`, `pkg/repository/`, `pkg/mcp-proxy/main.go` + tests.
-**Dependencies:** F-005a (DONE).
-- [ ] wrong `resource` → `invalid_target` (negative tests)
-- [ ] revoked token → 401 on proxy; store error during deny-list check → 503 (fail-closed)
-- [ ] refresh revocation cascades to the grant's access tokens
-- [ ] TTLs configurable and validated fail-fast
-
 #### F-005c — CIMD + DCR hardening (SR-5)
 
 **What:** CIMD resolver per §1.3 (5 s/64 KiB/no redirects, SSRF guards, document validation, positive/negative cache) integrated at authorize/token; `CIMD_*` config. DCR: client TTL refreshed on use, cap, `DCR_ENABLED`, redirect-URI scheme validation (§1.4).
 **Files:** new `pkg/cimd/`, `pkg/idp/`, `pkg/repository/` + tests.
-**Dependencies:** F-005b.
+**Dependencies:** F-005b (DONE).
 - [ ] SSRF negative tests (private/loopback/metadata IPs, redirects, oversize, non-https)
 - [ ] CIMD client full authorize+token round-trip in tests
 - [ ] DCR expiry/cap enforced (negative tests); `DCR_ENABLED=false` removes endpoint + metadata entry

@@ -402,3 +402,53 @@ correct.
 `pkg/mcp-proxy/main_test.go`, `pkg/idp/idp.go`, `pkg/idp/idp_test.go`, `pkg/proxy/proxy.go`,
 `pkg/proxy/proxy_test.go`, `SPEC.md` (Delta notes updated to reflect implemented state)
 (+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).
+
+---
+
+## F-005b — Token binding & lifecycle — DONE 2026-07-06
+
+Second substep of F-005 (implement the SPEC.md contracts on the fork).
+
+**What was done** (SPEC references in parentheses):
+- **Upstream bug fixed:** the inherited `RevokeRefreshToken`/`RevokeAccessToken` deleted by
+  request ID *used as a storage key*, while records are keyed by signature — revocation was a
+  silent no-op (never noticed upstream because no `/revoke` endpoint existed). Both backends
+  now delete **all records of the grant by request ID** (KVS: prefix scan in one bbolt
+  transaction; SQL: new indexed `request_id` column populated at create). fosite's RFC 7009
+  handler then provides the refresh→access cascade for free.
+- **Design deviation (documented in SPEC §2.1/§2.4):** the planned revoked-`jti` deny-list
+  was replaced by a **record-presence check** — the proxy validates statelessly, then requires
+  the token's server-side record to exist (`TokenActive` callback in `proxy.Config`; lookup by
+  the JWT's signature segment). Missing record → 401; store error → **503 fail-closed**.
+  Same guarantees, no extra entity. `jti` stays as a claim, regenerated per issued token
+  (fresh JTI in `Session.Clone()` covers refresh-issued tokens).
+- **RFC 8707 (§1.5/§1.6):** `resource` validated at authorize and token endpoints — only the
+  issuer is a valid resource; other values → `invalid_target` (error redirect carries `iss`).
+  Granted audience already flowed into `aud` via fosite's claims merging.
+- **Claims (§1.7):** `jti`, `client_id` (session extra), space-separated `scope`
+  (`JWTScopeClaimKey: JWTScopeFieldString`). Side-fix: `exp` previously followed fosite's
+  hardcoded 24 h lifespan (the +1 h in `NewJWTSessionWithKey` was dead code, overwritten by
+  fosite's `With()`); it now follows `ACCESS_TOKEN_TTL`.
+- **`/.idp/revoke` (§1.9):** wired via fosite's `NewRevocationRequest` (client auth, hint
+  handling, no token-existence oracle — unknown tokens yield 200). Metadata advertises
+  `revocation_endpoint`; `grant_types_supported` reflects a disabled refresh grant.
+- **TTL config (§3.2):** `ACCESS_TOKEN_TTL` (1 m–24 h, default 1 h), `AUTH_CODE_TTL`
+  (30 s–1 h, default 10 m), `REFRESH_TOKEN_TTL` (0 disables the refresh grant incl. its
+  fosite factory; else 1 h–8760 h, default 720 h) — flags + env, fail-fast validated.
+- **Sweeper + schema version (§2.1/§2.5):** 5-minute GC goroutine deletes session records
+  past TTL+skew (both backends; SQLite compares via `julianday()` because the driver stores
+  times as strings with mixed UTC offsets); `EnsureSchemaVersion` marker with fail-fast on
+  downgrade, checked at startup.
+
+**Verification:** gofmt/vet clean, all 8 packages green. New tests: `invalid_target` negative
+tests at both endpoints; revocation suite (record gone, introspection inactive, refresh
+cascade, no oracle, client-auth required); proxy `TokenActive` matrix (active/nil/revoked→401/
+store-error→503); TTL fail-fast matrix; revoke-by-request-ID, sweeper, and schema-version
+tests for **both** storage backends; `jti`/`client_id` claim assertions. Live smoke test:
+`revocation_endpoint` advertised, `/revoke` rejects unauthenticated calls,
+`ACCESS_TOKEN_TTL=10s` aborts startup with a clear message.
+
+**Files changed:** `main.go`, `pkg/idp/idp.go`, `pkg/idp/idp_test.go`, `pkg/proxy/proxy.go`,
+`pkg/proxy/proxy_test.go`, `pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/main_test.go`,
+`pkg/repository/{interface,kvs,sql}.go`, new `pkg/repository/maintenance_test.go`,
+`pkg/utils/rand.go`, `SPEC.md` (+ `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping).

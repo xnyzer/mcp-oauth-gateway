@@ -101,8 +101,8 @@ RFC 8414. Response `200 application/json`:
 the same document for clients that only probe that path (the gateway issues no ID tokens; this
 is a discovery convenience, not OIDC conformance). Off by default; config flag in part 3.
 
-**Delta:** **done, F-005a** — except `revocation_endpoint`, which is advertised together with
-the `/revoke` endpoint itself (F-005b; metadata must not advertise a 404).
+**Delta:** **done, F-005a/b** — all fields including `revocation_endpoint` are served;
+`grant_types_supported` reflects a disabled refresh grant (`REFRESH_TOKEN_TTL=0`).
 
 ### 1.3 Client identification — CIMD (primary mechanism)
 
@@ -190,10 +190,9 @@ blanket grants in v1).
 `iss`; non-redirectable ones (unknown client, invalid/missing `redirect_uri`) render an HTML
 error page (§1.12 template) with `400` and MUST NOT redirect.
 
-**Delta:** flow exists (Fosite); `iss` parameter **done (F-005a**, on success and error
-redirects**)**. Still missing: `resource` validation (F-005b), CIMD client support (F-005c);
-PKCE presence is enforced by Fosite config for public clients — F-005 MUST enforce it for
-**all** clients.
+**Delta:** flow exists (Fosite); `iss` parameter **done (F-005a)**; `resource` validation
+**done (F-005b)**. Still missing: CIMD client support (F-005c); PKCE presence is enforced by
+Fosite config for public clients — F-005 MUST enforce it for **all** clients.
 
 ### 1.6 Token endpoint — `POST /.idp/token`
 
@@ -219,9 +218,8 @@ configurable), `refresh_token` (when granted), `scope`.
 PKCE mismatch, rotated refresh token), `unauthorized_client`, `unsupported_grant_type`,
 `invalid_target`.
 
-**Delta:** endpoint exists (Fosite); missing: `resource`→`aud` binding (today `aud` is the
-hardcoded client audience `externalURL` or empty), CIMD client resolution at the token
-endpoint, rate limiting (part 3).
+**Delta:** `resource`→`aud` binding and TTL configuration **done (F-005b)**. Still missing:
+CIMD client resolution at the token endpoint (F-005c), rate limiting (F-005e).
 
 ### 1.7 Access token claims (JWT) — FR-5, SR-4
 
@@ -242,9 +240,9 @@ Signed JWS, `alg` RS256 (ES256 optional, part 2), header `kid` = active signing 
 Refresh tokens and authorization codes are **opaque Fosite HMAC tokens** (not JWTs), stored
 server-side (part 2), revocable.
 
-**Delta:** today `aud` comes from the client's hardcoded audience and the session sets it
-empty; `jti`/`client_id`/`scope` claims are absent. Signature/`exp`/`aud`/`iss` verification
-on the proxy path exists but `aud` binding is meaningless until §1.6 lands.
+**Delta:** **done, F-005b** — `aud` carries the granted resource, `jti` is unique per issued
+token (regenerated on refresh), `client_id` and space-separated `scope` claims are emitted;
+`exp` follows `ACCESS_TOKEN_TTL`.
 
 ### 1.8 JWKS — `GET /.well-known/jwks.json`
 
@@ -274,7 +272,8 @@ Revoking a refresh token revokes the grant (its access tokens are rejected via s
 `jti`, part 2). The Fosite `TokenRevocationStorage` interface is already implemented by the
 repository — this endpoint wires it up.
 
-**Delta:** endpoint missing entirely (gap-list item); storage support exists.
+**Delta:** **done, F-005b** — endpoint wired via fosite's revocation handler; the storage
+`Revoke*` implementations were fixed to delete by grant request ID (upstream no-op bug).
 
 ### 1.10 Token introspection — `POST /.idp/introspect`
 
@@ -283,7 +282,8 @@ RFC 7662 (optional per FR-9; exists today). Form-encoded `token`, `token_type_hi
 introspection MUST be rejected — no token oracle). Response `200`:
 `{"active": false}` or `{"active": true, iss, sub, aud, exp, iat, client_id, scope, ...}`.
 
-**Delta:** exists; F-005 verifies client-auth enforcement and aligns the claim set with §1.7.
+**Delta:** **done, F-005b** — client-auth enforcement verified by test (anonymous
+introspection rejected); revoked tokens introspect `active: false`.
 
 ### 1.11 Protected proxy surface (every non-public path)
 
@@ -310,8 +310,8 @@ FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
    headers are stripped first (anti-spoofing).
 
 **Delta:** enforcement, streaming, injection, and header mapping exist; the
-`WWW-Authenticate` challenge and clock-skew leeway are **done (F-005a)**; revocation checks
-land with F-005b.
+`WWW-Authenticate` challenge and clock-skew leeway are **done (F-005a)**; the fail-closed
+revocation check is **done (F-005b**, §2.4 record-presence lookup**)**.
 
 ### 1.12 User authentication & consent — `/.auth/*`
 
@@ -359,16 +359,19 @@ entity with a passed expiry; lookups MUST treat expired-but-not-yet-swept record
 | **CIMD cache entry** | `client_id` URL; resolved metadata JSON, `fetched_at`, `expires_at`, `negative` flag | positive: `CIMD_CACHE_TTL` (default 1 h, capped by upstream `max-age`); negative: 60 s | in-memory (MAY persist as `cimd_cache` / `cimd:`) — loss on restart is acceptable (re-resolve) |
 | **Authorize request** | `ar_id`; serialized Fosite authorize request | 10 min (= auth-code TTL); consumed on completion | `authorize_request_records` / `authorize_request:` |
 | **Authorization code session** | code signature; request + session data | `AUTH_CODE_TTL` (default 10 min), single-use | `authorize_code_sessions` / `authorize_code:` |
-| **Access token record** | token signature; request + session data, **`jti`** | `ACCESS_TOKEN_TTL` (default 1 h) | `access_token_sessions` / `access_token:` |
-| **Refresh token record** | token signature; request + session data, rotation state | `REFRESH_TOKEN_TTL` (default 30 d); rotated on use (§1.6) | `refresh_token_sessions` / `refresh_token:` |
-| **PKCE session** | request signature; challenge + method | tied to auth-code lifetime | `pkce_request_sessions` / `pkce:` |
-| **Revoked `jti`** (new) | `jti`; `revoked_at`, `expires_at` (= token `exp`) | until the revoked token would have expired — the set stays small by construction | `revoked_jtis` / `revoked_jti:` |
+| **Access token record** | token signature (JWT signature segment) + **request ID** (grant); request + session data | `ACCESS_TOKEN_TTL` (default 1 h) | `access_token_sessions` / `access_token-` |
+| **Refresh token record** | token signature + **request ID** (grant); request + session data, rotation state | `REFRESH_TOKEN_TTL` (default 30 d); rotated on use (§1.6) | `refresh_token_sessions` / `refresh_token-` |
+| **PKCE session** | request signature; challenge + method | tied to auth-code lifetime | `pkce_request_sessions` / `pkce_request-` |
 | **User** (new, implemented in F-005) | `user_id`; `username`, optional `password_hash` (bcrypt), `created_at` | permanent | `users` / `user:` |
 | **Passkey credential** (new, F-005) | WebAuthn credential ID; `user_id`, COSE public key, sign count, transports, `created_at`, `last_used_at` | permanent, user-revocable | `webauthn_credentials` / `webauthn_credential:` |
 
 Access tokens are JWTs (§1.7) **and** have a server-side record: `/mcp` validation stays
-stateless-first (signature/claims), then consults the **revoked-`jti`** set (§2.3). Refresh
-tokens and authorization codes are opaque Fosite HMAC tokens, server-side only.
+stateless-first (signature/claims), then requires the token's **record to still exist**
+(§2.4). Refresh tokens and authorization codes are opaque Fosite HMAC tokens, server-side
+only. *(Design change during F-005b: the originally specified revoked-`jti` deny-list was
+replaced by this record-presence check — same guarantees, no extra entity, and the RFC 7009
+cascade falls out of deleting the grant's records. The `jti` claim is kept for introspection
+and logging and is regenerated per issued token, including on refresh.)*
 
 ### 2.2 Signing keys & secrets
 
@@ -399,14 +402,15 @@ Keys live in the **data directory** (not the DB), permissions `0600`, directory 
 5. Rotation MUST be atomic (manifest rewrite via temp file + rename); a crash mid-rotation
    leaves the old manifest intact.
 
-### 2.4 Revocation semantics (completes §1.9)
+### 2.4 Revocation semantics (completes §1.9) — **done, F-005b**
 
-- **Refresh token revoked** → its record and the grant's active access-token records are
-  deleted; each deleted access token's `jti` enters the revoked-`jti` set until its `exp`.
-- **Access token revoked** → its record deleted, `jti` deny-listed until `exp`.
-- `/mcp` checks the deny-list after stateless validation; a store error during the check →
-  `503` (fail-closed, SR-3 — never "assume not revoked").
-- Introspection (§1.10) reports `active: false` for anything deleted/deny-listed.
+- Token records carry their grant's **request ID**; revocation deletes **all records of the
+  grant** (refresh revocation therefore cascades to its access tokens). This fixed a latent
+  upstream bug where the store deleted by request ID as if it were a signature (a no-op).
+- `/mcp` checks **record presence** (lookup by the JWT's signature segment) after stateless
+  validation; missing record → `401 invalid_token`; a store error during the check → `503`
+  (fail-closed, SR-3 — never "assume not revoked").
+- Introspection (§1.10) reports `active: false` for anything deleted.
 
 ### 2.5 Migrations & versioning
 
@@ -451,9 +455,9 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 
 | Env | Default | Contract |
 |---|---|---|
-| `ACCESS_TOKEN_TTL` | `1h` | §1.7 `exp`. Go duration; 1 m–24 h. |
-| `AUTH_CODE_TTL` | `10m` | §1.5. 30 s–1 h. |
-| `REFRESH_TOKEN_TTL` | `720h` (30 d) | §2.1. `0` disables refresh tokens. |
+| `ACCESS_TOKEN_TTL` | `1h` | §1.7 `exp`. Go duration; 1 m–24 h. **Done (F-005b).** |
+| `AUTH_CODE_TTL` | `10m` | §1.5. 30 s–1 h. **Done (F-005b).** |
+| `REFRESH_TOKEN_TTL` | `720h` (30 d) | §2.1. `0` disables the refresh grant (also removed from metadata). **Done (F-005b).** |
 | `CIMD_ENABLED` | `true` | §1.3. Disabling leaves DCR-only (not recommended). |
 | `CIMD_FETCH_TIMEOUT` / `CIMD_MAX_SIZE` / `CIMD_CACHE_TTL` | `5s` / `65536` / `1h` | §1.3 resolution limits. |
 | `DCR_ENABLED` | `true` | §1.4. `false` removes `registration_endpoint` from metadata and 404s `/.idp/register`. |

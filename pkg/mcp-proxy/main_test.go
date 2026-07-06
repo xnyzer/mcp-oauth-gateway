@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -60,6 +61,36 @@ func TestRun_NormalizesExternalURLTrailingSlash(t *testing.T) {
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "stop early")
 			require.Equal(t, tt.wantURL, receivedURL)
+		})
+	}
+}
+
+func TestRun_ValidatesTTLs(t *testing.T) {
+	cases := []struct {
+		name        string
+		mutate      func(*Config)
+		errContains string
+	}{
+		{name: "access token TTL too short", mutate: func(c *Config) { c.AccessTokenTTL = 30 * time.Second }, errContains: "access token TTL"},
+		{name: "access token TTL too long", mutate: func(c *Config) { c.AccessTokenTTL = 25 * time.Hour }, errContains: "access token TTL"},
+		{name: "auth code TTL too short", mutate: func(c *Config) { c.AuthCodeTTL = 10 * time.Second }, errContains: "auth code TTL"},
+		{name: "refresh token TTL below minimum", mutate: func(c *Config) { c.RefreshTokenTTL = 30 * time.Minute }, errContains: "refresh token TTL"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{
+				Listen:            ":0",
+				TLSListen:         ":0",
+				DataPath:          t.TempDir(),
+				RepositoryBackend: "local",
+				ExternalURL:       "http://localhost",
+				ProxyTargets:      []string{"http://example.com"},
+				HeaderMappingBase: "/userinfo",
+			}
+			tt.mutate(&cfg)
+			err := Run(cfg)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.errContains)
 		})
 	}
 }

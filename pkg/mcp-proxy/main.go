@@ -20,6 +20,7 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
+	"github.com/ory/fosite"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/backend"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
@@ -88,9 +89,33 @@ type Config struct {
 	// ClockSkew is the leeway for token time-claim validation
 	// (SPEC §1.11.1; 0–5m, default set in main.go).
 	ClockSkew time.Duration
+	// Token lifetimes (SPEC §3.2). AccessTokenTTL 1m–24h, AuthCodeTTL
+	// 30s–1h; RefreshTokenTTL 0 disables the refresh grant.
+	AccessTokenTTL  time.Duration
+	AuthCodeTTL     time.Duration
+	RefreshTokenTTL time.Duration
 }
 
-const maxClockSkew = 5 * time.Minute
+const (
+	maxClockSkew = 5 * time.Minute
+	// sweepInterval is how often expired session records are garbage-
+	// collected (SPEC §2.1).
+	sweepInterval = 5 * time.Minute
+)
+
+// validateTTLs enforces the SPEC §3.2 ranges (fail-fast at startup).
+func validateTTLs(cfg Config) error {
+	if cfg.AccessTokenTTL < time.Minute || cfg.AccessTokenTTL > 24*time.Hour {
+		return fmt.Errorf("access token TTL must be between 1m and 24h, got: %s", cfg.AccessTokenTTL)
+	}
+	if cfg.AuthCodeTTL < 30*time.Second || cfg.AuthCodeTTL > time.Hour {
+		return fmt.Errorf("auth code TTL must be between 30s and 1h, got: %s", cfg.AuthCodeTTL)
+	}
+	if cfg.RefreshTokenTTL != 0 && (cfg.RefreshTokenTTL < time.Hour || cfg.RefreshTokenTTL > 365*24*time.Hour) {
+		return fmt.Errorf("refresh token TTL must be 0 (disabled) or between 1h and 8760h, got: %s", cfg.RefreshTokenTTL)
+	}
+	return nil
+}
 
 func Run(cfg Config) error {
 	listen := cfg.Listen
@@ -137,6 +162,17 @@ func Run(cfg Config) error {
 
 	if cfg.ClockSkew < 0 || cfg.ClockSkew > maxClockSkew {
 		return fmt.Errorf("clock skew must be between 0 and %s, got: %s", maxClockSkew, cfg.ClockSkew)
+	}
+	// Zero TTLs (programmatic use) fall back to the SPEC defaults;
+	// RefreshTokenTTL 0 means "refresh grant disabled" and stays as is.
+	if cfg.AccessTokenTTL == 0 {
+		cfg.AccessTokenTTL = time.Hour
+	}
+	if cfg.AuthCodeTTL == 0 {
+		cfg.AuthCodeTTL = 10 * time.Minute
+	}
+	if err := validateTTLs(cfg); err != nil {
+		return err
 	}
 
 	if (tlsCertFile == "") != (tlsKeyFile == "") {
@@ -248,6 +284,39 @@ func Run(cfg Config) error {
 		}
 	}()
 
+	// Fail fast when the store stems from a newer gateway (SPEC §2.5).
+	if err := repo.EnsureSchemaVersion(ctx, repository.SchemaVersion); err != nil {
+		return fmt.Errorf("schema version check failed: %w", err)
+	}
+
+	// Expiry sweeper: garbage-collect session records past their TTL
+	// (SPEC §2.1). Lookups already treat expired records as invalid;
+	// this only reclaims storage.
+	refreshSweepTTL := cfg.RefreshTokenTTL
+	if refreshSweepTTL == 0 {
+		refreshSweepTTL = cfg.AccessTokenTTL
+	}
+	go func() {
+		ticker := time.NewTicker(sweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now().UTC()
+				margin := cfg.ClockSkew
+				if err := repo.DeleteExpiredSessions(ctx,
+					now.Add(-cfg.AccessTokenTTL-margin),
+					now.Add(-refreshSweepTTL-margin),
+					now.Add(-cfg.AuthCodeTTL-margin),
+				); err != nil {
+					logger.Warn("failed to sweep expired session records", zap.Error(err))
+				}
+			}
+		}
+	}()
+
 	var privKey *rsa.PrivateKey
 	if envKey := os.Getenv("JWT_PRIVATE_KEY"); envKey != "" {
 		privKey, err = utils.PrivateKeyFromPEM(envKey)
@@ -315,10 +384,31 @@ func Run(cfg Config) error {
 		Secret:              secret,
 		AuthRouter:          authRouter,
 		OIDCDiscoveryMirror: cfg.OIDCDiscoveryMirror,
+		AccessTokenTTL:      cfg.AccessTokenTTL,
+		AuthCodeTTL:         cfg.AuthCodeTTL,
+		RefreshTokenTTL:     cfg.RefreshTokenTTL,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create IDP router: %w", err)
 	}
+
+	// Revocation check for the proxy (SPEC §2.4): a token is active while
+	// its server-side record exists. fosite keys access-token records by
+	// the JWT's signature segment.
+	tokenActive := func(ctx context.Context, rawToken string) error {
+		parts := strings.Split(rawToken, ".")
+		if len(parts) != 3 {
+			return proxy.ErrTokenInactive
+		}
+		if _, err := repo.GetAccessTokenSession(ctx, parts[2], nil); err != nil {
+			if errors.Is(err, fosite.ErrNotFound) {
+				return proxy.ErrTokenInactive
+			}
+			return err
+		}
+		return nil
+	}
+
 	proxyRouter, err := newProxyRouter(proxy.Config{
 		ExternalURL:                externalURL,
 		Proxy:                      beHandler,
@@ -329,6 +419,7 @@ func Run(cfg Config) error {
 		HeaderMapping:              headerMapping,
 		HeaderMappingBase:          cfg.HeaderMappingBase,
 		ClockSkew:                  cfg.ClockSkew,
+		TokenActive:                tokenActive,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create proxy router: %w", err)

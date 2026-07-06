@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/ory/fosite"
 	"github.com/ory/fosite/handler/oauth2"
 	"github.com/ory/fosite/handler/pkce"
 )
+
+// SchemaVersion is the current data-store schema version (SPEC §2.5).
+const SchemaVersion = 1
 
 type Repository interface {
 	fosite.Storage
@@ -17,7 +21,19 @@ type Repository interface {
 	pkce.PKCERequestStorage
 	DynamicClientStorage
 	AuthorizeRequestStorage
+	MaintenanceStorage
 	Close() error
+}
+
+// MaintenanceStorage covers garbage collection and schema versioning
+// (SPEC §2.1/§2.5).
+type MaintenanceStorage interface {
+	// DeleteExpiredSessions removes token/code/PKCE/authorize-request
+	// records created before the respective cutoff.
+	DeleteExpiredSessions(ctx context.Context, accessBefore, refreshBefore, codeBefore time.Time) error
+	// EnsureSchemaVersion records the schema version on first run and
+	// fails when the store stems from a newer gateway version.
+	EnsureSchemaVersion(ctx context.Context, version int) error
 }
 
 type DynamicClientStorage interface {

@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +13,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mattn/go-jsonpointer"
 )
+
+// ErrTokenInactive is returned by Config.TokenActive when the token's
+// server-side record is gone (revoked or unknown).
+var ErrTokenInactive = errors.New("access token is not active")
 
 // Config carries all options for the authenticated proxy surface (SPEC §1.11).
 type Config struct {
@@ -29,6 +35,11 @@ type Config struct {
 	HeaderMappingBase          string
 	// ClockSkew is the leeway applied to exp/nbf/iat validation (SPEC §1.11.1).
 	ClockSkew time.Duration
+	// TokenActive checks the token's server-side record after stateless
+	// validation (revocation, SPEC §2.4). It returns nil when active,
+	// ErrTokenInactive when revoked/unknown, and any other error on store
+	// failure (fail-closed → 503). nil disables the check.
+	TokenActive func(ctx context.Context, rawToken string) error
 }
 
 type ProxyRouter struct {
@@ -112,6 +123,19 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 	if err != nil || !token.Valid {
 		p.abortUnauthorized(c, "invalid_token", "the access token is invalid or expired")
 		return
+	}
+
+	// Revocation check (SPEC §2.4): the token must still have a server-side
+	// record. A store failure denies access (fail-closed, SR-3).
+	if p.cfg.TokenActive != nil {
+		switch err := p.cfg.TokenActive(c.Request.Context(), bearerToken); {
+		case errors.Is(err, ErrTokenInactive):
+			p.abortUnauthorized(c, "invalid_token", "the access token has been revoked")
+			return
+		case err != nil:
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "temporarily_unavailable"})
+			return
+		}
 	}
 
 	if p.cfg.HTTPStreamingOnly && isSSEGetRequest(c.Request) {
