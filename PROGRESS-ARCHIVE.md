@@ -898,3 +898,45 @@ in `private/mcp-gateway/` (gitignored); `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bo
 **Note:** F-006c2 (Claude web) and the Claude-iOS half of F-006c3 were confirmed the same day —
 Claude web + iOS both connect via real CIMD and read/search/write against Graphiti. Remaining open:
 passkey enrolment (desktop + iOS) and the tampered/revoked live negatives.
+
+---
+
+## F-006c — Live client verification — DONE 2026-07-08
+
+Second/third phases of F-006c (after F-006c1's deploy). Executed by the operator against the live
+deployment; Claude assisted and verified server-side.
+
+- **Claude web connector (F-006c2):** added the gateway as a custom connector; the full OAuth
+  flow completed via **real CIMD** (the path F-006a could only stub), and Claude successfully
+  **read, searched and wrote** to the live Graphiti upstream through the gateway.
+- **Claude iOS (F-006c3):** connects end to end directly in the app; same read/search/write.
+- **Passkey / WebAuthn:** enrolled via the session-gated `/.auth/settings` and verified login in
+  **Safari (desktop)** and **iOS** (iCloud-Keychain passkey, synced across both). Chrome skipped —
+  operator's choice (Apple ecosystem). The operator then **disabled the password fallback**; the
+  login page still shows the password field and returns the uniform "invalid password" (SR-6, no
+  enumeration — intended), passkey is the sole login, and the env `PASSWORD_HASH` remains as the
+  lockout rescue.
+- **Live negatives:** no-token / garbage bearer / fake-JWT → `401` (+ `WWW-Authenticate` pointing
+  at PRM); reserved `/.idp/*` → `404` (never proxied); `/.idp/revoke` without client auth → `400`.
+  Revoked-token→`401` was not scriptable live once password login was off (passkey can't be driven
+  by curl) — that exact path is covered by the F-006a assembled e2e.
+
+**Behaviour clarified (not bugs):** browsing the root `https://…/` returns `{"error":"unauthorized"}`
+because `/` is the Bearer-protected MCP surface (only Claude carries a token); a direct operator
+login redirects there for lack of a dashboard, but the login itself succeeds and Claude's flow
+redirects to its own callback instead. No committed code changed in this phase.
+
+## F-006 — Verify against Claude + security review — DONE 2026-07-08 (parent task)
+
+Completed via **F-006a** (assembled-gateway `httptest` e2e harness — the first test to drive an
+idp-minted token through the proxy and to exercise the real login), **F-006b** (adversarial
+four-agent `/audit-code` with self-verification — 0 critical, 1 high, 9 medium, 19 low — then the
+user-chosen security-batch fixes H1/M1–M6 inline, deployment mediums → F-007, lows → F-012), and
+**F-006c** (live deploy behind the operator's reverse proxy + end-to-end verification against
+**Claude web and iOS** against a live Graphiti upstream, with passkey login).
+
+The gateway is now **running in production and used by Claude on web + iOS**, which is the
+project's original goal. Two audit findings were additionally confirmed *live* during the deploy
+(M8 bare-IP `TRUSTED_PROXIES` crash; the http-issuer/ACME interaction handled via `NO_AUTO_TLS`).
+Remaining before a tagged public release: **F-007** (release hygiene — docs, SemVer, golangci-lint,
+the real M7–M10 deployment fixes, and the 2026-07-28 RC re-verify) and the **F-012** backlog.
