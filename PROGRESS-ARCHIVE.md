@@ -712,3 +712,64 @@ state; deps `go-webauthn/webauthn` (BSD-3) + `golang.org/x/time` (BSD-3). Two in
 security bugs found and fixed along the way: revoke-by-signature no-op (F-005b) and the
 RequireAuth chain-continuation after redirect (F-005e1). Next: F-006 (verify against Claude
 + security review).
+
+---
+
+## F-006a — Local end-to-end verification harness — DONE 2026-07-07
+
+First substep of F-006 (verify against Claude + security review). Prep reordered F-006
+security-first (audit gates public exposure, so it runs before the live tests): a → F-006b
+(adversarial `/audit-code`) → F-006c (live runbook: real CIMD, passkey in browsers, Claude
+web/iOS).
+
+**Problem:** No test booted the *assembled* gateway and drove its real HTTP surface. The
+per-package tests cover idp/auth/proxy/keys/cimd in isolation; crucially, `idp_test` installs
+a mock auth middleware that auto-authorizes and never mounts the proxy — so real password
+login gating the authorize flow, and an idp-minted token being accepted by the proxy and
+forwarded upstream, were **untested end to end**.
+
+**Idea:** An in-process black-box harness that assembles the gateway exactly as `Run()` mounts
+it (session + auth + idp + proxy + real keys + KVS repo on one gin engine) in front of a mock
+upstream, wrapped in `httptest`, and drives it over HTTP.
+
+### What was done
+- **New test-only files (`package main`, no production code, no new deps):**
+  `e2e_harness_test.go` (gateway builder + helpers: upstream recorder, CIMD stub resolver,
+  DCR register, PKCE pair, real login+consent driver, JWKS verifier) and `e2e_test.go` (six
+  flow tests).
+- **Assembled-gateway coverage (all green):** discovery + self-consistency (PRM / AS-metadata
+  / OIDC mirror / JWKS, `code_challenge_methods=[S256]`, RFC 9207 advertised, active kid in
+  JWKS); DCR register → **real password login + consent** → authorize; PKCE/S256 authorize →
+  token; token verified against the **published JWKS**; audience/issuer/`jti`/`client_id`
+  claims; RFC 9207 `iss` in the redirect; proxied `/mcp` call returning 200 with **credential
+  injection** (upstream sees the injected bearer, never the client token); fail-closed
+  negatives — missing (→ 401 + `WWW-Authenticate` pointing at PRM), tampered, replayed code
+  (`invalid_grant`), and **revoked** (RFC 7009 → 401 via the proxy's `TokenActive` hook);
+  rate-limit 429 + `temporarily_unavailable`; **key-rotation continuity** (`keys.Rotate`, then
+  the pre-rotation token still verifies via the retiring key and both kids stay in JWKS);
+  reserved-namespace path → 404 (never proxied).
+- **Public/confidential and CIMD/DCR both exercised:** confidential client via
+  `client_secret_basic`/`_post` + Basic-auth `/revoke`; public client via an **injected CIMD
+  resolver stub** (the CIMD URL becomes the `client_id` claim) plus a PKCE-downgrade rejection.
+
+### Decisions / deliberate coverage boundaries
+- **CIMD network/SSRF layer stays in `pkg/cimd` units:** the resolver's private-host bypass is
+  intentionally unexported ("never exposed via Config"), so a cross-package harness cannot
+  drive real localhost CIMD fetches. The happy path here uses a resolver stub (same shape the
+  gateway sees for a resolved client); real CIMD over the wire → F-006c live.
+- **Expired-but-validly-signed token** cannot be minted black-box (needs the server key) →
+  covered in `pkg/proxy` units (`proxy_test.go` exp + clock-skew leeway). The harness covers
+  the black-box-mintable negatives (missing/tampered/replayed/revoked).
+- **In-process over subprocess:** `Run()` is one ~600-line function that binds ports and only
+  exits on SIGINT; the harness composes the same real constructors/mounting instead, giving a
+  fast, race-clean, CI-runnable test without port/lifecycle flakiness. (`Run`'s length is an
+  audit item for F-006b, not fixed here — refactoring the security-critical assembly right
+  before the audit was deliberately avoided.)
+
+**Verification:** `go test ./...` green (all 11 packages), `gofmt`/`go vet ./...` clean,
+`go test -race` clean. Six new tests: discovery/self-consistency, auth-code+proxy+revocation
+(+4 negative subtests), public-client PKCE via CIMD (+PKCE-required subtest), rate-limit,
+key-rotation continuity, reserved-namespace-not-proxied.
+
+**Files changed:** new `e2e_harness_test.go`, `e2e_test.go`; edited `PROGRESS.md` /
+`PROGRESS-ARCHIVE.md` (bookkeeping).

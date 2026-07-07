@@ -27,6 +27,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-005e1 | User model + passkey/WebAuthn → **single operator account (bootstrap on first password login, `sub` = user ID), go-webauthn ceremonies + session-gated `/.auth/settings`, disableable password fallback (env stays authoritative) with lockout rescue, §3.1 auth-backend fail-fast**; fixed inherited RequireAuth chain-continuation bug. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005e2 | Rate limits, lockout & auth events → **new `pkg/ratelimit` (per-IP token buckets on `/register`/`/token`/login, 429 + `rate_limited`) + per-account lockout with byte-identical uniform errors; `pkg/authevent` structured events (`login_ok`/`login_fail`/`token_issued`/`register`/`rate_limited`/`revoked`) without secrets**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005 | **Implement on the chosen base — complete** (all six substeps a/b/c/d/e1/e2 done; every gap from the F-001 review closed). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
+| F-006a | Local end-to-end verification harness → **assembled-gateway `httptest` e2e** (`e2e_test.go` + `e2e_harness_test.go`): discovery/JWKS self-consistency, DCR + real login + consent, PKCE/S256 authorize→token, proxied upstream call with credential injection, fail-closed negatives (missing/tampered/replay/**revoked**), rate-limit 429, key-rotation continuity; gofmt/vet/race clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-07 |
 
 ---
 
@@ -56,6 +57,38 @@ The remaining tasks are a hard chain: 1→2. Each task below carries its own `**
 - If the MCP authorization spec **2026-07-28 RC** has landed by then: re-verify the contracts against it (watch item, REQUIREMENTS §0); otherwise this check moves to the F-007 release gate.
 
 **Dependencies:** F-005 (DONE).
+
+**Substeps** (ordered security-first — the audit gates public exposure, so it runs
+*before* the live tests, not after as the bullets above are written):
+**F-006a done** (2026-07-07 — assembled-gateway e2e harness; see Done table + archive).
+
+#### F-006b — Security review (adversarial `/audit-code`) + triage
+
+- **What:** Full adversarial `/audit-code` run over the whole codebase (not the per-step
+  self-review), producing `AUDIT-RESULTS.md`. Triage findings; fix critical/high **inline
+  within F-006** (they block the public-exposure gate), log medium/low as backlog F-numbers.
+- **Files:** `AUDIT-RESULTS.md` (gitignored per skill); any fix diffs.
+- **Dependencies:** F-006a (green baseline to audit against).
+- **Acceptance:**
+  - [ ] Audit complete across all areas (code, security/secrets, deps, deployment, robustness).
+  - [ ] Zero unresolved critical/high findings before public exposure.
+  - [ ] Residual medium/low findings logged as backlog tasks.
+
+#### F-006c — Live verification runbook + execution (manual; requires public exposure)
+
+- **What:** A precise runbook for the parts that need real clients/hardware: public deploy
+  with publicly-trusted TLS + base URL; passkey/WebAuthn enrollment + login in Safari & Chrome
+  (desktop), then iOS; Claude web custom connector first, then Claude iOS; negative checks
+  against the live endpoint. Claude produces the runbook and helps debug; the operator executes.
+- **Files:** `docs/VERIFICATION.md` (runbook); results log under `private/` (may carry
+  deployment specifics — gitignored).
+- **Dependencies:** **F-006b (public-exposure gate — must pass first).**
+- **Acceptance:**
+  - [ ] Runbook executable step-by-step, upstream + deployment target confirmed with the operator.
+  - [ ] Passkey enrollment + login verified in Safari, Chrome (desktop) and iOS.
+  - [ ] Claude web connector, then Claude iOS, connect end to end; negative checks denied.
+  - [ ] Each row recorded pass/fail with evidence.
+  - [ ] Note: MCP spec 2026-07-28 RC not yet released → its re-verify stays on F-007's gate.
 
 ---
 
