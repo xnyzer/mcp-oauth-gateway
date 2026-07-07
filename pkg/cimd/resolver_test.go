@@ -153,11 +153,28 @@ func TestResolverSSRFGuards(t *testing.T) {
 }
 
 func TestIsDisallowedIP(t *testing.T) {
-	disallowed := []string{"127.0.0.1", "::1", "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.169.254", "fe80::1", "fc00::1", "0.0.0.0", "224.0.0.1"}
+	disallowed := []string{
+		// Covered by the address predicates.
+		"127.0.0.1", "::1", "10.0.0.1", "172.16.0.1", "192.168.1.1",
+		"169.254.169.254", "fe80::1", "fc00::1", "0.0.0.0", "224.0.0.1",
+		// Reserved ranges the predicates miss (SPEC §1.3.2, added in F-006b).
+		"100.100.100.200", // Alibaba Cloud metadata (CGNAT)
+		"100.64.0.1",      // CGNAT
+		"192.0.0.1",       // IETF protocol assignments
+		"192.0.2.5",       // TEST-NET-1
+		"198.18.0.1",      // benchmarking
+		"198.51.100.7",    // TEST-NET-2
+		"203.0.113.9",     // TEST-NET-3
+		"240.0.0.1",       // reserved/future
+		"255.255.255.255", // broadcast
+		"2001:db8::1",     // IPv6 documentation
+		"64:ff9b::7f00:1", // NAT64 embedding 127.0.0.1
+		"::ffff:10.0.0.1", // IPv4-mapped private address
+	}
 	for _, raw := range disallowed {
 		assert.True(t, isDisallowedIP(net.ParseIP(raw)), "should reject %s", raw)
 	}
-	allowed := []string{"93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946", "8.8.8.8"}
+	allowed := []string{"93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946", "8.8.8.8", "1.1.1.1"}
 	for _, raw := range allowed {
 		assert.False(t, isDisallowedIP(net.ParseIP(raw)), "should allow %s", raw)
 	}
@@ -172,4 +189,15 @@ func TestValidateRedirectURI(t *testing.T) {
 	for _, raw := range invalid {
 		assert.Error(t, ValidateRedirectURI(raw), raw)
 	}
+}
+
+// TestResolverCacheBounded verifies the resolver cache does not grow without
+// limit when many distinct client IDs are stored (memory-DoS bound, F-006b).
+func TestResolverCacheBounded(t *testing.T) {
+	r := NewResolver(Config{})
+	for i := 0; i < maxCacheEntries+500; i++ {
+		r.store(fmt.Sprintf("https://client-%d.example.com/meta.json", i),
+			cacheEntry{expiresAt: r.now().Add(time.Hour)})
+	}
+	require.LessOrEqual(t, len(r.cache), maxCacheEntries, "cache must stay bounded")
 }

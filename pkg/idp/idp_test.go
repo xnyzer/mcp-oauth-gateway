@@ -1320,3 +1320,149 @@ func TestTokenAndRegisterEvents(t *testing.T) {
 		}
 	}
 }
+
+// failingRevokeRepo makes token revocation fail at the storage layer while
+// leaving issuance intact, to exercise the fail-closed 503 path (SPEC §1.9).
+type failingRevokeRepo struct {
+	repository.Repository
+}
+
+func (f *failingRevokeRepo) RevokeAccessToken(context.Context, string) error {
+	return fmt.Errorf("simulated store failure")
+}
+
+func (f *failingRevokeRepo) RevokeRefreshToken(context.Context, string) error {
+	return fmt.Errorf("simulated store failure")
+}
+
+// TestRevocationStoreFailureReturns503 verifies that a storage failure during
+// revocation surfaces as 503, not a misleading 200 (SPEC §1.9, SR-3): a
+// silent no-op would leave the operator believing a compromised token was
+// revoked while it stays live.
+func TestRevocationStoreFailureReturns503(t *testing.T) {
+	server, _, _ := setupTestServerWith(t, func(cfg *Config) {
+		cfg.Repo = &failingRevokeRepo{Repository: cfg.Repo}
+	})
+	regResp := registerTestClient(t, server.URL)
+
+	authURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state",
+		server.URL, AuthorizationEndpoint, regResp.ClientID,
+		url.QueryEscape("http://localhost:8080/callback"))
+	callbackURL := testAuthFlowWithURL(t, server.URL, authURL)
+
+	tokenReq := url.Values{}
+	tokenReq.Set("grant_type", "authorization_code")
+	tokenReq.Set("code", callbackURL.Query().Get("code"))
+	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
+	tokenReq.Set("client_id", regResp.ClientID)
+	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
+	require.NoError(t, err)
+	defer tokenResp.Body.Close()
+	require.Equal(t, http.StatusOK, tokenResp.StatusCode)
+	var tokens map[string]any
+	require.NoError(t, json.NewDecoder(tokenResp.Body).Decode(&tokens))
+	accessToken := tokens["access_token"].(string)
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+RevocationEndpoint,
+		strings.NewReader(url.Values{"token": {accessToken}, "token_type_hint": {"access_token"}}.Encode()))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(regResp.ClientID, regResp.ClientSecret)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode,
+		"a store failure during revocation must fail closed with 503, not a misleading 200")
+}
+
+// TestRegisterMalformedJSONNoInternalLeak verifies the register endpoint
+// returns a generic description, not the JSON parser's internal text (SR-8/§6).
+func TestRegisterMalformedJSONNoInternalLeak(t *testing.T) {
+	server, _, _ := setupTestServer(t)
+	resp, err := http.Post(server.URL+RegistrationEndpoint, "application/json",
+		strings.NewReader(`{"redirect_uris": "not-an-array"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Equal(t, "invalid_request", body["error"])
+	desc, _ := body["error_description"].(string)
+	require.NotContains(t, desc, "json:", "must not leak the Go JSON parser's internal message")
+	require.NotContains(t, desc, "Go struct")
+}
+
+// TestConsentShowsClientIdentityAndScopes verifies the consent page renders the
+// client_id, redirect target and requested scopes (SPEC §1.5) so the operator
+// can recognise and decline a foreign client (anti-phishing, H1).
+func TestConsentShowsClientIdentityAndScopes(t *testing.T) {
+	const cimdClientID = "https://phisher.example.com/oauth/client-metadata.json"
+	const redirectURI = "https://phisher.example.com/callback"
+	server, _, _ := setupTestServerWith(t, func(cfg *Config) {
+		cfg.CIMDResolver = &stubResolver{doc: &cimd.Client{
+			ClientID:     cimdClientID,
+			ClientName:   "Some Client",
+			RedirectURIs: []string{redirectURI},
+			Scope:        "read",
+		}}
+	})
+
+	verifier := strings.Repeat("v", 64)
+	challengeHash := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(challengeHash[:])
+	authURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state&scope=read&code_challenge=%s&code_challenge_method=S256",
+		server.URL, AuthorizationEndpoint,
+		url.QueryEscape(cimdClientID), url.QueryEscape(redirectURI), challenge)
+
+	client := &http.Client{
+		Jar:           mustCookieJar(t),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	authResp, err := client.Get(authURL)
+	require.NoError(t, err)
+	authResp.Body.Close()
+	location := authResp.Header.Get("Location")
+	require.Contains(t, location, strings.ReplaceAll(AuthorizationReturnEndpoint, ":ar_id", ""))
+
+	formResp, err := client.Get(server.URL + location)
+	require.NoError(t, err)
+	defer formResp.Body.Close()
+	require.Equal(t, http.StatusOK, formResp.StatusCode)
+
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(formResp.Body)
+	require.NoError(t, err)
+	page := buf.String()
+	require.Contains(t, page, cimdClientID, "consent page must show the client identity")
+	require.Contains(t, page, redirectURI, "consent page must show the redirect target")
+	require.Contains(t, page, "read", "consent page must show the requested scope")
+}
+
+// TestAuthorizeRateLimitReturns429 verifies the per-IP limiter guards the
+// authorize endpoint (M4b): it bounds unauthenticated CIMD-resolution floods.
+func TestAuthorizeRateLimitReturns429(t *testing.T) {
+	limit, err := ratelimit.ParseLimit("1/m")
+	require.NoError(t, err)
+	server, _, _ := setupTestServerWith(t, func(cfg *Config) {
+		cfg.AuthorizeRateLimit = ratelimit.Middleware(ratelimit.NewLimiter(limit), "authorize", zap.NewNop())
+	})
+	regResp := registerTestClient(t, server.URL)
+	authURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state",
+		server.URL, AuthorizationEndpoint, regResp.ClientID,
+		url.QueryEscape("http://localhost:8080/callback"))
+
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	first, err := client.Get(authURL)
+	require.NoError(t, err)
+	first.Body.Close()
+	require.NotEqual(t, http.StatusTooManyRequests, first.StatusCode)
+
+	second, err := client.Get(authURL)
+	require.NoError(t, err)
+	defer second.Body.Close()
+	require.Equal(t, http.StatusTooManyRequests, second.StatusCode)
+}

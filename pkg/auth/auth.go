@@ -490,8 +490,11 @@ func filterUserInfo(m map[string]any, keys []string) map[string]any {
 }
 
 func (a *AuthRouter) renderError(c *gin.Context, err error) {
+	// Never leak internal error detail to the client (SR-8, CODING-STANDARDS
+	// §6): log the cause server-side and render a fixed generic message.
+	a.logger.Error("auth request failed", zap.Error(err))
 	data := errorTemplateData{
-		ErrorMessage: err.Error(),
+		ErrorMessage: "An unexpected error occurred. Please try again.",
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusInternalServerError)

@@ -46,8 +46,12 @@ func (l *Lockout) Locked(key string, now time.Time) bool {
 	return ok && now.Before(entry.lockedUntil)
 }
 
-// Fail records a failed attempt; the threshold-th consecutive failure
-// starts (or extends) the lockout window.
+// Fail records a failed attempt; the threshold-th consecutive failure starts
+// the lockout window. The window is armed only on the transition that first
+// reaches the threshold — never re-extended by later failures — and a streak
+// whose window has fully expired is reset before counting. Otherwise an
+// attacker could send one wrong password per window to keep the account
+// locked indefinitely (a permanent-lockout DoS on the sole operator).
 func (l *Lockout) Fail(key string, now time.Time) {
 	if l == nil {
 		return
@@ -59,9 +63,15 @@ func (l *Lockout) Fail(key string, now time.Time) {
 		entry = &lockoutEntry{}
 		l.entries[key] = entry
 	}
+	// A prior lock that has fully elapsed ends the streak: start counting
+	// afresh so the expired window cannot be perpetually re-armed.
+	if !entry.lockedUntil.IsZero() && !now.Before(entry.lockedUntil) {
+		entry.failures = 0
+		entry.lockedUntil = time.Time{}
+	}
 	entry.failures++
 	entry.lastFailure = now
-	if entry.failures >= l.threshold {
+	if entry.failures == l.threshold {
 		entry.lockedUntil = now.Add(l.duration)
 	}
 }

@@ -773,3 +773,73 @@ key-rotation continuity, reserved-namespace-not-proxied.
 
 **Files changed:** new `e2e_harness_test.go`, `e2e_test.go`; edited `PROGRESS.md` /
 `PROGRESS-ARCHIVE.md` (bookkeeping).
+
+---
+
+## F-006b — Security review (adversarial `/audit-code`) + inline fixes — DONE 2026-07-07
+
+Second substep of F-006. Prep ordered it security-first: it gates public exposure, so it runs
+before F-006c (live verification).
+
+### Audit
+Ran an adversarial full audit via four parallel area agents (auth/login/consent ·
+idp/PKCE/DCR/CIMD · keys/JWKS/proxy · config/deploy/deps); **every finding was then re-verified
+by the main loop against the actual code path** before reporting. Result in `AUDIT-RESULTS.md`
+(gitignored, regenerated): **0 critical, 1 high, 9 medium, 19 low**, no committed secrets, no
+fail-open/auth-bypass/token-leak, crypto vetted-library only. Verified-clean positives: aud/iss
+binding, RFC 8707/9207, S256-only, no implicit/ROPC grants, kid/alg confusion closed, atomic
+crash-safe key rotation, credential injection never leaks the upstream secret, JWKS public-only,
+deps pinned & permissive.
+
+Adversarial verification corrected one agent finding: the reported "X-Forwarded-For spoof"
+(claimed MEDIUM) is actually LOW — Go's `ReverseProxy` already strips
+`Forwarded`/`X-Forwarded-For`/`-Host`/`-Proto` before `Rewrite`, so only `X-Forwarded-Port` was
+spoofable.
+
+### Fixes (user chose the "security batch"; each with a regression test)
+- **H1 — consent screen (SPEC §1.5):** `handleAuthorizationReturnForm` now renders the client
+  identity (`client_id`), redirect target and requested scopes via an auto-escaping
+  `html/template`, instead of a bare "Authorize" button. Closes an operator-phishing → token-
+  minting path (a logged-in operator could otherwise unknowingly authorize any attacker-hosted
+  CIMD client).
+- **M1 — CIMD SSRF denylist (SPEC §1.3.2):** `isDisallowedIP` rewritten on `net/netip` to reject
+  all non-public ranges the `net.IP` predicates miss — CGNAT `100.64.0.0/10` (incl. Alibaba
+  metadata `100.100.100.200`), `192.0.0.0/24`, TEST-NETs, `198.18.0.0/15`, `240.0.0.0/4`,
+  broadcast, IPv6 doc, and NAT64 `64:ff9b::/96` — plus IPv4-mapped-IPv6 normalisation; unparseable
+  → deny.
+- **M2 — `/revoke` fail-closed (SPEC §1.9):** `handleRevoke` now inspects the fosite error and
+  writes `503` on a 5xx store failure instead of letting `WriteRevocationResponse` return a
+  misleading `200` (which would leave a "revoked" token live).
+- **M3 (→LOW) — X-Forwarded-* hygiene:** the transparent backend now explicitly drops all four
+  `X-Forwarded-*` headers in the untrusted-peer branch (closing the `X-Forwarded-Port` gap and
+  making the "empty `TRUSTED_PROXIES` = nothing trusted" contract explicit).
+- **M4 — CIMD DoS bounds:** the resolver cache is now capped (`maxCacheEntries`, expired-purge +
+  arbitrary eviction) so unique-client-ID floods can't exhaust memory; and `/.idp/auth` gained a
+  per-IP rate limit — **new `RATE_LIMIT_AUTHORIZE`** (flag/env, default `60/m`) wired through
+  `main.go` → `mcp-proxy` Config (validated, swept) → `idp` Config → the authorize route.
+- **M5 — lockout DoS (`pkg/ratelimit/lockout.go`):** `Fail` now arms the window only on the
+  threshold-crossing transition (was: every failure past threshold re-extended it) and resets a
+  streak whose window has elapsed — so a remote attacker can no longer keep the sole operator
+  permanently locked out with one wrong password per window.
+- **M6 — internal-error disclosure (SR-8/§6):** `auth.renderError` logs the cause server-side and
+  renders a fixed generic message; the eleven idp `server_error` responses drop the raw
+  `err.Error()` description, and the register JSON-bind error returns a generic description.
+
+### Triage of the rest
+Deployment/config mediums **M7–M10** (http-issuer warning + Secure flag, bare-IP
+`TRUSTED_PROXIES` startup crash, Docker root/interpreters/floating tags, golangci-lint) → folded
+into **F-007** (release hygiene). All 19 lows → new backlog task **F-012**.
+
+### Verification
+`go test ./...` green (all 11 packages), `gofmt`/`go vet ./...` clean, `go test -race` clean on
+the touched packages + the assembled e2e. New/updated tests: lockout re-arm regression;
+untrusted X-Forwarded-Port strip + trusted-preserve; `isDisallowedIP` reserved-range matrix;
+CIMD cache-bound; revoke-503 via a failing-store wrapper; register-malformed-JSON no-leak;
+consent-shows-client-identity+scopes; authorize-endpoint 429; `RATE_LIMIT_AUTHORIZE` config
+wiring (defaults + env).
+
+**Files changed:** `pkg/idp/idp.go` (+`idp_test.go`), `pkg/cimd/resolver.go` (+`resolver_test.go`),
+`pkg/ratelimit/lockout.go` (+`ratelimit_test.go`), `pkg/backend/transparent.go`
+(+`transparent_test.go`), `pkg/auth/auth.go`, `pkg/mcp-proxy/main.go`, `main.go`
+(+`main_test.go`), `SPEC.md`, `AUDIT-RESULTS.md` (gitignored); bookkeeping in `PROGRESS.md` /
+`PROGRESS-ARCHIVE.md`.

@@ -121,6 +121,7 @@ type Config struct {
 	RateLimitRegister     string
 	RateLimitToken        string
 	RateLimitLogin        string
+	RateLimitAuthorize    string
 	LoginLockoutThreshold int
 	LoginLockoutDuration  time.Duration
 }
@@ -170,9 +171,10 @@ func validateTTLs(cfg Config) error {
 		return fmt.Errorf("key rotation interval must be 0 (disabled) or at least 1h, got: %s", cfg.KeyRotationInterval)
 	}
 	for name, value := range map[string]string{
-		"register rate limit": cfg.RateLimitRegister,
-		"token rate limit":    cfg.RateLimitToken,
-		"login rate limit":    cfg.RateLimitLogin,
+		"register rate limit":  cfg.RateLimitRegister,
+		"token rate limit":     cfg.RateLimitToken,
+		"login rate limit":     cfg.RateLimitLogin,
+		"authorize rate limit": cfg.RateLimitAuthorize,
 	} {
 		if value == "" {
 			continue // empty means disabled (programmatic use)
@@ -417,6 +419,7 @@ func Run(cfg Config) error {
 	registerLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitRegister))
 	tokenLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitToken))
 	loginLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitLogin))
+	authorizeLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitAuthorize))
 	loginLockout := ratelimit.NewLockout(cfg.LoginLockoutThreshold, cfg.LoginLockoutDuration)
 
 	// Expiry sweeper: garbage-collect session records past their TTL
@@ -453,6 +456,7 @@ func Run(cfg Config) error {
 				registerLimiter.Sweep(now)
 				tokenLimiter.Sweep(now)
 				loginLimiter.Sweep(now)
+				authorizeLimiter.Sweep(now)
 				loginLockout.Sweep(now)
 			}
 		}
@@ -553,6 +557,7 @@ func Run(cfg Config) error {
 		DCRMaxClients:       cfg.DCRMaxClients,
 		TokenRateLimit:      ratelimit.Middleware(tokenLimiter, "token", logger),
 		RegisterRateLimit:   ratelimit.Middleware(registerLimiter, "register", logger),
+		AuthorizeRateLimit:  ratelimit.Middleware(authorizeLimiter, "authorize", logger),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create IDP router: %w", err)

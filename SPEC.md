@@ -531,7 +531,7 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 | `DCR_ENABLED` | `true` | §1.4. `false` removes `registration_endpoint` from metadata and 404s `/.idp/register`. At least one of CIMD/DCR must stay enabled. **Done (F-005c).** |
 | `DCR_CLIENT_TTL` | `720h` (30 d) | §1.4/§2.1. `0` disables expiry. **Done (F-005c).** |
 | `DCR_MAX_CLIENTS` | `100` | §1.4 cap; `0` = unlimited (not recommended). **Done (F-005c).** |
-| `RATE_LIMIT_REGISTER` / `RATE_LIMIT_TOKEN` / `RATE_LIMIT_LOGIN` | `10/m` / `60/m` / `10/m` | Per-client-IP token buckets (SR-5/SR-6), format `N/s\|m\|h`; `0` disables (not recommended). Over-limit → `429` + `temporarily_unavailable`. Honour `TRUSTED_PROXIES` for client-IP extraction; state is in-memory (GR-3). **Done (F-005e2).** |
+| `RATE_LIMIT_REGISTER` / `RATE_LIMIT_TOKEN` / `RATE_LIMIT_LOGIN` / `RATE_LIMIT_AUTHORIZE` | `10/m` / `60/m` / `10/m` / `60/m` | Per-client-IP token buckets (SR-5/SR-6), format `N/s\|m\|h`; `0` disables (not recommended). Over-limit → `429` + `temporarily_unavailable`. Honour `TRUSTED_PROXIES` for client-IP extraction; state is in-memory (GR-3). `RATE_LIMIT_AUTHORIZE` also bounds unauthenticated CIMD-resolution fetches driven by unique client IDs (§1.3). **Done (F-005e2; `RATE_LIMIT_AUTHORIZE` added F-006b).** |
 | `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_DURATION` | `10` / `15m` | Per-account lockout after N consecutive failed password logins (SR-6, §1.12); uniform error either way. Threshold `0` disables; duration 1m–24h. **Done (F-005e2).** |
 | `KEY_ALG` | `RS256` | `RS256` or `ES256` (§2.2); switching triggers a rotation (§2.3). **Done (F-005d).** |
 | `KEY_ROTATION_INTERVAL` | `2160h` (90 d) | §2.3; `0` disables automatic rotation, otherwise ≥ 1h. **Done (F-005d).** |

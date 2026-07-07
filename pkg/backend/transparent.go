@@ -128,11 +128,23 @@ func (p *TransparentBackend) Run(ctx context.Context) (http.Handler, error) {
 		FlushInterval: -1,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(p.url)
-			if p.isTrusted(pr.In.RemoteAddr) {
+			trusted := p.isTrusted(pr.In.RemoteAddr)
+			if trusted {
+				// A trusted proxy's forwarding chain is preserved and extended.
 				pr.Out.Header["X-Forwarded-For"] = pr.In.Header["X-Forwarded-For"]
+			} else {
+				// pr.Out is a clone of the inbound request, so it still carries
+				// any client-supplied X-Forwarded-* headers. An untrusted peer
+				// must not be able to spoof these upstream ("empty
+				// TRUSTED_PROXIES = nothing trusted", SPEC §3.1), so drop them
+				// before SetXForwarded re-derives them from the real connection.
+				pr.Out.Header.Del("X-Forwarded-For")
+				pr.Out.Header.Del("X-Forwarded-Host")
+				pr.Out.Header.Del("X-Forwarded-Proto")
+				pr.Out.Header.Del("X-Forwarded-Port")
 			}
 			pr.SetXForwarded()
-			if p.isTrusted(pr.In.RemoteAddr) {
+			if trusted {
 				if v := pr.In.Header.Get("X-Forwarded-Host"); v != "" {
 					pr.Out.Header.Set("X-Forwarded-Host", v)
 				}

@@ -539,7 +539,7 @@ func TestNewRootCommand_KeyFlagsFromEnv(t *testing.T) {
 }
 
 func TestNewRootCommand_AbuseProtectionDefaults(t *testing.T) {
-	for _, key := range []string{"RATE_LIMIT_REGISTER", "RATE_LIMIT_TOKEN", "RATE_LIMIT_LOGIN", "LOGIN_LOCKOUT_THRESHOLD", "LOGIN_LOCKOUT_DURATION"} {
+	for _, key := range []string{"RATE_LIMIT_REGISTER", "RATE_LIMIT_TOKEN", "RATE_LIMIT_LOGIN", "RATE_LIMIT_AUTHORIZE", "LOGIN_LOCKOUT_THRESHOLD", "LOGIN_LOCKOUT_DURATION"} {
 		t.Setenv(key, "")
 	}
 
@@ -555,8 +555,8 @@ func TestNewRootCommand_AbuseProtectionDefaults(t *testing.T) {
 		t.Fatalf("expected command to succeed, got error: %v", err)
 	}
 
-	if received.RateLimitRegister != "10/m" || received.RateLimitToken != "60/m" || received.RateLimitLogin != "10/m" {
-		t.Fatalf("unexpected rate limit defaults: %q %q %q", received.RateLimitRegister, received.RateLimitToken, received.RateLimitLogin)
+	if received.RateLimitRegister != "10/m" || received.RateLimitToken != "60/m" || received.RateLimitLogin != "10/m" || received.RateLimitAuthorize != "60/m" {
+		t.Fatalf("unexpected rate limit defaults: %q %q %q %q", received.RateLimitRegister, received.RateLimitToken, received.RateLimitLogin, received.RateLimitAuthorize)
 	}
 	if received.LoginLockoutThreshold != 10 || received.LoginLockoutDuration != 15*time.Minute {
 		t.Fatalf("unexpected lockout defaults: %d %s", received.LoginLockoutThreshold, received.LoginLockoutDuration)
@@ -567,6 +567,7 @@ func TestNewRootCommand_AbuseProtectionFromEnv(t *testing.T) {
 	t.Setenv("RATE_LIMIT_REGISTER", "5/h")
 	t.Setenv("RATE_LIMIT_TOKEN", "0")
 	t.Setenv("RATE_LIMIT_LOGIN", "3/m")
+	t.Setenv("RATE_LIMIT_AUTHORIZE", "7/m")
 	t.Setenv("LOGIN_LOCKOUT_THRESHOLD", "5")
 	t.Setenv("LOGIN_LOCKOUT_DURATION", "30m")
 
@@ -582,8 +583,8 @@ func TestNewRootCommand_AbuseProtectionFromEnv(t *testing.T) {
 		t.Fatalf("expected command to succeed, got error: %v", err)
 	}
 
-	if received.RateLimitRegister != "5/h" || received.RateLimitToken != "0" || received.RateLimitLogin != "3/m" {
-		t.Fatalf("unexpected rate limits from env: %q %q %q", received.RateLimitRegister, received.RateLimitToken, received.RateLimitLogin)
+	if received.RateLimitRegister != "5/h" || received.RateLimitToken != "0" || received.RateLimitLogin != "3/m" || received.RateLimitAuthorize != "7/m" {
+		t.Fatalf("unexpected rate limits from env: %q %q %q %q", received.RateLimitRegister, received.RateLimitToken, received.RateLimitLogin, received.RateLimitAuthorize)
 	}
 	if received.LoginLockoutThreshold != 5 || received.LoginLockoutDuration != 30*time.Minute {
 		t.Fatalf("unexpected lockout config from env: %d %s", received.LoginLockoutThreshold, received.LoginLockoutDuration)

@@ -224,6 +224,7 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var rateLimitRegister string
 	var rateLimitToken string
 	var rateLimitLogin string
+	var rateLimitAuthorize string
 	var loginLockoutThreshold int
 	var loginLockoutDuration time.Duration
 
@@ -309,6 +310,7 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				RateLimitRegister:     rateLimitRegister,
 				RateLimitToken:        rateLimitToken,
 				RateLimitLogin:        rateLimitLogin,
+				RateLimitAuthorize:    rateLimitAuthorize,
 				LoginLockoutThreshold: loginLockoutThreshold,
 				LoginLockoutDuration:  loginLockoutDuration,
 			}); err != nil {
@@ -368,6 +370,7 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&rateLimitRegister, "rate-limit-register", getEnvWithDefault("RATE_LIMIT_REGISTER", "10/m"), "Per-IP rate limit for client registration, format N/s|m|h (0 disables)")
 	rootCmd.Flags().StringVar(&rateLimitToken, "rate-limit-token", getEnvWithDefault("RATE_LIMIT_TOKEN", "60/m"), "Per-IP rate limit for the token endpoint, format N/s|m|h (0 disables)")
 	rootCmd.Flags().StringVar(&rateLimitLogin, "rate-limit-login", getEnvWithDefault("RATE_LIMIT_LOGIN", "10/m"), "Per-IP rate limit for the login surfaces, format N/s|m|h (0 disables)")
+	rootCmd.Flags().StringVar(&rateLimitAuthorize, "rate-limit-authorize", getEnvWithDefault("RATE_LIMIT_AUTHORIZE", "60/m"), "Per-IP rate limit for the authorize endpoint, format N/s|m|h (0 disables)")
 	rootCmd.Flags().IntVar(&loginLockoutThreshold, "login-lockout-threshold", getEnvIntWithDefault("LOGIN_LOCKOUT_THRESHOLD", 10), "Consecutive failed password logins before the account locks (0 disables)")
 	rootCmd.Flags().DurationVar(&loginLockoutDuration, "login-lockout-duration", getEnvDurationWithDefault("LOGIN_LOCKOUT_DURATION", 15*time.Minute), "How long the account stays locked (1m-24h)")
 

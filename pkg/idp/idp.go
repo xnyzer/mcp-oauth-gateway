@@ -3,6 +3,7 @@ package idp
 import (
 	"context"
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/url"
 	"strings"
@@ -39,6 +40,7 @@ type IDPRouter struct {
 	dcrMaxClients       int
 	tokenRateLimit      gin.HandlerFunc
 	registerRateLimit   gin.HandlerFunc
+	authorizeRateLimit  gin.HandlerFunc
 }
 
 // CIMDResolver resolves a Client ID Metadata Document for an https://
@@ -110,10 +112,13 @@ type Config struct {
 	// unlimited (SR-5).
 	DCRClientTTL  time.Duration
 	DCRMaxClients int
-	// TokenRateLimit / RegisterRateLimit guard the public token and
-	// registration endpoints (SR-5); nil disables.
-	TokenRateLimit    gin.HandlerFunc
-	RegisterRateLimit gin.HandlerFunc
+	// TokenRateLimit / RegisterRateLimit / AuthorizeRateLimit guard the public
+	// token, registration and authorize endpoints (SR-5); nil disables. The
+	// authorize limit also bounds CIMD-resolution fetches driven by unique
+	// client IDs (SPEC §1.3).
+	TokenRateLimit     gin.HandlerFunc
+	RegisterRateLimit  gin.HandlerFunc
+	AuthorizeRateLimit gin.HandlerFunc
 }
 
 const (
@@ -175,6 +180,7 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		dcrMaxClients:       cfg.DCRMaxClients,
 		tokenRateLimit:      cfg.TokenRateLimit,
 		registerRateLimit:   cfg.RegisterRateLimit,
+		authorizeRateLimit:  cfg.AuthorizeRateLimit,
 	}, nil
 }
 
@@ -233,7 +239,7 @@ const (
 )
 
 func (a *IDPRouter) SetupRoutes(router gin.IRouter) {
-	router.GET(AuthorizationEndpoint, a.handleAuth)
+	router.GET(AuthorizationEndpoint, withRateLimit(a.authorizeRateLimit, a.handleAuth)...)
 	router.GET(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturnForm)
 	router.POST(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturn)
 	router.POST(TokenEndpoint, withRateLimit(a.tokenRateLimit, a.handleToken)...)
@@ -346,6 +352,34 @@ func (a *IDPRouter) handleAuth(c *gin.Context) {
 	c.Redirect(302, strings.ReplaceAll(AuthorizationReturnEndpoint, ":ar_id", ar.GetID()))
 }
 
+// consentTemplateData feeds the consent page. All fields are attacker-
+// influenced (the client picks its client_id, redirect_uri and scopes), so the
+// template must auto-escape them — hence html/template.
+type consentTemplateData struct {
+	ClientID    string
+	RedirectURI string
+	Scopes      []string
+}
+
+// consentTemplate shows the client identity and requested scopes (SPEC §1.5):
+// the operator's only signal to recognise and decline a foreign client, since
+// a valid session would otherwise auto-grant any authorize request that reaches
+// this page (anti-phishing).
+var consentTemplate = template.Must(template.New("consent").Parse(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Authorize</title></head>
+<body>
+<h1>Authorize application</h1>
+<p>An application is requesting access to this MCP server. Approve only if you started this yourself and recognise the details below.</p>
+<dl>
+<dt>Client</dt><dd>{{.ClientID}}</dd>
+<dt>Redirect to</dt><dd>{{.RedirectURI}}</dd>
+<dt>Requested scopes</dt><dd>{{if .Scopes}}{{range .Scopes}}<code>{{.}}</code> {{end}}{{else}}(none){{end}}</dd>
+</dl>
+<form method="post"><button type="submit">Authorize</button></form>
+</body>
+</html>`))
+
 func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 	arID := c.Param("ar_id")
 	if !hasAuthorizeRequestID(sessions.Default(c), arID) {
@@ -353,7 +387,26 @@ func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 		return
 	}
 
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`<!doctype html><html><body><form method="post"><button type="submit">Authorize</button></form></body></html>`))
+	ar, err := a.repo.GetAuthorizeRequest(c.Request.Context(), arID)
+	if err != nil {
+		a.logger.Error("Failed to load authorize request for consent", zap.Error(err))
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		return
+	}
+
+	var redirectURI string
+	if uri := ar.GetRedirectURI(); uri != nil {
+		redirectURI = uri.String()
+	}
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Status(http.StatusOK)
+	if err := consentTemplate.Execute(c.Writer, consentTemplateData{
+		ClientID:    ar.GetClient().GetID(),
+		RedirectURI: redirectURI,
+		Scopes:      ar.GetRequestedScopes(),
+	}); err != nil {
+		a.logger.Error("Failed to render consent page", zap.Error(err))
+	}
 }
 
 func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
@@ -541,6 +594,16 @@ func (a *IDPRouter) handleRevoke(c *gin.Context) {
 	err := a.provider.NewRevocationRequest(ctx, c.Request)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Warn("Token revocation failed")
+		// Fail closed on a storage failure (SPEC §1.9, SR-3): fosite's
+		// WriteRevocationResponse writes 200 for anything other than
+		// invalid_request/invalid_client, which would falsely signal success
+		// while the token record still exists (and keeps passing the proxy's
+		// presence check). Surface the 5xx store error as an explicit 503 so
+		// the operator knows the revocation did not take effect.
+		if code := fosite.ErrorToRFC6749Error(err).CodeField; code == http.StatusServiceUnavailable || code == http.StatusInternalServerError {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "temporarily_unavailable"})
+			return
+		}
 	} else {
 		// Accepted revocation request (also for unknown tokens — RFC 7009
 		// hides existence, so the event does too).
@@ -620,7 +683,8 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 
 	var req registrationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": err.Error()})
+		// Don't echo the parser's internal detail (SR-8/§6); the code is enough.
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "request body must be valid JSON"})
 		return
 	}
 
@@ -647,7 +711,7 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 	clientID, err := utils.GenerateClientID()
 	if err != nil {
 		a.logger.Error("Failed to generate client ID", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
 
@@ -660,14 +724,14 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 		clientSecret, err = utils.GenerateClientSecret()
 		if err != nil {
 			a.logger.Error("Failed to generate client secret", zap.Error(err))
-			c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+			c.JSON(500, gin.H{"error": "server_error"})
 			return
 		}
 
 		hashedSecret, err = a.hasher.Hash(ctx, []byte(clientSecret))
 		if err != nil {
 			a.logger.Error("Failed to hash client secret", zap.Error(err))
-			c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+			c.JSON(500, gin.H{"error": "server_error"})
 			return
 		}
 	}
@@ -689,7 +753,7 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 	}
 	if err := a.repo.RegisterClient(ctx, client, expiresAt); err != nil {
 		a.logger.Error("Failed to register client", zap.String("client_id", clientID), zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
 	authevent.Log(a.logger, authevent.Register,
@@ -699,7 +763,7 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 	registrationClientURI, err := url.JoinPath(RegistrationEndpoint, clientID)
 	if err != nil {
 		a.logger.Error("Failed to create registration client URI", zap.String("client_id", clientID), zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
 
@@ -746,13 +810,13 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 	authorizationEndpoint, err := url.JoinPath(a.externalURL, AuthorizationEndpoint)
 	if err != nil {
 		a.logger.Error("Failed to create authorization endpoint URL", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
 	tokenEndpoint, err := url.JoinPath(a.externalURL, TokenEndpoint)
 	if err != nil {
 		a.logger.Error("Failed to create token endpoint URL", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
 	// Advertised only while the deprecated DCR fallback is enabled
@@ -762,27 +826,27 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 		registrationEndpoint, err = url.JoinPath(a.externalURL, RegistrationEndpoint)
 		if err != nil {
 			a.logger.Error("Failed to create registration endpoint URL", zap.Error(err))
-			c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+			c.JSON(500, gin.H{"error": "server_error"})
 			return
 		}
 	}
 	jwksURI, err := url.JoinPath(a.externalURL, JWKSEndpoint)
 	if err != nil {
 		a.logger.Error("Failed to create JWKS URL", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
 	introspectionEndpoint, err := url.JoinPath(a.externalURL, IntrospectionEndpoint)
 	if err != nil {
 		a.logger.Error("Failed to create introspection endpoint URL", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
 
 	revocationEndpoint, err := url.JoinPath(a.externalURL, RevocationEndpoint)
 	if err != nil {
 		a.logger.Error("Failed to create revocation endpoint URL", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error"})
 		return
 	}
 

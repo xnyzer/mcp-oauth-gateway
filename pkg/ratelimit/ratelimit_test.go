@@ -93,9 +93,21 @@ func TestLockout_LocksAfterThresholdAndExpires(t *testing.T) {
 	// The lock expires after the duration.
 	require.False(t, lockout.Locked("acct", now.Add(16*time.Minute)))
 
-	// Further failures while locked extend the window.
+	// A failure that arrives while the account is still locked must NOT
+	// re-extend the window past the original duration — otherwise an attacker
+	// could keep the sole operator locked out forever (permanent-lockout DoS).
 	lockout.Fail("acct", now.Add(time.Minute))
-	require.True(t, lockout.Locked("acct", now.Add(15*time.Minute)))
+	require.False(t, lockout.Locked("acct", now.Add(16*time.Minute)),
+		"a failure during the lock must not push the expiry out")
+
+	// After the window has elapsed the streak resets: re-locking again requires
+	// a fresh threshold of consecutive failures, not a single attempt.
+	base := now.Add(20 * time.Minute)
+	lockout.Fail("acct", base)
+	lockout.Fail("acct", base)
+	require.False(t, lockout.Locked("acct", base), "an expired streak resets; below-threshold does not lock")
+	lockout.Fail("acct", base)
+	require.True(t, lockout.Locked("acct", base), "a fresh threshold of failures re-locks")
 }
 
 func TestLockout_ResetClearsTheStreak(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sync"
 	"syscall"
@@ -43,6 +44,9 @@ const (
 	DefaultMaxSize      = 64 * 1024
 	DefaultCacheTTL     = time.Hour
 	DefaultNegativeTTL  = time.Minute
+	// maxCacheEntries bounds the resolver cache (SPEC §1.3) so unique-client-ID
+	// floods to the authorize endpoint cannot exhaust memory.
+	maxCacheEntries = 4096
 )
 
 // ErrInvalidClientID marks resolution/validation failures; the detail is for
@@ -126,11 +130,33 @@ func (r *Resolver) Resolve(ctx context.Context, clientID string) (*Client, error
 	} else {
 		entry.expiresAt = r.now().Add(r.cfg.CacheTTL)
 	}
-	r.mu.Lock()
-	r.cache[clientID] = entry
-	r.mu.Unlock()
+	r.store(clientID, entry)
 
 	return client, err
+}
+
+// store inserts entry, bounding the cache so an attacker streaming unique
+// client IDs to the (unauthenticated) authorize endpoint cannot grow the map
+// without limit (memory DoS, SPEC §1.3). Expired entries are purged first, and
+// if the cache is still full an arbitrary entry is evicted to make room.
+func (r *Resolver) store(clientID string, entry cacheEntry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.cache[clientID]; !exists && len(r.cache) >= maxCacheEntries {
+		now := r.now()
+		for key, existing := range r.cache {
+			if !now.Before(existing.expiresAt) {
+				delete(r.cache, key)
+			}
+		}
+		for key := range r.cache {
+			if len(r.cache) < maxCacheEntries {
+				break
+			}
+			delete(r.cache, key)
+		}
+	}
+	r.cache[clientID] = entry
 }
 
 func (r *Resolver) fetch(ctx context.Context, clientID string) (*Client, error) {
@@ -242,15 +268,60 @@ func (r *Resolver) checkDialAddress(address string) error {
 	return nil
 }
 
-// isDisallowedIP reports whether ip is loopback, private, link-local (incl.
-// cloud metadata services), ULA, unspecified, or multicast.
+// disallowedPrefixes are non-public ranges the net.Addr predicates below do
+// not already cover (SPEC §1.3.2). Notably 100.64.0.0/10 (CGNAT) contains the
+// Alibaba Cloud metadata service 100.100.100.200, and the NAT64 prefixes embed
+// IPv4 addresses that a NAT64 gateway would translate to internal hosts.
+var disallowedPrefixes = mustParsePrefixes(
+	"100.64.0.0/10",   // CGNAT (RFC 6598) — incl. Alibaba metadata 100.100.100.200
+	"192.0.0.0/24",    // IETF protocol assignments (RFC 6890)
+	"192.0.2.0/24",    // TEST-NET-1 (documentation, RFC 5737)
+	"198.18.0.0/15",   // benchmarking (RFC 2544)
+	"198.51.100.0/24", // TEST-NET-2
+	"203.0.113.0/24",  // TEST-NET-3
+	"240.0.0.0/4",     // reserved/future use, incl. 255.255.255.255 broadcast
+	"2001:db8::/32",   // IPv6 documentation (RFC 3849)
+	"64:ff9b::/96",    // NAT64 well-known prefix (RFC 6052)
+	"64:ff9b:1::/48",  // NAT64 local-use (RFC 8215)
+	"100::/64",        // IPv6 discard-only (RFC 6666)
+)
+
+func mustParsePrefixes(raw ...string) []netip.Prefix {
+	prefixes := make([]netip.Prefix, 0, len(raw))
+	for _, s := range raw {
+		prefixes = append(prefixes, netip.MustParsePrefix(s))
+	}
+	return prefixes
+}
+
+// isDisallowedIP reports whether ip is any non-public address: loopback,
+// private, CGNAT, link-local (incl. cloud metadata services), ULA, unspecified,
+// multicast, or one of the reserved/documentation/NAT64 ranges above. An
+// address that cannot be parsed is treated as disallowed (fail closed).
 func isDisallowedIP(ip net.IP) bool {
-	return ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() ||
-		ip.IsMulticast()
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true
+	}
+	// Normalize IPv4-mapped IPv6 (and leave pure v6 as-is) so v4 prefixes and
+	// predicates match regardless of the address's wire form.
+	addr = addr.Unmap()
+	if !addr.IsValid() ||
+		addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsInterfaceLocalMulticast() ||
+		addr.IsMulticast() ||
+		addr.IsUnspecified() {
+		return true
+	}
+	for _, prefix := range disallowedPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateRedirectURI enforces the redirect URI scheme rules shared by CIMD

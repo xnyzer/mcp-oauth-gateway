@@ -60,6 +60,7 @@ func TestTransparentBackendWithProxy(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "192.0.3.1")
 	req.Header.Set("X-Forwarded-Host", "example.org")
 	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Port", "8443")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -69,6 +70,7 @@ func TestTransparentBackendWithProxy(t *testing.T) {
 	require.Equal(t, "192.0.3.1, 192.0.2.1", header.Get(("X-Forwarded-For")))
 	require.Equal(t, "example.org", header.Get(("X-Forwarded-Host")))
 	require.Equal(t, "https", header.Get(("X-Forwarded-Proto")))
+	require.Equal(t, "8443", header.Get("X-Forwarded-Port"), "a trusted proxy's X-Forwarded-Port is preserved")
 }
 
 func TestTransparentBackendWithInvalidProxy(t *testing.T) {
@@ -89,15 +91,20 @@ func TestTransparentBackendWithInvalidProxy(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "192.0.3.1")
 	req.Header.Set("X-Forwarded-Host", "example.org")
 	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Port", "8443")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	var header http.Header
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &header))
+	// An untrusted peer's forwarding headers must not reach the upstream. The
+	// stdlib already strips X-Forwarded-For/-Host/-Proto before Rewrite; the
+	// gateway additionally strips X-Forwarded-Port (which the stdlib leaves).
 	require.Equal(t, "192.0.2.1", header.Get(("X-Forwarded-For")))
 	require.Equal(t, "example.com", header.Get(("X-Forwarded-Host")))
 	require.Equal(t, "http", header.Get(("X-Forwarded-Proto")))
+	require.Empty(t, header.Get("X-Forwarded-Port"), "an untrusted client's X-Forwarded-Port must be dropped")
 }
 
 func TestTransparentBackendFollows307Redirect(t *testing.T) {

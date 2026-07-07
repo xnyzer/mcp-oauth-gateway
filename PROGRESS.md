@@ -28,6 +28,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-005e2 | Rate limits, lockout & auth events → **new `pkg/ratelimit` (per-IP token buckets on `/register`/`/token`/login, 429 + `rate_limited`) + per-account lockout with byte-identical uniform errors; `pkg/authevent` structured events (`login_ok`/`login_fail`/`token_issued`/`register`/`rate_limited`/`revoked`) without secrets**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-005 | **Implement on the chosen base — complete** (all six substeps a/b/c/d/e1/e2 done; every gap from the F-001 review closed). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-006a | Local end-to-end verification harness → **assembled-gateway `httptest` e2e** (`e2e_test.go` + `e2e_harness_test.go`): discovery/JWKS self-consistency, DCR + real login + consent, PKCE/S256 authorize→token, proxied upstream call with credential injection, fail-closed negatives (missing/tampered/replay/**revoked**), rate-limit 429, key-rotation continuity; gofmt/vet/race clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-07 |
+| F-006b | Adversarial `/audit-code` (4 parallel agents, findings self-verified) → **`AUDIT-RESULTS.md`** (0 crit / 1 high / 9 med / 19 low), then fixed the user-chosen security batch inline: **H1** consent screen shows client identity+scopes, **M1** CIMD SSRF denylist (Alibaba/CGNAT/NAT64/reserved), **M2** `/revoke` 503 on store failure, **M3** untrusted `X-Forwarded-Port` strip, **M4** CIMD cache bound + `/.idp/auth` rate limit, **M5** lockout re-arm DoS, **M6** internal-error disclosure — each with a regression test; gofmt/vet/race clean. Deployment mediums→F-007, lows→F-012. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-07 |
 
 ---
 
@@ -61,18 +62,8 @@ The remaining tasks are a hard chain: 1→2. Each task below carries its own `**
 **Substeps** (ordered security-first — the audit gates public exposure, so it runs
 *before* the live tests, not after as the bullets above are written):
 **F-006a done** (2026-07-07 — assembled-gateway e2e harness; see Done table + archive).
-
-#### F-006b — Security review (adversarial `/audit-code`) + triage
-
-- **What:** Full adversarial `/audit-code` run over the whole codebase (not the per-step
-  self-review), producing `AUDIT-RESULTS.md`. Triage findings; fix critical/high **inline
-  within F-006** (they block the public-exposure gate), log medium/low as backlog F-numbers.
-- **Files:** `AUDIT-RESULTS.md` (gitignored per skill); any fix diffs.
-- **Dependencies:** F-006a (green baseline to audit against).
-- **Acceptance:**
-  - [ ] Audit complete across all areas (code, security/secrets, deps, deployment, robustness).
-  - [ ] Zero unresolved critical/high findings before public exposure.
-  - [ ] Residual medium/low findings logged as backlog tasks.
+**F-006b done** (2026-07-07 — adversarial audit + inline security-batch fixes; zero unresolved
+critical/high; deployment mediums → F-007, lows → F-012; see Done table + archive).
 
 #### F-006c — Live verification runbook + execution (manual; requires public exposure)
 
@@ -103,6 +94,7 @@ The remaining tasks are a hard chain: 1→2. Each task below carries its own `**
 - **Manual key-rotation ops command** (deferred here from F-005d — SPEC §2.3: v1 rotates on interval only).
 - CI: add **golangci-lint** (CODING-STANDARDS §11 expects it; the workflow only runs gofmt/vet/build/test today) + OAuth/MCP conformance tests (extend the existing `.github/workflows/ci.yml`).
 - Verify all dependencies are permissive-licensed (no GPL/AGPL; MPL-2.0 accepted — see F-008b).
+- **Deployment/config hardening from the F-006b audit (M7–M10):** ① `Dockerfile` non-root `USER`, drop/justify the python/node/npm interpreters, digest-pin base images (currently `debian:bookworm-slim` runs as root); ② implement the SPEC §3.1 startup WARNING for an `http` non-loopback issuer and base the session-cookie `Secure` flag on whether TLS is actually served; ③ normalise bare-IP `TRUSTED_PROXIES` (a bare IP currently crashes startup with an http upstream); ④ add a `HEALTHCHECK` + compose `depends_on: condition: service_healthy`; ⑤ pin `go-licenses` (CI installs `@latest`).
 - **Release gate:** re-verify against the MCP authorization spec **2026-07-28 RC** (watch item, REQUIREMENTS §0), unless already done in F-006.
 
 **Dependencies:** F-006.
@@ -111,12 +103,40 @@ The remaining tasks are a hard chain: 1→2. Each task below carries its own `**
 
 ## Feature ideas (backlog)
 
-_New ideas beyond the path above are intaked via `/add-feature` and get the next F-number. (None pending.)_
+### F-012 — Audit low-severity follow-ups (from the F-006b `/audit-code` run)
+
+**Problem:** The F-006b audit surfaced 19 low-severity findings — hardening and hygiene, none
+a security hole — deferred so F-006 could gate on the high/medium security batch.
+
+**Idea:** Work through them in a focused hardening pass (each is small and independent).
+
+**Possible implementation (grouped):**
+- **Fail-fast/config:** reject malformed boolean env values (currently silently `false`); create
+  the data dir `0700` (SPEC §2.2); print+`os.Exit(1)` instead of `panic()` on startup errors.
+- **Auth hardening:** confidential-client PKCE (`EnforcePKCE: true`); passkey login via
+  `BeginDiscoverableLogin` (don't expose credential IDs pre-auth); `session.Clear()` on logout;
+  uniform empty-password response; delete the dead GET-only `handleLogin` POST branch; per-session
+  CSRF tokens on login/consent/settings/register; same-origin-validate `redirect_url`; constant
+  bcrypt count for multi-hash configs.
+- **Crypto/proxy:** reject RSA `JWT_PRIVATE_KEY`/legacy keys `< 2048` bits; add
+  `jwt.WithExpirationRequired()`; cap proxy request-body buffering (only buffer on a followed
+  redirect); apply the DCR grant/response-type whitelist to CIMD documents too.
+- **Persistence:** enforce the DCR client cap inside the write transaction (TOCTOU); SQLite
+  `SetMaxOpenConns(1)` + busy-timeout/WAL (or document required DSN pragmas); cookie-store block
+  key + key-separation from the fosite HMAC secret.
+
+Full detail per finding: `AUDIT-RESULTS.md` (regenerated; gitignored).
+
+**Dependencies:** none (independent hardening; can follow F-006/F-007).
+
+---
+
+_New ideas beyond the path above are intaked via `/add-feature` and get the next F-number._
 
 ---
 
 <!-- FEATURE-INDEX
-next-feature: F-012
+next-feature: F-013
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -128,4 +148,5 @@ F-004 Complete the spec (make it implementable) (DONE)
 F-005 Implement on the chosen base (sigbit fork) (DONE)
 F-006 Verify against Claude + security review
 F-007 Release hygiene
+F-012 Audit low-severity follow-ups (from F-006b)
 -->
