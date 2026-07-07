@@ -843,3 +843,58 @@ wiring (defaults + env).
 (+`transparent_test.go`), `pkg/auth/auth.go`, `pkg/mcp-proxy/main.go`, `main.go`
 (+`main_test.go`), `SPEC.md`, `AUDIT-RESULTS.md` (gitignored); bookkeeping in `PROGRESS.md` /
 `PROGRESS-ARCHIVE.md`.
+
+---
+
+## F-006c1 — Deploy + server-side/tooling verification — DONE 2026-07-08
+
+First phase of F-006c (live verification). Deployed the gateway to the operator's environment and
+verified the whole public path end to end before involving Claude.
+
+### Target topology (details kept in `private/`, gitignored — GR-5)
+Internet → operator's public IP (router port-forward) → **zoraxy** reverse proxy (terminates
+publicly-trusted TLS for the connector hostname) → **gateway** in a container on the target host
+`:8080` → **upstream MCP = a live Graphiti "Agent Memory" server** (streamable-HTTP, bearer-auth,
+itself behind Caddy → graphiti-mcp → neo4j on a separate host).
+
+### Pre-deploy de-risking (local, no public exposure)
+- Probed the upstream directly: MCP `initialize` at `/mcp` returns `serverInfo` (streamable-HTTP,
+  `Mcp-Session-Id`); root `404`s → so **`PROXY_TARGET` is host-only** (the transparent backend
+  joins the inbound `/mcp` onto the target; a target ending in `/mcp` would double it). Verified the
+  join behaviour against `httputil` `rewriteRequestURL`.
+- **Local dry-run** of the *real binary* against the live upstream, driving the full OAuth flow by
+  curl (discovery → DCR → real password login + consent → token → proxied MCP `initialize`): the
+  whole chain worked and reached Graphiti with the injected credential. (An initial timeout was a
+  red herring — the tool sandbox blocks the Go process's socket to a LAN IP while allowing curl;
+  re-running unsandboxed passed. A local Python SSE upstream confirmed the gateway proxies+streams
+  SSE correctly and forwards a clean request.)
+
+### Deploy
+Minimal **non-root** container (static `linux/amd64` binary on `debian:bookworm-slim` + ca-certs,
+no interpreters — sidesteps the M9 heavy release image), `user: 1000:1000`, bind-mounted data dir,
+`env_file` for secrets, `unless-stopped`. Config: `EXTERNAL_URL=https://<host>`, `NO_AUTO_TLS=true`,
+`LISTEN=:8080`, `TRUSTED_PROXIES=<zoraxy-ip>/32`, `PROXY_TARGET=http://<upstream-host>:<port>`,
+`PROXY_BEARER_TOKEN`, `PASSWORD_HASH`, `DATA_PATH=/data`.
+
+### Three real deploy gotchas surfaced + handled
+1. **Bare-IP `TRUSTED_PROXIES` aborts startup** (`netip.ParsePrefix: no '/'`) — this is audit
+   finding **M8**, hit live. Workaround `/32`; the normalization fix stays in F-007.
+2. **`NO_AUTO_TLS=true` required** — an `https` non-loopback `EXTERNAL_URL` otherwise triggers the
+   gateway's own ACME and it refuses to start (TLS is terminated by zoraxy).
+3. **Docker Compose interpolates `env_file` values** → the bcrypt `$` was eaten (hash length 52,
+   login would fail); escaped as `$$`, verified the in-container hash is 60 chars.
+
+### Live verification (through the public URL)
+Discovery PRM/AS/JWKS `200` (was `521` with the slot empty); `POST /mcp` no-token → `401` +
+`WWW-Authenticate`; `TRUSTED_PROXIES` honoured (client IP resolved as the proxy). Full public
+OAuth round-trip (via a throwaway operator password injected only for the test, then removed and
+verified absent): DCR → login → consent → token → **proxied MCP `initialize` returned
+`"Graphiti Agent Memory"`** — credential injection + SSE streaming confirmed end to end through
+zoraxy. Final state: container up, non-root, hash-only login (`PASSWORD` unset, hash intact).
+
+**Files:** new `docs/VERIFICATION.md` (generic runbook — no real IPs/domains/tokens); deploy bundle
+in `private/mcp-gateway/` (gitignored); `PROGRESS.md` / `PROGRESS-ARCHIVE.md` bookkeeping.
+
+**Note:** F-006c2 (Claude web) and the Claude-iOS half of F-006c3 were confirmed the same day —
+Claude web + iOS both connect via real CIMD and read/search/write against Graphiti. Remaining open:
+passkey enrolment (desktop + iOS) and the tampered/revoked live negatives.

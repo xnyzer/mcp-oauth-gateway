@@ -29,6 +29,7 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 | F-005 | **Implement on the chosen base — complete** (all six substeps a/b/c/d/e1/e2 done; every gap from the F-001 review closed). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-06 |
 | F-006a | Local end-to-end verification harness → **assembled-gateway `httptest` e2e** (`e2e_test.go` + `e2e_harness_test.go`): discovery/JWKS self-consistency, DCR + real login + consent, PKCE/S256 authorize→token, proxied upstream call with credential injection, fail-closed negatives (missing/tampered/replay/**revoked**), rate-limit 429, key-rotation continuity; gofmt/vet/race clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-07 |
 | F-006b | Adversarial `/audit-code` (4 parallel agents, findings self-verified) → **`AUDIT-RESULTS.md`** (0 crit / 1 high / 9 med / 19 low), then fixed the user-chosen security batch inline: **H1** consent screen shows client identity+scopes, **M1** CIMD SSRF denylist (Alibaba/CGNAT/NAT64/reserved), **M2** `/revoke` 503 on store failure, **M3** untrusted `X-Forwarded-Port` strip, **M4** CIMD cache bound + `/.idp/auth` rate limit, **M5** lockout re-arm DoS, **M6** internal-error disclosure — each with a regression test; gofmt/vet/race clean. Deployment mediums→F-007, lows→F-012. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-07 |
+| F-006c1 | Deploy + server-side verification → **gateway live behind the operator's reverse proxy (non-root container), public discovery/JWKS `200`, `/mcp` fail-closed `401`, and a full OAuth+PKCE round-trip with a proxied MCP `initialize` reaching the upstream verified end-to-end through the proxy** (credential injection + SSE streaming confirmed). Runbook `docs/VERIFICATION.md`; deploy artefacts in `private/` (gitignored). Surfaced/handled 3 deploy gotchas (bare-IP `TRUSTED_PROXIES`=M8→`/32`, `NO_AUTO_TLS`, Compose `env_file` `$`→`$$`). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 
 ---
 
@@ -67,19 +68,37 @@ critical/high; deployment mediums → F-007, lows → F-012; see Done table + ar
 
 #### F-006c — Live verification runbook + execution (manual; requires public exposure)
 
-- **What:** A precise runbook for the parts that need real clients/hardware: public deploy
-  with publicly-trusted TLS + base URL; passkey/WebAuthn enrollment + login in Safari & Chrome
-  (desktop), then iOS; Claude web custom connector first, then Claude iOS; negative checks
-  against the live endpoint. Claude produces the runbook and helps debug; the operator executes.
-- **Files:** `docs/VERIFICATION.md` (runbook); results log under `private/` (may carry
-  deployment specifics — gitignored).
-- **Dependencies:** **F-006b (public-exposure gate — must pass first).**
+Split into three sequential phases (each gates the next). Deployment target + upstream confirmed
+with the operator and kept in `private/` (gitignored) — **no IPs/domains/tokens in this file**
+(GR-5). Generic runbook lives in `docs/VERIFICATION.md`.
+
+**F-006c1 done** (2026-07-08 — gateway deployed live behind the operator's reverse proxy; public
+discovery/JWKS green, `/mcp` fail-closed, full OAuth+PKCE round-trip with a proxied MCP
+`initialize` reaching the upstream verified end to end; runbook `docs/VERIFICATION.md`; see Done
+table + archive). Remaining live negatives (tampered/revoked) fold into F-006c3.
+
+**F-006c2 — Claude web connector + passkey (desktop)**
+- **What:** Operator password login via the OAuth authorize flow in a browser; add the endpoint as
+  a **Claude web custom connector**, complete OAuth end to end (**real CIMD** — the gap F-006a
+  couldn't cover), and call an upstream tool through Claude. Enroll + verify a **passkey in Safari
+  and Chrome** (desktop).
+- **Dependencies:** F-006c1.
 - **Acceptance:**
-  - [ ] Runbook executable step-by-step, upstream + deployment target confirmed with the operator.
-  - [ ] Passkey enrollment + login verified in Safari, Chrome (desktop) and iOS.
-  - [ ] Claude web connector, then Claude iOS, connect end to end; negative checks denied.
-  - [ ] Each row recorded pass/fail with evidence.
-  - [ ] Note: MCP spec 2026-07-28 RC not yet released → its re-verify stays on F-007's gate.
+  - [x] **Claude web connects end to end via real CIMD; upstream tool calls (read/search/write)
+    succeed through Claude** (2026-07-08, password login).
+  - [ ] Passkey enrollment + login verified in Safari and Chrome (desktop). *(open)*
+
+**F-006c3 — iOS + negatives + close-out**
+- **What:** Passkey enroll/login on **iOS**; **Claude iOS** connects end to end; negative checks
+  against the live endpoint (no / tampered / replayed token → denied). Optionally disable the
+  password fallback once passkey is confirmed. Record results in `private/`.
+- **Dependencies:** F-006c2.
+- **Acceptance:**
+  - [x] **Claude iOS connects end to end** (2026-07-08, directly in the app, password login).
+  - [ ] Passkey enroll/login on iOS. *(open)*
+  - [ ] Live negatives (no-token confirmed; tampered / revoked) denied. *(open — Claude can script)*
+  - [ ] Results recorded (`private/`); note: MCP spec 2026-07-28 RC not yet released → re-verify
+    stays on F-007's release gate.
 
 ---
 
