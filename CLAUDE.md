@@ -16,22 +16,19 @@ third-party identity provider. Generic, lightweight, reverse-proxy- and upstream
 intended to later become a module of the memstead suite. Full context: `README.md`.
 
 ## Status & where to start
-The gateway is **feature-complete against `SPEC.md`**: a working **hard fork of
-`sigbit/mcp-auth-proxy`** (Go + Ory Fosite), builds and tests green on `main`. Done so far —
-**F-001** (decided to fork sigbit; validated by a live Claude PoC), **F-002** (Go + Ory Fosite),
-**F-003** (CIMD-first, DCR deprecated fallback), **F-008** (fork imported, CI green), **F-009**
-(REQUIREMENTS updated to CIMD-first), **F-010** (rebranded to `mcp-oauth-gateway`), **F-011**
-(Google/GitHub providers removed; OIDC kept off-by-default), **F-004** (`SPEC.md` —
-implementable contracts), **F-005** (all SPEC gaps closed in six substeps: discovery/401
-surface, token binding + revocation, CIMD + DCR hardening, key rotation + ES256,
-passkey/WebAuthn auth, rate limits + lockout + auth events); rationale in
-`PROGRESS-ARCHIVE.md`.
+**Released: v0.1.0 is public** — repo public, GitHub release published, multi-arch image on
+GHCR (`ghcr.io/xnyzer/mcp-oauth-gateway`). The gateway (hard fork of `sigbit/mcp-auth-proxy`,
+Go + Ory Fosite) is feature-complete against `SPEC.md`, security-audited (F-006b, all
+crit/high/med findings fixed), live-verified against Claude web + iOS (F-006c) and verified
+against the MCP **2026-07-28 spec RC** (F-007e). All roadmap tasks **F-001–F-011 are done**;
+rationale in `PROGRESS-ARCHIVE.md`. Open: the **F-012 backlog** (audit low-severity
+follow-ups) and the watch item to re-check the final MCP spec after 2026-07-28.
 
 Read in order: `README.md`, `REQUIREMENTS.md`, `SPEC.md`, `THREAT-MODEL.md`, `PROGRESS.md`
-(+ `PROGRESS-ARCHIVE.md` for past decisions). **To continue: open `PROGRESS.md`, take the first
-open task (top of "Open tasks" — currently F-006, verify against Claude + security review),
-run `/prep-step <F-number>` to plan, then `/step-done <F-number>` to finish.** Work the open
-tasks top-to-bottom.
+(+ `PROGRESS-ARCHIVE.md` for past decisions). **To continue: open `PROGRESS.md`** — new work
+is intaked via `/add-feature`, planned with `/prep-step <F-number>`, finished with
+`/step-done <F-number>`. Work the open tasks top-to-bottom. Security fixes ship as patch
+releases (tag → release workflow); Dependabot + weekly govulncheck watch the dependencies.
 
 ## Conventions
 - **Repo language: English** (public/international).

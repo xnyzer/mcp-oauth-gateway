@@ -4,10 +4,13 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State:** the gateway is **feature-complete against `SPEC.md`** — the hard fork of `sigbit/mcp-auth-proxy` (Go + Ory Fosite) builds and tests green on `main`, and F-005 closed every gap from the F-001 review (discovery/401 surface, token binding + revocation, CIMD + DCR hardening, key rotation + ES256, passkey auth, rate limits + auth events). F-001–F-006 and F-008–F-011 are done (rationale archived in `PROGRESS-ARCHIVE.md`) — including
-**F-006, which verified the gateway live against Claude web + iOS and passed the security review**.
-**The only remaining task is F-007 (release hygiene);** the backlog holds F-012 (audit low-severity
-follow-ups). F-numbers are stable IDs; the document order, not the number, is the path.
+**State: released.** **v0.1.0 is public** — repo public, GitHub release published, multi-arch
+image on GHCR (`ghcr.io/xnyzer/mcp-oauth-gateway`), verified against the MCP **2026-07-28 spec
+RC**. The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
+verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 incl. F-007 (release
+hygiene) are done — rationale archived in `PROGRESS-ARCHIVE.md`. **Open: only the F-012 backlog**
+(audit low-severity follow-ups) and the watch item to re-check the final MCP spec after
+2026-07-28. F-numbers are stable IDs; the document order, not the number, is the path.
 
 ---
 
@@ -39,59 +42,16 @@ follow-ups). F-numbers are stable IDs; the document order, not the number, is th
 | F-007b | Container & CI hardening → **M9 digest-pinned distroless non-root image (no interpreters, `HEALTHCHECK` via new `healthcheck` subcommand, non-privileged default ports, `/data` owned in-image) + M10 pinned golangci-lint v2.12.2 in CI (76 findings triaged: real fixes incl. `ReadHeaderTimeout`, data-dir `0700`, deprecated-ECDSA-API swap; documented nolints) + `go-licenses/v2` pinned**; version wired via ldflags (`--version` + MCP ClientInfo); container smoke green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007c | Release workflow + install artefacts → **`release.yml` (SemVer tag → multi-arch amd64+arm64 → GHCR, no `latest`, VERSION from tag), `.env.example` covering every §3 env var (incl. the `$`→`$$` Compose pitfall), compose example on `env_file:` + health-gated `depends_on`, `setup.sh` quickstart (stdin bcrypt hash, writes `.env` 0600)**; verified live: setup.sh run → compose up healthy → login 302/400 proves the escaping chain; workflows actionlint-clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007d | Docs → **README rewritten as full usage docs (quickstart, install modes A/B, Claude-connector guide, Anthropic-egress 160.79.104.0/21 silent-failure note, complete §3 config reference, upstream/path/stdio gotchas, ops incl. `rotate-key`, endpoints, security posture); `CHANGELOG.md` (Keep-a-Changelog, Unreleased→v0.1.0 incl. upgrade notes); SECURITY.md + NOTICE refreshed (stale mysql line dropped); runbook cross-linked**; links + §3 completeness verified by script, GR-5 clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
+| F-007e | Release gate + publish → **RC-check: the 2026-07-28 RC is out and all six authorization SEPs are already satisfied (watch item resolved; re-check at the final spec); govulncheck found 3 reachable vulns → x/net v0.55.0, quic-go v0.59.1, Go 1.26.5 (0 reachable after); gitleaks over the full history clean; Dependabot + weekly govulncheck CI added; tag `v0.1.0` → multi-arch GHCR image verified by anonymous pull + smoke; repo + package public (operator go); GitHub release published; PVR + Dependabot alerts enabled**. License decision re-confirmed: Apache-2.0 over MIT/MPL/AGPL. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
+| F-007 | **Release hygiene — complete** (a/b/c/d/e done): M7–M10 deployment fixes, `rotate-key`, hardened image, lint/license/vuln CI, release pipeline, install artefacts, full docs, **v0.1.0 released publicly**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 
 ---
 
 ## Open tasks — work top to bottom
 
-| Order | Task | Ready? |
-|-------|------|--------|
-| 1 | **F-007** — Release hygiene | ✅ ready (F-006 done) |
-
-Then the backlog **F-012** (audit low-severity follow-ups). Each task below carries its own
-`**Dependencies:**` line.
-
----
-
-### F-007 — Release hygiene
-
-**Problem:** A public release needs usage docs, SemVer, and license/NOTICE hygiene.
-
-**Idea:** Finalise documentation and release artifacts.
-
-**Possible implementation:**
-- README usage docs (front an MCP server; add as a connector; **complete config reference** for the §3 env vars — F-005 added ~20), SECURITY.md, SemVer, NOTICE.
-- **Manual key-rotation ops command** (deferred here from F-005d — SPEC §2.3: v1 rotates on interval only).
-- CI: add **golangci-lint** (CODING-STANDARDS §11 expects it; the workflow only runs gofmt/vet/build/test today) + OAuth/MCP conformance tests (extend the existing `.github/workflows/ci.yml`).
-- Verify all dependencies are permissive-licensed (no GPL/AGPL; MPL-2.0 accepted — see F-008b).
-- **Deployment/config hardening from the F-006b audit (M7–M10):** ① `Dockerfile` non-root `USER`, drop/justify the python/node/npm interpreters, digest-pin base images (currently `debian:bookworm-slim` runs as root); ② implement the SPEC §3.1 startup WARNING for an `http` non-loopback issuer and base the session-cookie `Secure` flag on whether TLS is actually served; ③ normalise bare-IP `TRUSTED_PROXIES` (a bare IP currently crashes startup with an http upstream); ④ add a `HEALTHCHECK` + compose `depends_on: condition: service_healthy`; ⑤ pin `go-licenses` (CI installs `@latest`).
-- **Release gate:** re-verify against the MCP authorization spec **2026-07-28 RC** (watch item, REQUIREMENTS §0), unless already done in F-006.
-
-**Dependencies:** F-006.
-
-**Substeps** (ordered: code fixes → container/CI → release pipeline/artefacts → docs → gate;
-each is independently runnable and committable):
-**F-007a done** (2026-07-08 — M7 + M8 fixes and the `rotate-key` ops command; see Done table +
-archive). **F-007b done** (2026-07-08 — hardened image + lint/license CI; see Done table +
-archive). **F-007c done** (2026-07-08 — release workflow + install artefacts; the "GHCR image
-pullable after a tag push" acceptance moves to the F-007e tag; see Done table + archive).
-**F-007d done** (2026-07-08 — README usage docs, CHANGELOG, SECURITY/NOTICE refresh; see Done
-table + archive).
-
-#### F-007e — Release gate + publish (go/no-go with the operator)
-
-- **What:** ① check whether the MCP authorization spec **2026-07-28 RC** has landed (dated
-  after this task started — if unreleased, document as watch item per REQUIREMENTS §0);
-  ② final license sweep (`go-licenses`, NOTICE); ③ SemVer decision (recommendation: **v0.1.0**;
-  1.0 after the RC re-verify) + tag; ④ verify the GHCR image post-workflow (pull, run, healthy);
-  ⑤ **flip the repo public — explicit operator go/no-go**; ⑥ GitHub release with notes.
-- **Files:** git tag, GitHub release/settings; watch-item note in `PROGRESS.md`/`REQUIREMENTS.md`
-  if the RC is unreleased.
-- **Dependencies:** F-007a–d.
-- **Acceptance:**
-  - [ ] Tag exists; image pullable; release published.
-  - [ ] RC checked; outcome documented (verified or watch item).
-  - [ ] Repo visibility decided explicitly by the operator.
+**No roadmap tasks open.** The backlog below holds **F-012** (audit low-severity follow-ups);
+new work is intaked via `/add-feature`. Standing watch item: **re-check the final MCP
+authorization spec once it publishes on 2026-07-28** (v0.1.0 is verified against its RC).
 
 ---
 
@@ -141,6 +101,6 @@ F-011 Trim bundled auth providers to the self-contained model (DONE)
 F-004 Complete the spec (make it implementable) (DONE)
 F-005 Implement on the chosen base (sigbit fork) (DONE)
 F-006 Verify against Claude + security review (DONE)
-F-007 Release hygiene
+F-007 Release hygiene (DONE)
 F-012 Audit low-severity follow-ups (from F-006b)
 -->

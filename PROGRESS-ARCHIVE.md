@@ -1099,3 +1099,50 @@ var appears in both README and `.env.example`; GR-5 scan clean (only documented 
 ranges/TEST-NET addresses).
 
 **Files:** `README.md`, `CHANGELOG.md` (new), `SECURITY.md`, `NOTICE`, `docs/VERIFICATION.md`.
+
+---
+
+## F-007e — Release gate + publish — DONE 2026-07-08
+
+Final F-007 substep — every gate ran, then the operator-gated publish.
+
+### Release gates (all green)
+- **MCP 2026-07-28 RC check:** the RC turned out to be **already published** (locked
+  2026-05-21; final spec lands 2026-07-28). All six authorization-hardening SEPs verified
+  against the gateway: RFC 9207 `iss` supplied on success+error (SEP-2468); DCR tolerates
+  `application_type` and accepts RFC 8252 native/localhost redirect URIs (SEP-837);
+  issuer-bound tokens (SEP-2352); refresh tokens issued independent of an `offline_access`
+  scope, requested scopes granted (SEP-2207/2350); no-path issuer makes both `.well-known`
+  suffix forms equivalent (SEP-2351). CIMD-first + DCR fallback unchanged in the RC.
+  REQUIREMENTS §0 watch item **resolved**; re-check scheduled at the final spec.
+- **govulncheck (new gate):** found **3 reachable vulnerabilities** — fixed by bumping
+  `golang.org/x/net` → v0.55.0 (GO-2026-5026), `quic-go` → v0.59.1 (GO-2026-5676), Go
+  toolchain → 1.26.5 (GO-2026-5856). Re-scan: 0 reachable; full suite + `-race` green.
+- **gitleaks over the entire history** (32 commits): no leaks — cleared the public flip.
+- **License sweep:** go-licenses clean; **license decision re-examined with the operator**
+  and re-confirmed: **Apache-2.0** over MIT (no patent grant/NOTICE/contribution clause),
+  MPL-2.0 (file-copyleft cost without SaaS protection — that would need AGPL) and AGPL
+  (adoption cost); memstead-module future favours permissive.
+- **Update automation added:** `.github/dependabot.yml` (gomod/docker/actions, weekly) +
+  weekly `govulncheck` workflow — dependency vulnerabilities surface automatically
+  post-release (documented in SECURITY.md).
+
+### Publish
+`chore(release): prepare v0.1.0` pushed together with the 8 pending commits; tag **v0.1.0**
+→ release workflow built and pushed the multi-arch image
+(`ghcr.io/xnyzer/mcp-oauth-gateway:0.1.0` + `:0.1`, digest `bb5b1216…`). **Operator go/no-go:
+repo flipped public** (`gh repo edit`), operator set the GHCR package public + Actions access
+"Write" (least privilege); private vulnerability reporting + Dependabot alerts enabled;
+GitHub release v0.1.0 published with CHANGELOG notes. Verified as an anonymous user:
+`docker pull` works, amd64+arm64 manifests present, `--version` reports `v0.1.0`, container
+healthy, discovery 200, tokenless `/mcp` 401.
+
+## F-007 — Release hygiene — DONE 2026-07-08 (parent task)
+
+Completed via **F-007a** (M7/M8 fixes + `rotate-key`), **F-007b** (distroless non-root image,
+golangci-lint + go-licenses CI), **F-007c** (release workflow, `.env.example`, health-gated
+compose, `setup.sh`), **F-007d** (README usage docs, CHANGELOG, SECURITY/NOTICE) and
+**F-007e** (gates + publish). **v0.1.0 is publicly released**: repo public, GHCR image
+pullable, all four deployment audit findings (M7–M10) fixed, RC-verified, zero reachable
+vulnerabilities, docs complete. Remaining: the F-012 backlog and the final-spec re-check
+after 2026-07-28.
