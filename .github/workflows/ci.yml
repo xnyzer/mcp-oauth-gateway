@@ -56,4 +56,4 @@ jobs:
       - name: install go-licenses (pinned)
         run: go install github.com/google/go-licenses/v2@v2.0.1
       - name: check no GPL/AGPL/LGPL
-        run: $(go env GOPATH)/bin/go-licenses check ./... --disallowed_types=forbidden,restricted
+        run: "$(go env GOPATH)/bin/go-licenses" check ./... --disallowed_types=forbidden,restricted

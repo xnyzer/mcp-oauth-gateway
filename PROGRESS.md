@@ -37,6 +37,7 @@ follow-ups). F-numbers are stable IDs; the document order, not the number, is th
 | F-006 | **Verify against Claude + security review — complete** (a/b/c1/c2/c3 done): assembled e2e harness, adversarial audit + security fixes, and live end-to-end verification against Claude web + iOS. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007a | Code fixes → **M8 bare-IP `TRUSTED_PROXIES` normalised to `/32`·`/128` (fail-fast on garbage), M7 §3.1 http-issuer startup WARNING + cookie `Secure` from actually-served TLS, `rotate-key` offline ops command (SPEC §2.3)**; 13 regression tests, suite + `-race` green, live smoke on the binary. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007b | Container & CI hardening → **M9 digest-pinned distroless non-root image (no interpreters, `HEALTHCHECK` via new `healthcheck` subcommand, non-privileged default ports, `/data` owned in-image) + M10 pinned golangci-lint v2.12.2 in CI (76 findings triaged: real fixes incl. `ReadHeaderTimeout`, data-dir `0700`, deprecated-ECDSA-API swap; documented nolints) + `go-licenses/v2` pinned**; version wired via ldflags (`--version` + MCP ClientInfo); container smoke green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
+| F-007c | Release workflow + install artefacts → **`release.yml` (SemVer tag → multi-arch amd64+arm64 → GHCR, no `latest`, VERSION from tag), `.env.example` covering every §3 env var (incl. the `$`→`$$` Compose pitfall), compose example on `env_file:` + health-gated `depends_on`, `setup.sh` quickstart (stdin bcrypt hash, writes `.env` 0600)**; verified live: setup.sh run → compose up healthy → login 302/400 proves the escaping chain; workflows actionlint-clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 
 ---
 
@@ -71,23 +72,8 @@ Then the backlog **F-012** (audit low-severity follow-ups). Each task below carr
 each is independently runnable and committable):
 **F-007a done** (2026-07-08 — M7 + M8 fixes and the `rotate-key` ops command; see Done table +
 archive). **F-007b done** (2026-07-08 — hardened image + lint/license CI; see Done table +
-archive).
-
-#### F-007c — Release workflow + install artefacts
-
-- **What:** ① `release.yml`: on git tag, build a multi-arch (amd64+arm64) image and push to
-  `ghcr.io/xnyzer/mcp-oauth-gateway` (workflow `packages: write`); ② `.env.example` documenting
-  **all** SPEC §3 env vars (incl. the Compose `env_file` `$`→`$$` bcrypt-escaping note);
-  ③ switch `docker-compose.example.yml` to `env_file:` + healthchecks +
-  `depends_on: condition: service_healthy`; ④ optional `setup.sh` quickstart — universal parts
-  only (generate bcrypt hash, write `.env`); **no firewall scripting** (docs only, F-007d).
-- **Files:** `.github/workflows/release.yml` (new), `.env.example` (new),
-  `docker-compose.example.yml`, `setup.sh` (new).
-- **Dependencies:** F-007b (only the hardened image gets published).
-- **Acceptance:**
-  - [ ] A tag push produces a pullable GHCR image (amd64+arm64).
-  - [ ] Fresh `docker compose up` with a filled-in `.env` comes up healthy.
-  - [ ] `.env.example` covers §3.1+§3.2 completely; placeholders only (GR-5).
+archive). **F-007c done** (2026-07-08 — release workflow + install artefacts; the "GHCR image
+pullable after a tag push" acceptance moves to the F-007e tag; see Done table + archive).
 
 #### F-007d — Docs
 

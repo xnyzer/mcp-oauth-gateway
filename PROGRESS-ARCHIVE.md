@@ -1028,3 +1028,41 @@ volume writable as nonroot.
 `httpFallbackHandler`), `pkg/backend/proxy.go`, and lint-driven fixes across `pkg/auth`,
 `pkg/cimd`, `pkg/idp`, `pkg/keys`, `pkg/repository`, `pkg/utils`; `SPEC.md` §1.13/§3.3;
 `docker-compose.example.yml` (port mapping matches the new image default).
+
+---
+
+## F-007c — Release workflow + install artefacts — DONE 2026-07-08
+
+Third F-007 substep: everything needed to install the gateway from a tag.
+
+- **`.github/workflows/release.yml`** (new): a SemVer tag (`v*.*.*`) builds the multi-arch
+  image (linux/amd64 + linux/arm64, QEMU+buildx) and pushes `ghcr.io/<repo>:<version>` +
+  `<major>.<minor>` — deliberately **no floating `latest`** (deployments pin versions, SPEC
+  §3.3). The tag is injected as the build `VERSION` (→ `pkg/version`). Action majors verified
+  current at runtime (docker/setup-qemu@v4, setup-buildx@v4, login@v4, metadata@v6,
+  build-push@v7); actionlint clean. The "image pullable after a tag push" acceptance can only
+  run with the first real tag → moved to F-007e.
+- **`.env.example`** (new): every SPEC §3.1+§3.2 env var, grouped (required / install mode A
+  behind a TLS proxy / mode B built-in ACME / listeners+storage / upstream / lifetimes / keys /
+  abuse protection / OIDC), defaults documented, placeholders only (GR-5; TEST-NET IPs). The
+  Compose `env_file` `$`→`$$` bcrypt pitfall is documented prominently, incl. the 60-char
+  in-container check. Also covers `JWT_PRIVATE_KEY`/`AUTH_HMAC_SECRET` as advanced options.
+- **`docker-compose.example.yml`**: switched from inline `environment:` to `env_file: .env`;
+  gateway relies on the image's built-in `HEALTHCHECK`; upstream gets a placeholder
+  `healthcheck` + `depends_on: condition: service_healthy` (with a documented fallback to
+  `service_started` for upstreams without a probe).
+- **`setup.sh`** (new, universal parts only — no firewall scripting): prompts for the public
+  URL + operator password (stdin, hidden, never in argv/history), generates the bcrypt hash
+  via `docker run httpd:2.4-alpine htpasswd -niBC 12`, applies the `$`→`$$` escaping, writes
+  `.env` (0600) from `.env.example`, refuses to overwrite an existing `.env`, and prints next
+  steps incl. the Anthropic-egress (160.79.104.0/21) silent-failure reminder.
+
+**Verified end to end** (scratchpad): piped `setup.sh` run → `.env` correct (0600, escaped
+hash); `docker compose up -d --wait` with the F-007b image + env_file + health gating →
+upstream healthy → gateway healthy; in-container `PASSWORD_HASH` is the un-escaped 60-char
+bcrypt; **login with the real password → 302, wrong password → 400** — proving the whole
+escaping chain; workflows actionlint-clean (also fixed the pre-existing SC2046 quoting in
+ci.yml's go-licenses step).
+
+**Files:** `.github/workflows/release.yml` (new), `.env.example` (new), `setup.sh` (new),
+`docker-compose.example.yml`, `.github/workflows/ci.yml` (quoting).
