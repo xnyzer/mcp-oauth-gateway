@@ -217,6 +217,54 @@ func TestTransparentBackendFollows307Redirect(t *testing.T) {
 	require.Equal(t, "POST", resp["method"], "method must be preserved")
 }
 
+// TestTransparentBackendOversizedBodyNotBufferedForRedirect covers the
+// SPEC §1.11.3 buffering cap: a body above maxRedirectReplayBody must not
+// be buffered for replay — the upstream's 307 passes through to the client
+// instead of being followed — while the full body still reaches the
+// upstream untruncated on the direct path.
+func TestTransparentBackendOversizedBodyNotBufferedForRedirect(t *testing.T) {
+	oversized := strings.Repeat("a", maxRedirectReplayBody+1)
+
+	r := gin.New()
+	r.POST("/redirect", func(c *gin.Context) {
+		c.Redirect(http.StatusTemporaryRedirect, "/redirect/")
+	})
+	r.POST("/direct", func(c *gin.Context) {
+		// Runs in the server goroutine — no require here (FailNow must not
+		// be called off the test goroutine); a short read fails the length
+		// assertion below anyway.
+		body, _ := io.ReadAll(c.Request.Body)
+		c.JSON(http.StatusOK, gin.H{"received": len(body)})
+	})
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+
+	be, err := NewTransparentBackend(zap.NewNop(), u, []string{})
+	require.NoError(t, err)
+	handler, err := be.Run(context.Background())
+	require.NoError(t, err)
+
+	t.Run("redirect is not followed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/redirect", strings.NewReader(oversized))
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		require.Equal(t, http.StatusTemporaryRedirect, rr.Code,
+			"an oversized body must not be replayed; the redirect passes through")
+	})
+
+	t.Run("body streams through untruncated", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/direct", strings.NewReader(oversized))
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp map[string]int
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+		require.Equal(t, len(oversized), resp["received"],
+			"the cap must only disable redirect replay, never truncate the body")
+	})
+}
+
 func TestTransparentBackendRedirectLoopProtection(t *testing.T) {
 	r := gin.New()
 	r.POST("/loop", func(c *gin.Context) {

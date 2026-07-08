@@ -242,10 +242,40 @@ func (r *Resolver) validateDocument(clientID string, client *Client) error {
 	if len(client.GrantTypes) == 0 {
 		client.GrantTypes = []string{"authorization_code"}
 	}
+	for _, grantType := range client.GrantTypes {
+		if !IsSupportedGrantType(grantType) {
+			return fmt.Errorf("%w: unsupported grant_type %q", ErrInvalidClientID, grantType)
+		}
+	}
 	if len(client.ResponseTypes) == 0 {
 		client.ResponseTypes = []string{"code"}
 	}
+	for _, responseType := range client.ResponseTypes {
+		if !IsSupportedResponseType(responseType) {
+			return fmt.Errorf("%w: unsupported response_type %q", ErrInvalidClientID, responseType)
+		}
+	}
 	return nil
+}
+
+// supportedGrantTypes / supportedResponseTypes are the SPEC §1.2 metadata
+// sets. DCR registrations (pkg/idp) and CIMD documents are both validated
+// against them, so neither client channel can declare an unsupported flow.
+var (
+	supportedGrantTypes    = map[string]bool{"authorization_code": true, "refresh_token": true}
+	supportedResponseTypes = map[string]bool{"code": true}
+)
+
+// IsSupportedGrantType reports whether grantType is in the SPEC §1.2
+// metadata set (shared by DCR and CIMD validation).
+func IsSupportedGrantType(grantType string) bool {
+	return supportedGrantTypes[grantType]
+}
+
+// IsSupportedResponseType reports whether responseType is in the SPEC §1.2
+// metadata set (shared by DCR and CIMD validation).
+func IsSupportedResponseType(responseType string) bool {
+	return supportedResponseTypes[responseType]
 }
 
 // checkDialAddress rejects connections to non-public addresses (SSRF guard,

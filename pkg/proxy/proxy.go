@@ -142,6 +142,10 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 	},
 		jwt.WithIssuer(p.cfg.ExternalURL),
 		jwt.WithAudience(p.cfg.ExternalURL),
+		// Every issued token carries exp (SPEC §1.7); requiring it closes
+		// the door on non-expiring tokens should another signer ever share
+		// the key set.
+		jwt.WithExpirationRequired(),
 		jwt.WithLeeway(p.cfg.ClockSkew),
 	)
 

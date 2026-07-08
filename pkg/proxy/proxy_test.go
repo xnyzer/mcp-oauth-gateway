@@ -683,6 +683,43 @@ func TestProxyRouter_UnauthorizedChallenge(t *testing.T) {
 	assert.Contains(t, w.Header().Get("WWW-Authenticate"), `error="invalid_token"`)
 }
 
+// TestProxyRouter_RejectsTokenWithoutExp: a signed token that simply omits
+// exp must not validate as never-expiring (jwt.WithExpirationRequired,
+// SPEC §1.11.1 — every issued token carries exp per §1.7).
+func TestProxyRouter_RejectsTokenWithoutExp(t *testing.T) {
+	privateKey, publicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	backendCalled := false
+	proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+	proxyRouter, err := NewProxyRouter(Config{ExternalURL: "https://example.com", Proxy: proxyHandler, VerificationKey: testKeyLookup(publicKey), ProxyHeaders: http.Header{}, HeaderMappingBase: "/userinfo"})
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	proxyRouter.SetupRoutes(router)
+
+	tokenWithoutExp, err := createJWT(privateKey, jwt.MapClaims{
+		"sub": "test-user",
+		"iat": time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodGet, "/mcp", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+tokenWithoutExp)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Header().Get("WWW-Authenticate"), `error="invalid_token"`)
+	assert.False(t, backendCalled, "a token without exp must never reach the upstream")
+}
+
 func TestProxyRouter_ReservedNamespacesNeverProxied(t *testing.T) {
 	privateKey, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)

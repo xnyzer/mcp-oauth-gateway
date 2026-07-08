@@ -77,6 +77,20 @@ func NormalizeTrustedProxies(entries []string) ([]string, error) {
 
 const maxBackendRedirects = 10
 
+// maxRedirectReplayBody caps how much request body is buffered for
+// replaying it on a followed redirect (SPEC §1.11.3: streaming bodies are
+// not buffered). MCP JSON-RPC payloads are far smaller; a larger body
+// streams through unbuffered and a redirect for it is returned to the
+// client instead of followed.
+const maxRedirectReplayBody = 4 << 20 // 4 MiB
+
+// stitchedBody re-attaches an already-buffered prefix in front of the
+// unread remainder while keeping the original body's Close.
+type stitchedBody struct {
+	io.Reader
+	io.Closer
+}
+
 // redirectFollowingTransport wraps an http.RoundTripper to transparently
 // follow 307/308 redirects from backend servers. This is needed because
 // httputil.ReverseProxy uses Transport.RoundTrip() directly, which does
@@ -88,15 +102,21 @@ type redirectFollowingTransport struct {
 }
 
 func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Buffer body upfront so we can replay it on redirect.
-	// MCP JSON-RPC payloads are small, so this is fine.
+	// Buffer the body (up to the cap) so it can be replayed on a followed
+	// redirect. An oversized body streams through unbuffered instead — a
+	// redirect for it then passes to the client rather than being followed.
 	var bodyBytes []byte
 	if req.Body != nil {
-		var err error
-		bodyBytes, err = io.ReadAll(req.Body)
+		buffered, err := io.ReadAll(io.LimitReader(req.Body, maxRedirectReplayBody+1))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read request body: %w", err)
 		}
+		if len(buffered) > maxRedirectReplayBody {
+			remainder := req.Body
+			req.Body = stitchedBody{io.MultiReader(bytes.NewReader(buffered), remainder), remainder}
+			return t.base.RoundTrip(req)
+		}
+		bodyBytes = buffered
 		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	}
 

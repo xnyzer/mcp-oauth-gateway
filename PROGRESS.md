@@ -45,6 +45,7 @@ document order, not the number, is the path.
 | F-007d | Docs → **README rewritten as full usage docs (quickstart, install modes A/B, Claude-connector guide, Anthropic-egress 160.79.104.0/21 silent-failure note, complete §3 config reference, upstream/path/stdio gotchas, ops incl. `rotate-key`, endpoints, security posture); `CHANGELOG.md` (Keep-a-Changelog, Unreleased→v0.1.0 incl. upgrade notes); SECURITY.md + NOTICE refreshed (stale mysql line dropped); runbook cross-linked**; links + §3 completeness verified by script, GR-5 clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007e | Release gate + publish → **RC-check: the 2026-07-28 RC is out and all six authorization SEPs are already satisfied (watch item resolved; re-check at the final spec); govulncheck found 3 reachable vulns → x/net v0.55.0, quic-go v0.59.1, Go 1.26.5 (0 reachable after); gitleaks over the full history clean; Dependabot + weekly govulncheck CI added; tag `v0.1.0` → multi-arch GHCR image verified by anonymous pull + smoke; repo + package public (operator go); GitHub release published; PVR + Dependabot alerts enabled**. License decision re-confirmed: Apache-2.0 over MIT/MPL/AGPL. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007 | **Release hygiene — complete** (a/b/c/d/e done): M7–M10 deployment fixes, `rotate-key`, hardened image, lint/license/vuln CI, release pipeline, install artefacts, full docs, **v0.1.0 released publicly**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
+| F-012a | Fail-fast & crypto/proxy guards → **malformed boolean envs abort startup; RSA < 2048 refused (`JWT_PRIVATE_KEY`/legacy/manifest); `jwt.WithExpirationRequired()`; redirect-replay body buffering capped at 4 MiB (larger bodies stream, redirect passed through); CIMD grant/response-type whitelist shared with DCR** — five negative regression tests; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 
 ---
 
@@ -72,24 +73,8 @@ stdlib since Go 1.24).
 
 **Dependencies:** none (independent hardening; F-006/F-007 done).
 
-#### F-012a — Fail-fast & crypto/proxy guards
-
-- **What:** ① `getEnvBoolWithDefault` rejects everything but `true|1|false|0` (fail-fast like
-  the sibling duration/int parsers); ② `algForKey` rejects RSA keys < 2048 bits (covers
-  `JWT_PRIVATE_KEY`, legacy-key adoption, and manifest loads centrally); ③ proxy JWT
-  verification adds `jwt.WithExpirationRequired()`; ④ cap upstream request-body buffering at a
-  named constant (4 MiB) — larger/streaming bodies pass through unbuffered and a 307/308 is
-  then not followed (SPEC §1.11.3); ⑤ CIMD documents get the same grant/response-type
-  whitelist as DCR (whitelist lives in `pkg/cimd`, referenced by `pkg/idp` — same pattern as
-  `ValidateRedirectURI`).
-- **Files:** `main.go`, `pkg/keys/keys.go`, `pkg/proxy/proxy.go`, `pkg/backend/transparent.go`,
-  `pkg/cimd/resolver.go`, `pkg/idp/idp.go` (+ tests).
-- **Dependencies:** none.
-- **Acceptance:**
-  - [ ] Negative tests: bool typo (`yes`) aborts startup; 1024-bit RSA key refused; JWT
-        without `exp` → 401; oversized body → redirect not followed (response passed through);
-        CIMD document declaring `implicit`/`token` → `invalid_client`.
-  - [ ] Full suite + `-race` + `golangci-lint` green.
+**F-012a done** (2026-07-08 — fail-fast & crypto/proxy guards, all five items with negative
+regression tests; see Done table + archive).
 
 #### F-012b — Auth-flow hardening
 

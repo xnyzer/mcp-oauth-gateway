@@ -90,6 +90,13 @@ func TestResolverDocumentValidation(t *testing.T) {
 		{name: "confidential auth method", mutate: func(_ string, doc *Client) { doc.TokenEndpointAuthMethod = "client_secret_basic" }},
 		{name: "http redirect for non-loopback", mutate: func(_ string, doc *Client) { doc.RedirectURIs = []string{"http://app.example.com/cb"} }},
 		{name: "javascript redirect scheme", mutate: func(_ string, doc *Client) { doc.RedirectURIs = []string{"javascript:alert(1)"} }},
+		// The §1.2 whitelist applies to CIMD documents like it does to DCR
+		// registrations — attacker-declared flows must not reach the client.
+		{name: "unsupported grant_type implicit", mutate: func(_ string, doc *Client) { doc.GrantTypes = []string{"implicit"} }},
+		{name: "unsupported grant_type client_credentials", mutate: func(_ string, doc *Client) {
+			doc.GrantTypes = []string{"authorization_code", "client_credentials"}
+		}},
+		{name: "unsupported response_type token", mutate: func(_ string, doc *Client) { doc.ResponseTypes = []string{"token"} }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

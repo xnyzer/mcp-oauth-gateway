@@ -1146,3 +1146,45 @@ compose, `setup.sh`), **F-007d** (README usage docs, CHANGELOG, SECURITY/NOTICE)
 pullable, all four deployment audit findings (M7–M10) fixed, RC-verified, zero reachable
 vulnerabilities, docs complete. Remaining: the F-012 backlog and the final-spec re-check
 after 2026-07-28.
+
+---
+
+## F-012a — Fail-fast & crypto/proxy guards — DONE 2026-07-08
+
+First F-012 substep (audit low-severity follow-ups): five independent validation guards from
+the F-006b audit lows.
+
+- **Malformed boolean envs abort startup** (`main.go`): `getEnvBoolWithDefault` now accepts
+  exactly `true|1|false|0` (words case-insensitive) and panics with a clear message otherwise,
+  matching the sibling duration/int parsers — a typo in a security toggle (`DCR_ENABLED`, …)
+  can no longer silently disable it. This brings the code in line with the already-normative
+  SPEC §3 wording, so no SPEC change was needed.
+- **RSA keys below 2048 bits are refused** (`pkg/keys`): `algForKey` checks `N.BitLen()`,
+  which covers every ingress path centrally — `JWT_PRIVATE_KEY`, legacy-key adoption, and
+  manifest loads all route through `ParsePrivateKeyPEM`/`NewStaticManager`. SPEC §2.2 delta
+  noted. **Deployment note (for the F-012e CHANGELOG):** a pre-existing sub-2048 key now
+  fails startup (operator-controlled; generated keys were always 2048).
+- **`jwt.WithExpirationRequired()`** (`pkg/proxy`): a signed token that omits `exp` no longer
+  validates as never-expiring — defence-in-depth; every issued token carries `exp` (§1.7).
+- **Redirect-replay body buffering capped at 4 MiB** (`pkg/backend`): named constant
+  `maxRedirectReplayBody`; a body over the cap streams through unbuffered via `stitchedBody`
+  (buffered prefix + unread remainder, original `Close` preserved) and a 307/308 for it passes
+  to the client instead of being followed. **Decision:** fixed constant over a new env var —
+  MCP JSON-RPC payloads are orders of magnitude smaller, and the cap only bounds the
+  redirect-replay convenience, never the proxy path itself. SPEC §1.11 delta noted.
+- **CIMD grant/response-type whitelist** (`pkg/cimd` + `pkg/idp`): new shared
+  `IsSupportedGrantType`/`IsSupportedResponseType` (the §1.2 sets) — CIMD documents are now
+  validated exactly like DCR registrations (attacker-declared `implicit`/
+  `client_credentials`/`token` → `invalid_client`); the duplicate maps in `pkg/idp` were
+  replaced by the shared functions (same pattern as `ValidateRedirectURI`). SPEC §1.3 delta
+  noted.
+
+Verification: five negative regression tests (bool typos panic; 1024-bit key refused on the
+parse and static-manager paths; token without `exp` → 401 without upstream contact; oversized
+body → 307 passed through **and** streamed untruncated; CIMD unsupported types →
+`invalid_client`); full suite + `-race` green; golangci-lint v2.12.2 (the CI-pinned version)
+0 issues; gitleaks over the working tree clean.
+
+**Files:** `main.go` (+tests), `pkg/keys/keys.go` (+new `keys_test.go`), `pkg/proxy/proxy.go`
+(+tests), `pkg/backend/transparent.go` (+tests), `pkg/cimd/resolver.go` (+tests),
+`pkg/idp/idp.go`, `SPEC.md` (§1.3/§1.11/§2.2 deltas).

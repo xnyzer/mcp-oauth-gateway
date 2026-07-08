@@ -142,6 +142,8 @@ store (§1.4).
 rebinding cannot bypass them) and integrated as the fosite client source, effective at the
 authorize and token endpoints alike. An absent `token_endpoint_auth_method` is treated as
 `none` (decision: common in CIMD documents; explicit non-`none` values are rejected).
+Declared `grant_types`/`response_types` are validated against the §1.2 sets, exactly like
+DCR registrations (F-012a).
 
 ### 1.4 Dynamic Client Registration — `POST /.idp/register` (deprecated fallback)
 
@@ -327,7 +329,10 @@ FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
 `WWW-Authenticate` challenge and clock-skew leeway are **done (F-005a)**; the fail-closed
 revocation check is **done (F-005b**, §2.4 record-presence lookup**)**; signature validation
 against the full JWKS key set selected by `kid` (RS256/ES256, unknown `kid` or alg mismatch
-→ 401) is **done (F-005d)**.
+→ 401) is **done (F-005d)**. Token validation additionally requires `exp` to be present, and
+request-body buffering for upstream 307/308 replay is capped at 4 MiB — a larger body streams
+through unbuffered and a redirect for it passes to the client instead of being followed
+(F-012a, hardening the §1.11.3 no-buffering rule).
 
 ### 1.12 User authentication & consent — `/.auth/*`
 
@@ -444,7 +449,9 @@ Keys live in the **data directory** (not the DB), permissions `0600`, directory 
   keep their key; the original file is left in place.
 - `JWT_PRIVATE_KEY` (env, existing behaviour): the key is used as a **static** single key —
   no key directory, automatic rotation disabled (startup WARNING when
-  `KEY_ROTATION_INTERVAL` > 0); `KEY_ALG` must match the key type (fail-fast).
+  `KEY_ROTATION_INTERVAL` > 0); `KEY_ALG` must match the key type (fail-fast). RSA keys below
+  **2048 bits** are refused (fail-fast, F-012a) — this applies to supplied and adopted legacy
+  keys alike.
 - `AUTH_HMAC_SECRET` (session cookies + Fosite HMAC): from env (base64) or generated secret
   file in the data directory (existing behaviour).
 

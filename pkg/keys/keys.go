@@ -75,10 +75,19 @@ func GeneratePrivateKey(alg Alg) (crypto.Signer, error) {
 	}
 }
 
+// minRSAModulusBits is the smallest accepted RSA modulus (SPEC §2.2
+// mandates RSA-2048): an operator-supplied (JWT_PRIVATE_KEY) or adopted
+// legacy key below it is refused fail-fast rather than silently signing
+// tokens with a weak key.
+const minRSAModulusBits = 2048
+
 // algForKey returns the JWS algorithm a private key signs with.
 func algForKey(key crypto.Signer) (Alg, error) {
 	switch k := key.(type) {
 	case *rsa.PrivateKey:
+		if k.N.BitLen() < minRSAModulusBits {
+			return "", fmt.Errorf("RSA key has %d bits; at least %d are required", k.N.BitLen(), minRSAModulusBits)
+		}
 		return AlgRS256, nil
 	case *ecdsa.PrivateKey:
 		if k.Curve != elliptic.P256() {

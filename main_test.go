@@ -345,12 +345,12 @@ func TestGetEnvBoolWithDefault(t *testing.T) {
 			envValue: "0",
 		},
 		{
-			name:     "env var set to other value",
-			key:      "TEST_BOOL_OTHER",
+			name:     "env var set to 'FALSE'",
+			key:      "TEST_BOOL_FALSE_UPPER",
 			def:      true,
 			expected: false,
 			setEnv:   true,
-			envValue: "other",
+			envValue: "FALSE",
 		},
 	}
 
@@ -367,6 +367,20 @@ func TestGetEnvBoolWithDefault(t *testing.T) {
 			if result != tc.expected {
 				t.Errorf("Expected %t, got %t", tc.expected, result)
 			}
+		})
+	}
+}
+
+// TestGetEnvBoolWithDefault_RejectsMalformedValue covers the fail-fast
+// contract (SPEC §3, CODING-STANDARDS §7): a typo like "yes" in a security
+// toggle must abort startup instead of silently becoming false.
+func TestGetEnvBoolWithDefault_RejectsMalformedValue(t *testing.T) {
+	for _, value := range []string{"yes", "on", "enabled", " true"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("TEST_BOOL_MALFORMED", value)
+			require.PanicsWithValue(t,
+				`invalid boolean in TEST_BOOL_MALFORMED: "`+value+`" (accepted: true, 1, false, 0)`,
+				func() { getEnvBoolWithDefault("TEST_BOOL_MALFORMED", false) })
 		})
 	}
 }

@@ -640,11 +640,7 @@ type registrationResponse struct {
 	ClientSecretExpiresAt int64 `json:"client_secret_expires_at"`
 }
 
-var (
-	supportedGrantTypes    = map[string]bool{"authorization_code": true, "refresh_token": true}
-	supportedResponseTypes = map[string]bool{"code": true}
-	supportedAuthMethods   = map[string]bool{"none": true, "client_secret_basic": true, "client_secret_post": true}
-)
+var supportedAuthMethods = map[string]bool{"none": true, "client_secret_basic": true, "client_secret_post": true}
 
 // validateRegistration enforces the SPEC §1.4 metadata rules. It returns an
 // RFC 7591 error code and description, or empty strings when valid.
@@ -667,7 +663,7 @@ func validateRegistration(req *registrationRequest) (string, string) {
 		req.GrantTypes = []string{"authorization_code"}
 	}
 	for _, grantType := range req.GrantTypes {
-		if !supportedGrantTypes[grantType] {
+		if !cimd.IsSupportedGrantType(grantType) {
 			return "invalid_client_metadata", "unsupported grant_type: " + grantType
 		}
 	}
@@ -675,7 +671,7 @@ func validateRegistration(req *registrationRequest) (string, string) {
 		req.ResponseTypes = []string{"code"}
 	}
 	for _, responseType := range req.ResponseTypes {
-		if !supportedResponseTypes[responseType] {
+		if !cimd.IsSupportedResponseType(responseType) {
 			return "invalid_client_metadata", "unsupported response_type: " + responseType
 		}
 	}

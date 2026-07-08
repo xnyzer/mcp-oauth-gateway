@@ -23,11 +23,21 @@ func getEnvWithDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
+// getEnvBoolWithDefault fails fast on a malformed boolean instead of
+// silently coercing it to false (config validation, CODING-STANDARDS §7):
+// a typo in a security toggle must abort startup, not disable the toggle.
 func getEnvBoolWithDefault(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		return strings.EqualFold(value, "true") || value == "1"
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
 	}
-	return defaultValue
+	if strings.EqualFold(value, "true") || value == "1" {
+		return true
+	}
+	if strings.EqualFold(value, "false") || value == "0" {
+		return false
+	}
+	panic(fmt.Sprintf("invalid boolean in %s: %q (accepted: true, 1, false, 0)", key, value))
 }
 
 // getEnvDurationWithDefault fails fast on a malformed duration instead of
