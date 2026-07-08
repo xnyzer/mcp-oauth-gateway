@@ -1,0 +1,17 @@
+# Automated dependency updates (security posture: we learn about vulnerable
+# dependencies via Dependabot alerts + weekly update PRs; see SECURITY.md).
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: docker # bumps the digest-pinned base images
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

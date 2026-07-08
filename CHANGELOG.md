@@ -5,7 +5,7 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
-## [Unreleased]
+## [0.1.0] — 2026-07-08
 
 Initial public release. `mcp-oauth-gateway` is a hard fork of
 [`sigbit/mcp-auth-proxy`](https://github.com/sigbit/mcp-auth-proxy) (see [`FORK.md`](FORK.md));
@@ -48,6 +48,18 @@ everything below is relative to that base.
   `npx`/`uvx` now run as a separate service or custom image.
 - Image default ports are non-privileged: `LISTEN=:8080`, `TLS_LISTEN=:8443` (publish host
   80/443 onto them).
+
+### Security
+
+- Release-gate `govulncheck` run: bumped `golang.org/x/net` to v0.55.0 (GO-2026-5026),
+  `quic-go` to v0.59.1 (GO-2026-5676) and the Go toolchain to 1.26.5 (GO-2026-5856) — all
+  three were reachable; zero reachable vulnerabilities at release.
+- Verified against the MCP **2026-07-28 specification release candidate**: all six
+  authorization-hardening SEPs are satisfied (RFC 9207 `iss` supplied on success+error;
+  DCR accepts native/localhost redirect URIs per RFC 8252 and tolerates `application_type`;
+  refresh tokens issued independent of an `offline_access` scope; issuer-bound tokens;
+  no-path issuer makes the `.well-known` suffix forms equivalent). Re-check planned when
+  the final spec publishes on 2026-07-28.
 
 ### Upgrade notes
 

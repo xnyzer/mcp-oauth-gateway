@@ -7,8 +7,8 @@ connect, **without depending on a third-party identity provider**.
 
 > **Status:** feature-complete against [`SPEC.md`](SPEC.md), hardened by an adversarial
 > security audit (all critical/high/medium findings fixed), and verified live end to end
-> against **Claude web and iOS**. Pre-1.0: the MCP authorization spec's next release
-> candidate (dated 2026-07-28) may still move contracts.
+> against **Claude web and iOS**. Verified against the MCP authorization spec **2026-07-28
+> release candidate**; pre-1.0 until the final spec is re-checked after 2026-07-28.
 
 ## Why
 

@@ -1,0 +1,22 @@
+name: vulncheck
+
+# Weekly + on push: govulncheck reports known vulnerabilities in the Go
+# toolchain and dependencies that are actually reachable from our code.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          go-package: ./...

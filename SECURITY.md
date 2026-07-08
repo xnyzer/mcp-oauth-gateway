@@ -61,9 +61,12 @@ Out of scope (please report upstream):
 
 | Version | Supported |
 |---------|-----------|
-| pre-release (no tagged release yet) | latest `main` only |
+| latest 0.x release | ✅ |
+| older releases | ❌ — upgrade to the latest release |
 
-This table will be updated once the project has tagged releases and a SemVer policy.
+Dependencies are monitored via Dependabot alerts and a weekly `govulncheck` CI run;
+security fixes ship as patch releases announced through GitHub releases and security
+advisories.
 
 ## Safe harbor
 

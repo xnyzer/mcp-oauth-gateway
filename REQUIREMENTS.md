@@ -21,8 +21,10 @@
   Authorization Server Metadata** (or OIDC Discovery).
 - No maintained, self-hosted, no-third-party, lightweight gateway covers this gap today — hence
   this project (build-vs-fork decision: see PROGRESS F-001).
-- **Watch item:** the next MCP spec release candidate is dated **2026-07-28** — re-verify these
-  requirements against it before any release.
+- **Watch item (resolved 2026-07-08):** verified against the **2026-07-28 release candidate**
+  (locked 2026-05-21) — all six authorization-hardening SEPs satisfied, CIMD-first + DCR
+  fallback unchanged; see `CHANGELOG.md` v0.1.0. Re-check once the final spec publishes on
+  2026-07-28.
 
 ## 1. Scope
 **In scope:** a gateway process that terminates MCP-spec OAuth toward the client and forwards
