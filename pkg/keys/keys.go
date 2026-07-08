@@ -158,10 +158,18 @@ func publicJWK(key SigningKey) (JWK, error) {
 	case *ecdsa.PublicKey:
 		jwk.Kty = "EC"
 		jwk.Crv = "P-256"
-		// RFC 7518 §6.2.1: fixed-length big-endian coordinates.
+		// RFC 7518 §6.2.1: fixed-length big-endian coordinates, sliced
+		// from the uncompressed point (0x04 || X || Y).
+		raw, err := pub.Bytes()
+		if err != nil {
+			return JWK{}, fmt.Errorf("failed to encode EC public key: %w", err)
+		}
 		byteLen := (pub.Curve.Params().BitSize + 7) / 8
-		jwk.X = base64.RawURLEncoding.EncodeToString(pub.X.FillBytes(make([]byte, byteLen)))
-		jwk.Y = base64.RawURLEncoding.EncodeToString(pub.Y.FillBytes(make([]byte, byteLen)))
+		if len(raw) != 1+2*byteLen || raw[0] != 4 {
+			return JWK{}, fmt.Errorf("unexpected EC point encoding (%d bytes)", len(raw))
+		}
+		jwk.X = base64.RawURLEncoding.EncodeToString(raw[1 : 1+byteLen])
+		jwk.Y = base64.RawURLEncoding.EncodeToString(raw[1+byteLen:])
 	default:
 		return JWK{}, fmt.Errorf("unsupported public key type %T", pub)
 	}

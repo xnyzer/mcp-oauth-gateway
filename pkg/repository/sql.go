@@ -305,7 +305,7 @@ func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.
 	client := models.FromFositeClient(fositeClient)
 	client.CreatedAt = time.Now().UTC()
 	client.ExpiresAt = expiresAt
-	data, err := json.Marshal(client)
+	data, err := json.Marshal(client) //nolint:gosec // G117: persisting the DCR client secret server-side is the repository's purpose (SPEC §2.1)
 	if err != nil {
 		return fmt.Errorf("failed to encode client: %w", err)
 	}
@@ -359,7 +359,7 @@ func (r *sqlRepository) TouchClient(ctx context.Context, id string, expiresAt ti
 		return nil // registration without expiry stays permanent
 	}
 	client.ExpiresAt = expiresAt
-	data, err := json.Marshal(client)
+	data, err := json.Marshal(client) //nolint:gosec // G117: persisting the DCR client secret server-side is the repository's purpose (SPEC §2.1)
 	if err != nil {
 		return fmt.Errorf("failed to encode client: %w", err)
 	}

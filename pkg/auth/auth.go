@@ -147,8 +147,8 @@ const (
 	WebAuthnRegisterBeginEndpoint    = "/.auth/webauthn/register/begin"
 	WebAuthnRegisterFinishEndpoint   = "/.auth/webauthn/register/finish"
 	SettingsEndpoint                 = "/.auth/settings"
-	SettingsPasswordEndpoint         = "/.auth/settings/password"
-	SettingsCredentialDeleteEndpoint = "/.auth/settings/credentials/delete"
+	SettingsPasswordEndpoint         = "/.auth/settings/password"           //nolint:gosec // G101: endpoint path, not a credential
+	SettingsCredentialDeleteEndpoint = "/.auth/settings/credentials/delete" //nolint:gosec // G101: endpoint path, not a credential
 
 	PasswordProvider = "password"
 	// PasswordUserID is the legacy subject used when no user store is
@@ -460,7 +460,9 @@ func (a *AuthRouter) renderLogin(c *gin.Context, passwordError string) {
 		c.Status(http.StatusOK)
 	}
 	if err := a.loginTemplate.Execute(c.Writer, data); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
+		// The return value only echoes the attached error; the abort
+		// itself cannot fail.
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 }
@@ -473,7 +475,7 @@ func (a *AuthRouter) renderUnauthorized(c *gin.Context, userID, providerName str
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusForbidden)
 	if err := a.unauthorizedTemplate.Execute(c.Writer, data); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 }
@@ -499,7 +501,7 @@ func (a *AuthRouter) renderError(c *gin.Context, err error) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusInternalServerError)
 	if templateErr := a.errorTemplate.Execute(c.Writer, data); templateErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, templateErr)
+		_ = c.AbortWithError(http.StatusInternalServerError, templateErr)
 		return
 	}
 	c.Abort()

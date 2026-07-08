@@ -8,7 +8,7 @@ import (
 )
 
 func readManifest(path string) (*manifest, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is the gateway's own key directory (operator config, SPEC §2.2)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key manifest: %w", err)
 	}
@@ -38,26 +38,28 @@ func (m *Manager) writeManifest() error {
 
 	manifestPath := filepath.Join(m.cfg.Dir, manifestName)
 	tmpPath := manifestPath + ".tmp"
-	tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) //nolint:gosec // G304: path is the gateway's own key directory (operator config, SPEC §2.2)
 	if err != nil {
 		return fmt.Errorf("failed to create temporary key manifest: %w", err)
 	}
+	// Cleanup errors on the failure paths are best-effort: the temp file
+	// is orphaned at worst and the original manifest stays intact.
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to write key manifest: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to sync key manifest: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to close key manifest: %w", err)
 	}
 	if err := os.Rename(tmpPath, manifestPath); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to replace key manifest: %w", err)
 	}
 	return nil

@@ -386,7 +386,9 @@ it now aborts). Rate limiting, lockout, and the auth events are **done (F-005e2)
 ### 1.13 Health — `GET /healthz`
 
 `200 {"status":"ok"}` once the process is serving; no auth, no version/internals disclosure
-(SR-10). Not proxied to the upstream.
+(SR-10). Not proxied to the upstream. Served on every listener: in TLS modes the plain-HTTP
+listener answers `/healthz` directly (everything else redirects to https), so the container
+health probe (`mcp-oauth-gateway healthcheck`, F-007b) always targets `LISTEN`.
 
 ---
 
@@ -544,8 +546,14 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 
 - **`docker-compose.example.yml`** (repo root): gateway + example upstream, placeholder env
   values only (GR-5) — see file.
-- **`Dockerfile`**: existing (pinned `golang:1.26-bookworm` builder, distroless-ish runtime,
-  entrypoint `mcp-oauth-gateway`), unchanged by this spec.
+- **`Dockerfile`** *(hardened in F-007b, audit M9)*: digest-pinned `golang:1.26-bookworm`
+  builder and `gcr.io/distroless/static-debian12:nonroot` runtime — non-root (uid 65532), no
+  shell/package manager/interpreters (stdio upstreams needing `npx`/`uvx` run as a separate
+  service or custom image). In-image defaults `LISTEN=:8080` / `TLS_LISTEN=:8443` (a non-root
+  container cannot bind :80/:443 — publish host ports onto them); `/data` owned by nonroot so
+  fresh named volumes inherit ownership; `HEALTHCHECK` runs the binary's own `healthcheck`
+  subcommand against `/healthz`; `VERSION` build arg is wired to `pkg/version` (reported by
+  `--version` and the MCP ClientInfo).
 - **Backward compatibility (NFR):** existing env keys keep working; renames ship with the old
   key still honoured for ≥1 minor release plus a startup deprecation warning. Config removed
   in F-011 (`GOOGLE_*`, `GITHUB_*`) is gone pre-release (no compatibility obligation).

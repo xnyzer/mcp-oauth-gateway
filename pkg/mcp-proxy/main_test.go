@@ -307,6 +307,37 @@ func TestUserInfoFieldsFromConfig(t *testing.T) {
 	})
 }
 
+// TestHTTPFallbackHandler covers the plain-HTTP listener in TLS modes:
+// /healthz answers locally (container health probes), everything else —
+// including a POST to /healthz — redirects to https.
+func TestHTTPFallbackHandler(t *testing.T) {
+	handler := httpFallbackHandler()
+
+	t.Run("GET /healthz answers 200", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		require.JSONEq(t, `{"status":"ok"}`, w.Body.String())
+	})
+
+	t.Run("other paths redirect to https", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/mcp?x=1", nil)
+		req.Host = "gateway.example.com"
+		handler.ServeHTTP(w, req)
+		require.Equal(t, http.StatusMovedPermanently, w.Code)
+		require.Equal(t, "https://gateway.example.com/mcp?x=1", w.Header().Get("Location"))
+	})
+
+	t.Run("POST /healthz redirects too", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
+		req.Host = "gateway.example.com"
+		handler.ServeHTTP(w, req)
+		require.Equal(t, http.StatusMovedPermanently, w.Code)
+	})
+}
+
 func TestHealthzEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

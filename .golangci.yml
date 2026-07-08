@@ -1,0 +1,20 @@
+# golangci-lint v2 configuration (CODING-STANDARDS §11, audit M10).
+# Curated set: the standard linters (errcheck, govet, ineffassign,
+# staticcheck, unused) plus security and spelling. Deliberate exceptions
+# are documented inline via //nolint:<linter> // reason.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gosec # security linter — this codebase is a public auth boundary
+    - misspell
+  exclusions:
+    rules:
+      # Tests: unchecked cleanup errors (Body.Close, os.RemoveAll, …) and
+      # gosec taint findings against local stub servers are noise, not
+      # signal. Production code keeps both linters in full.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec

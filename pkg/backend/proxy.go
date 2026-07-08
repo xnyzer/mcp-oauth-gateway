@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/version"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +38,7 @@ func (p *ProxyBackend) Run(ctx context.Context) (http.Handler, error) {
 	if p.errCh != nil {
 		return nil, fmt.Errorf("proxy backend is already running")
 	}
+	//nolint:gosec // G204: running an operator-configured stdio MCP upstream is this backend's purpose
 	execCmd := exec.CommandContext(ctx, p.cmd[0], p.cmd[1:]...)
 	stdout, err := execCmd.StdoutPipe()
 	if err != nil {
@@ -105,20 +107,20 @@ func setupProxy(ctx context.Context, logger *zap.Logger, tr transport.Bidirectio
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			ClientInfo: mcp.Implementation{
 				Name:    "mcp-oauth-gateway",
-				Version: "dev",
+				Version: version.Version,
 			},
 		},
 	}
 	init, err := c.Initialize(initCtx, initRequest)
 	if err != nil {
-		c.Close()
+		_ = c.Close() // best-effort cleanup on the failure path
 		return nil, nil, fmt.Errorf("failed to initialize MCP client: %w", err)
 	}
 	s := server.NewMCPServer(init.ServerInfo.Name, init.ServerInfo.Version)
 	if init.Capabilities.Tools != nil {
 		tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
 		if err != nil {
-			c.Close()
+			_ = c.Close()
 			return nil, nil, fmt.Errorf("failed to list tools: %w", err)
 		}
 		for _, tool := range tools.Tools {
@@ -128,7 +130,7 @@ func setupProxy(ctx context.Context, logger *zap.Logger, tr transport.Bidirectio
 	if init.Capabilities.Prompts != nil {
 		prompts, err := c.ListPrompts(ctx, mcp.ListPromptsRequest{})
 		if err != nil {
-			c.Close()
+			_ = c.Close()
 			return nil, nil, fmt.Errorf("failed to list prompts: %w", err)
 		}
 		for _, prompt := range prompts.Prompts {
@@ -138,7 +140,7 @@ func setupProxy(ctx context.Context, logger *zap.Logger, tr transport.Bidirectio
 	if init.Capabilities.Resources != nil {
 		resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
 		if err != nil {
-			c.Close()
+			_ = c.Close()
 			return nil, nil, fmt.Errorf("failed to list resources: %w", err)
 		}
 		for _, resource := range resources.Resources {

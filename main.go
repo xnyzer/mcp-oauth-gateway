@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/keys"
 	mcpproxy "github.com/xnyzer/mcp-oauth-gateway/pkg/mcp-proxy"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/version"
 )
 
 func getEnvWithDefault(key, defaultValue string) string {
@@ -171,8 +174,10 @@ func parseHeaderMapping(s string) map[string]string {
 type proxyRunnerFunc func(cfg mcpproxy.Config) error
 
 func main() {
+	// cobra already printed "Error: …"; exit non-zero without a stack trace
+	// (fail-fast with a clean message, CODING-STANDARDS §7).
 	if err := newRootCommand(mcpproxy.Run).Execute(); err != nil {
-		panic(err)
+		os.Exit(1)
 	}
 }
 
@@ -231,11 +236,15 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var loginLockoutDuration time.Duration
 
 	rootCmd := &cobra.Command{
-		Use: "mcp-oauth-gateway",
+		Use:     "mcp-oauth-gateway",
+		Version: version.Version,
 		// The upstream target is a positional arg; without this, cobra
 		// treats it as an unknown subcommand once subcommands exist.
 		Args: cobra.ArbitraryArgs,
-		Run: func(cmd *cobra.Command, args []string) {
+		// Runtime errors print as a single clean message (no usage dump,
+		// no stack trace) — main exits non-zero on them.
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			oidcAllowedUsersList := splitCSV(oidcAllowedUsers)
 
 			var oidcAllowedUsersGlobList []string
@@ -256,7 +265,7 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 
 			headerMappingMap := parseHeaderMapping(headerMapping)
 
-			if err := run(mcpproxy.Config{
+			return run(mcpproxy.Config{
 				Listen:          listen,
 				TLSListen:       tlsListen,
 				AutoTLS:         (!noAutoTLS) || tlsCertFile != "" || tlsKeyFile != "",
@@ -318,9 +327,7 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				RateLimitAuthorize:    rateLimitAuthorize,
 				LoginLockoutThreshold: loginLockoutThreshold,
 				LoginLockoutDuration:  loginLockoutDuration,
-			}); err != nil {
-				panic(err)
-			}
+			})
 		},
 	}
 
@@ -394,8 +401,72 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&headerMappingBase, "header-mapping-base", getEnvWithDefault("HEADER_MAPPING_BASE", "/userinfo"), "JSON pointer base path for header mapping claims lookup (e.g., /userinfo or /)")
 
 	rootCmd.AddCommand(newRotateKeyCommand())
+	rootCmd.AddCommand(newHealthcheckCommand())
 
 	return rootCmd
+}
+
+// newHealthcheckCommand probes a running gateway's /healthz for container
+// health checks (SPEC §1.13) — the image has no shell or curl, so the
+// binary probes itself. The plain-HTTP listener serves /healthz in every
+// TLS mode, so probing LISTEN always works.
+func newHealthcheckCommand() *cobra.Command {
+	var listen string
+	var timeout time.Duration
+
+	cmd := &cobra.Command{
+		Use:           "healthcheck",
+		Short:         "Probe the running gateway's health endpoint",
+		Args:          cobra.NoArgs,
+		SilenceUsage:  true,
+		SilenceErrors: false,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return probeHealth(listen, timeout)
+		},
+	}
+
+	cmd.Flags().StringVar(&listen, "listen", getEnvWithDefault("LISTEN", ":80"), "Listen address of the running gateway")
+	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Probe timeout")
+
+	return cmd
+}
+
+// probeHealth GETs /healthz on the local listener and fails on anything
+// but 200 — including redirects, which mean the health passthrough is
+// missing (fail-closed: never report healthy on ambiguity).
+func probeHealth(listen string, timeout time.Duration) error {
+	url, err := healthURL(listen)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(url)
+	if err != nil {
+		return fmt.Errorf("health probe failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health probe returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// healthURL derives the local probe URL from a LISTEN value like ":8080",
+// "0.0.0.0:8080" or "10.0.0.5:8080" (wildcard hosts probe loopback).
+func healthURL(listen string) (string, error) {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return "", fmt.Errorf("invalid listen address %q: %w", listen, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/healthz", nil
 }
 
 // newRotateKeyCommand is the manual key-rotation ops command (SPEC §2.3):

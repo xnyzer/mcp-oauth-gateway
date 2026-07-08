@@ -130,9 +130,10 @@ func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Respons
 			return resp, nil
 		}
 
-		// Drain and close the redirect response body
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		// Drain and close the redirect response body (best-effort; the
+		// next hop replaces it either way)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
 
 		// Clone the request for the next hop, replaying the body
 		newReq := req.Clone(req.Context())

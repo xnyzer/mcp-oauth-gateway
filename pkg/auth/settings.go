@@ -65,7 +65,9 @@ func (a *AuthRouter) handleSettings(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
 	if err := a.settingsTemplate.Execute(c.Writer, data); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
+		// The return value only echoes the attached error; the abort
+		// itself cannot fail.
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
 	}
 }
 

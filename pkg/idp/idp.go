@@ -441,7 +441,11 @@ func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 	}
 	var userInfo map[string]any
 	if userInfoJSON, ok := session.Get(auth.SessionKeyUserInfo).(string); ok && userInfoJSON != "" {
-		json.Unmarshal([]byte(userInfoJSON), &userInfo)
+		// A malformed value only loses the optional claims; the session
+		// cookie is HMAC-authenticated, so this should not happen.
+		if err := json.Unmarshal([]byte(userInfoJSON), &userInfo); err != nil {
+			a.logger.Warn("failed to decode session user info; continuing without claims", zap.Error(err))
+		}
 	}
 
 	jwtSession, err := NewJWTSession(a.externalURL, subject, ar.GetClient().GetID(), userInfo)
@@ -951,9 +955,9 @@ func (s *Session) Clone() fosite.Session {
 
 	clone := &Session{
 		DefaultSession: &fosite.DefaultSession{
-			Username:  s.DefaultSession.Username,
-			Subject:   s.DefaultSession.Subject,
-			ExpiresAt: s.DefaultSession.ExpiresAt,
+			Username:  s.Username,
+			Subject:   s.Subject,
+			ExpiresAt: s.ExpiresAt,
 		},
 		JWTClaims: &jwt.JWTClaims{
 			Issuer:    s.JWTClaims.Issuer,

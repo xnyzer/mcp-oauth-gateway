@@ -132,6 +132,10 @@ const (
 	// sweepInterval is how often expired session records are garbage-
 	// collected (SPEC §2.1).
 	sweepInterval = 5 * time.Minute
+	// readHeaderTimeout bounds the request-header read on every listener
+	// (Slowloris; gosec G112). Header-phase only — SSE / streamable-HTTP
+	// responses are unaffected.
+	readHeaderTimeout = 10 * time.Second
 )
 
 // validateTTLs enforces the SPEC §3.2 ranges (fail-fast at startup).
@@ -289,7 +293,8 @@ func Run(cfg Config) error {
 		return fmt.Errorf("tlsHost requires automatic TLS; remove noAutoTLS or provide certificate files instead")
 	}
 
-	if err := os.MkdirAll(dataPath, os.ModePerm); err != nil {
+	// 0700: the data directory holds keys and the token store (SPEC §2.2).
+	if err := os.MkdirAll(dataPath, 0700); err != nil {
 		return fmt.Errorf("failed to create data directory: %w", err)
 	}
 
@@ -658,20 +663,15 @@ func Run(cfg Config) error {
 
 		logger.Info("Starting server with provided TLS certificate")
 		httpServer := &http.Server{
-			Addr: listen,
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				host := r.Host
-				if host == "" {
-					host = r.URL.Host
-				}
-				target := "https://" + host + r.RequestURI
-				http.Redirect(w, r, target, http.StatusMovedPermanently)
-			}),
+			Addr:              listen,
+			Handler:           httpFallbackHandler(),
+			ReadHeaderTimeout: readHeaderTimeout,
 		}
 		httpsServer := &http.Server{
-			Addr:      tlsListen,
-			Handler:   router,
-			TLSConfig: &tls.Config{GetCertificate: certReloader.GetCertificate},
+			Addr:              tlsListen,
+			Handler:           router,
+			TLSConfig:         &tls.Config{GetCertificate: certReloader.GetCertificate},
+			ReadHeaderTimeout: readHeaderTimeout,
 		}
 		wg.Add(1)
 		go func() {
@@ -733,20 +733,15 @@ func Run(cfg Config) error {
 		}
 
 		httpServer := &http.Server{
-			Addr: listen,
-			Handler: m.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				host := r.Host
-				if host == "" {
-					host = r.URL.Host
-				}
-				target := "https://" + host + r.RequestURI
-				http.Redirect(w, r, target, http.StatusMovedPermanently)
-			})),
+			Addr:              listen,
+			Handler:           m.HTTPHandler(httpFallbackHandler()),
+			ReadHeaderTimeout: readHeaderTimeout,
 		}
 		httpsServer := &http.Server{
-			Addr:      tlsListen,
-			Handler:   router,
-			TLSConfig: m.TLSConfig(),
+			Addr:              tlsListen,
+			Handler:           router,
+			TLSConfig:         m.TLSConfig(),
+			ReadHeaderTimeout: readHeaderTimeout,
 		}
 		wg.Add(1)
 		go func() {
@@ -791,8 +786,9 @@ func Run(cfg Config) error {
 		}()
 	} else {
 		httpServer := &http.Server{
-			Addr:    listen,
-			Handler: router,
+			Addr:              listen,
+			Handler:           router,
+			ReadHeaderTimeout: readHeaderTimeout,
 		}
 		wg.Add(1)
 		go func() {
@@ -838,6 +834,27 @@ func Run(cfg Config) error {
 	stop()
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// httpFallbackHandler serves the plain-HTTP listener while TLS carries the
+// real traffic: /healthz stays reachable for local container health probes
+// (SPEC §1.13 — the healthcheck subcommand probes LISTEN in every mode),
+// everything else redirects to https.
+func httpFallbackHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		host := r.Host
+		if host == "" {
+			host = r.URL.Host
+		}
+		//nolint:gosec // G710: same-host http→https upgrade, no cross-origin target
+		http.Redirect(w, r, "https://"+host+r.RequestURI, http.StatusMovedPermanently)
+	})
 }
 
 // sessionCookieSecure decides the operator session cookie's Secure flag:

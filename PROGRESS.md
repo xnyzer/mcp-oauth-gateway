@@ -36,6 +36,7 @@ follow-ups). F-numbers are stable IDs; the document order, not the number, is th
 | F-006c | Live client verification → **Claude web *and* iOS both connect via real CIMD and read/search/write against the live upstream; passkey enrol+login verified in Safari (desktop) + iOS (iCloud Keychain); operator disabled the password fallback (passkey-only, SR-6 uniform error); live negatives denied**. Chrome skipped (operator's choice). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-006 | **Verify against Claude + security review — complete** (a/b/c1/c2/c3 done): assembled e2e harness, adversarial audit + security fixes, and live end-to-end verification against Claude web + iOS. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007a | Code fixes → **M8 bare-IP `TRUSTED_PROXIES` normalised to `/32`·`/128` (fail-fast on garbage), M7 §3.1 http-issuer startup WARNING + cookie `Secure` from actually-served TLS, `rotate-key` offline ops command (SPEC §2.3)**; 13 regression tests, suite + `-race` green, live smoke on the binary. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
+| F-007b | Container & CI hardening → **M9 digest-pinned distroless non-root image (no interpreters, `HEALTHCHECK` via new `healthcheck` subcommand, non-privileged default ports, `/data` owned in-image) + M10 pinned golangci-lint v2.12.2 in CI (76 findings triaged: real fixes incl. `ReadHeaderTimeout`, data-dir `0700`, deprecated-ECDSA-API swap; documented nolints) + `go-licenses/v2` pinned**; version wired via ldflags (`--version` + MCP ClientInfo); container smoke green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 
 ---
 
@@ -69,23 +70,8 @@ Then the backlog **F-012** (audit low-severity follow-ups). Each task below carr
 **Substeps** (ordered: code fixes → container/CI → release pipeline/artefacts → docs → gate;
 each is independently runnable and committable):
 **F-007a done** (2026-07-08 — M7 + M8 fixes and the `rotate-key` ops command; see Done table +
+archive). **F-007b done** (2026-07-08 — hardened image + lint/license CI; see Done table +
 archive).
-
-#### F-007b — Container & CI hardening: M9 + M10
-
-- **What:** ① **M9:** non-root runtime image (fixed-UID `USER`, `/data` owned in-image so fresh
-  named volumes inherit ownership), drop `python3/pip/nodejs/npm/curl`, digest-pin both base
-  images; Docker `HEALTHCHECK` via a new `healthcheck` subcommand in the binary (no curl needed);
-  wire the real version via `-ldflags -X` (replaces the hardcoded `"dev"` in
-  `pkg/backend/proxy.go`); ② **M10:** pinned `golangci-lint` job + `.golangci.yml`
-  (curated linter set — fix real findings, document deliberate exceptions); pin `go-licenses`.
-- **Files:** `Dockerfile`, `.github/workflows/ci.yml`, `.golangci.yml` (new), `main.go`,
-  `pkg/backend/proxy.go`, lint-driven fixes.
-- **Dependencies:** F-007a (lint runs over the fixed code).
-- **Acceptance:**
-  - [ ] Container runs as non-root with a working Docker healthcheck and correct version string.
-  - [ ] No interpreters in the runtime image; base images digest-pinned.
-  - [ ] CI green including the pinned lint job; `go-licenses` pinned.
 
 #### F-007c — Release workflow + install artefacts
 
@@ -148,8 +134,8 @@ a security hole — deferred so F-006 could gate on the high/medium security bat
 **Idea:** Work through them in a focused hardening pass (each is small and independent).
 
 **Possible implementation (grouped):**
-- **Fail-fast/config:** reject malformed boolean env values (currently silently `false`); create
-  the data dir `0700` (SPEC §2.2); print+`os.Exit(1)` instead of `panic()` on startup errors.
+- **Fail-fast/config:** reject malformed boolean env values (currently silently `false`).
+  *(Done early in F-007b: data dir `0700`; `os.Exit(1)` instead of `panic()` via cobra `RunE`.)*
 - **Auth hardening:** confidential-client PKCE (`EnforcePKCE: true`); passkey login via
   `BeginDiscoverableLogin` (don't expose credential IDs pre-auth); `session.Clear()` on logout;
   uniform empty-password response; delete the dead GET-only `handleLogin` POST branch; per-session

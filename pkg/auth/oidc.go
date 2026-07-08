@@ -31,11 +31,11 @@ func NewOIDCProvider(
 	providerName, externalURL, clientID, clientSecret string, allowedUsers []string, allowedUsersGlob []string,
 	allowedAttributes map[string][]string, allowedAttributesGlob map[string][]string,
 ) (Provider, error) {
-	resp, err := http.Get(configurationURL)
+	resp, err := http.Get(configurationURL) //nolint:gosec // G107: fetching the operator-configured OIDC discovery URL is this provider's purpose
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("OIDC configuration request failed: %s", resp.Status)
 	}
@@ -138,7 +138,7 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 	if err != nil {
 		return false, "", nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return false, "", nil, fmt.Errorf("userinfo request failed: %s", resp.Status)
 	}

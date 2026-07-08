@@ -24,7 +24,7 @@ func LoadOrGenerateSecret(secretPath string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat secret file: %w", err)
 	}
-	secret, err := os.ReadFile(secretPath)
+	secret, err := os.ReadFile(secretPath) //nolint:gosec // G304: path is inside the gateway's data directory (operator config, SPEC §2.2)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secret file: %w", err)
 	}

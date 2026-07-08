@@ -978,3 +978,53 @@ a correct manifest).
 **Files:** `pkg/backend/transparent.go` (+tests), `pkg/mcp-proxy/main.go` (+tests), `main.go`
 (+tests), `pkg/keys/manager.go` (comment), `SPEC.md` §2.3, `docs/VERIFICATION.md` (M8 gotcha
 scoped to pre-F-007a builds).
+
+---
+
+## F-007b — Container & CI hardening (M9 + M10) — DONE 2026-07-08
+
+Second F-007 substep: the published container image and the CI quality gates.
+
+### M9 — hardened runtime image
+- **Runtime switched to `gcr.io/distroless/static-debian12:nonroot`** (digest-pinned, as is the
+  `golang:1.26-bookworm` builder): non-root uid 65532, no shell, no package manager, and the
+  python/pip/node/npm/curl interpreter surface inherited from sigbit is gone. **Trade-off
+  (documented):** stdio upstreams that need `npx`/`uvx` now run as a separate service or a
+  custom image — the gateway image stays minimal.
+- **Non-privileged in-image defaults** `LISTEN=:8080` / `TLS_LISTEN=:8443` (a non-root container
+  cannot bind :80/:443; hosts publish onto them). `/data` is created in-image owned by nonroot,
+  so a fresh named volume inherits writable ownership (verified by running `rotate-key` on one).
+- **`HEALTHCHECK` without curl:** new `healthcheck` subcommand probes `/healthz` on `LISTEN`
+  (redirects count as unhealthy, fail-closed). To make that mode-independent, the plain-HTTP
+  listener in both TLS modes now serves `/healthz` directly and redirects everything else
+  (`httpFallbackHandler`, deduplicating the two previously copy-pasted redirect handlers).
+- **Version wiring:** new `pkg/version` injected via `-ldflags -X` (`VERSION` build arg);
+  reported by `--version` and the MCP ClientInfo (was hardcoded `"dev"`).
+
+### M10 — CI quality gates
+- **golangci-lint v2.12.2** (pinned; action `golangci/golangci-lint-action@v9.3.0`) with a
+  curated `.golangci.yml`: standard linters + `gosec` + `misspell`; `errcheck`/`gosec` off in
+  `_test.go` (documented: cleanup-error noise, taint findings against local stubs).
+- **First lint run: 76 findings, all triaged.** Real fixes: `ReadHeaderTimeout` on all five
+  listeners (Slowloris, SSE-safe), data dir `0700` (SPEC §2.2, pulled from F-012), unchecked
+  `json.Unmarshal` of session user info now logged, deprecated `ecdsa.PublicKey.X/.Y` swapped
+  for `PublicKey.Bytes()` (JWKS output byte-identical, verified by the suite), best-effort
+  cleanup errors made explicit (`_ =`), `Clone()` embedded-selector cleanup. Deliberate
+  exceptions carry inline `//nolint:<linter> // reason` (operator-configured stdio exec/OIDC
+  fetch/key paths, same-host https upgrade, DCR-secret persistence, endpoint-path G101s).
+- **`go-licenses` pinned** to `github.com/google/go-licenses/v2@v2.0.1` (verified locally:
+  dependency tree passes).
+- **Pulled forward from F-012** (adjacent, tiny): data-dir `0700`; startup errors now exit via
+  cobra `RunE` + `os.Exit(1)` instead of `panic()` (root command `SilenceUsage`). F-012 list
+  updated.
+
+Verification: gofmt/vet/lint clean, full suite + `-race` green; container smoke — `--version`
+reports the injected version, `Config.User=nonroot`, Docker health turns `healthy` via the
+in-binary probe, `/healthz` 200 through a published port, `/mcp` without token 401, fresh named
+volume writable as nonroot.
+
+**Files:** `Dockerfile`, `.github/workflows/ci.yml`, `.golangci.yml` (new), `pkg/version/` (new),
+`main.go` (+tests: healthcheck command, healthURL), `pkg/mcp-proxy/main.go` (+tests:
+`httpFallbackHandler`), `pkg/backend/proxy.go`, and lint-driven fixes across `pkg/auth`,
+`pkg/cimd`, `pkg/idp`, `pkg/keys`, `pkg/repository`, `pkg/utils`; `SPEC.md` §1.13/§3.3;
+`docker-compose.example.yml` (port mapping matches the new image default).

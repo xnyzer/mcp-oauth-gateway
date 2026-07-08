@@ -10,7 +10,7 @@ services:
     image: ghcr.io/xnyzer/mcp-oauth-gateway:<version> # pin a version, never latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:80" # reverse proxy forwards to this
+      - "127.0.0.1:8080:8080" # reverse proxy forwards to this (image default LISTEN=:8080)
     environment:
       EXTERNAL_URL: "https://<mcp.example.com>" # public base URL = OAuth issuer
       TRUSTED_PROXIES: "<reverse-proxy-ip-or-cidr>"

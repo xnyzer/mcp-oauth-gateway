@@ -200,6 +200,7 @@ func (m *Manager) adoptLegacyKey(legacyPEM []byte, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	//nolint:gosec // G703: kid is an internally computed hex fingerprint, not user input
 	if err := os.WriteFile(m.keyPath(kid), legacyPEM, 0600); err != nil {
 		return fmt.Errorf("failed to adopt legacy key: %w", err)
 	}
