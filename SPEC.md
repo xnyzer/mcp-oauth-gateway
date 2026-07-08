@@ -452,8 +452,9 @@ directory 0700.
 ### 2.3 Key rotation (SR-4, NFR "no abrupt invalidation")
 
 1. Rotation trigger: `KEY_ROTATION_INTERVAL` elapsed since active-key creation (default 90 d;
-   `0` disables) — checked at startup and periodically by the sweeper. A manual-rotation ops
-   command is deferred to F-007; v1 rotates on interval only.
+   `0` disables) — checked at startup and periodically by the sweeper. Additionally, the
+   `rotate-key` ops command forces one rotation on the data directory (offline — restart the
+   gateway afterwards to sign with the new key).
 2. On rotation: generate new key → new key becomes `active`; previous key moves to `retiring`
    with `not_after = now + ACCESS_TOKEN_TTL + 2×CLOCK_SKEW` (every outstanding token signed by
    it stays verifiable until it has expired).
@@ -468,7 +469,8 @@ changing `KEY_ALG` also triggers a rotation at startup (§3.2). Verification is 
 end to end: the proxy resolves `kid` against active + retiring keys, and fosite validates
 through the same key set (custom `jwt.Signer` in `pkg/keys`), so introspection keeps working
 across rotations. Sweep order is crash-safe (manifest rewritten before key files are
-deleted). The manual-rotation ops command remains deferred to F-007.
+deleted). The manual `rotate-key` ops command landed in F-007a (same retiring window; offline,
+documented restart).
 
 ### 2.4 Revocation semantics (completes §1.9) — **done, F-005b**
 

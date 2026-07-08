@@ -32,7 +32,7 @@ Internet → reverse proxy (public TLS for <mcp.example.com>) → gateway :<port
 | `EXTERNAL_URL` | `https://<mcp.example.com>` | Public base URL = OAuth issuer. `https` even though the gateway serves HTTP internally (the proxy does TLS). |
 | `NO_AUTO_TLS` | `true` | **Required.** With an `https` non-loopback `EXTERNAL_URL` the gateway otherwise auto-enables ACME and refuses to start (`TLS host is auto-detected …`). The proxy already terminates TLS. |
 | `LISTEN` | `:<port>` (e.g. `:8080`) | Plain-HTTP listen address. Use a non-privileged port if the container runs non-root. |
-| `TRUSTED_PROXIES` | `<proxy-ip>/32` | **Must be CIDR**, not a bare IP — a bare IP currently aborts startup with an `http(s)` upstream (`netip.ParsePrefix: no '/'`). Set it so the real client IP / `X-Forwarded-Proto` from the proxy are honoured (and the session cookie gets `Secure`). |
+| `TRUSTED_PROXIES` | `<proxy-ip-or-cidr>` | Bare IPs and CIDR ranges both work (bare IPs are normalised to `/32`·`/128` since F-007a; builds before that abort on a bare IP — use CIDR there). Set it so the real client IP / `X-Forwarded-Proto` from the proxy are honoured (and the session cookie gets `Secure`). |
 | `PROXY_TARGET` (positional arg) | `http://<upstream-host>:<port>` | **Host-only** when the upstream MCP path mirrors the client path (e.g. both `/mcp`): the gateway joins the inbound path onto the target, so a target ending in `/mcp` + an inbound `/mcp` would double to `/mcp/mcp`. |
 | `PROXY_BEARER_TOKEN` | `<upstream-token>` | Injected toward the upstream; the client never sees it. Omit if the upstream is unauthenticated. |
 | `PASSWORD_HASH` | `<bcrypt-hash>` | Operator login. See the Compose pitfall below. |
@@ -49,7 +49,8 @@ your upstream serves MCP on.
 - **Non-root + a named volume**: a root-owned named volume isn't writable by a non-root UID. Use a
   **bind mount** to a host dir owned by the run user and set `user: "<uid>:<gid>"`, or `chown` the
   volume.
-- **Bare-IP `TRUSTED_PROXIES`** aborts startup — always use CIDR (`/32`, `/128`).
+- **Bare-IP `TRUSTED_PROXIES`** aborts startup on builds before F-007a — use CIDR (`/32`,
+  `/128`) there; current builds accept both forms.
 
 ## 3. Deploy
 

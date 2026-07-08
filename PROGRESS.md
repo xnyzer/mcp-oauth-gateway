@@ -35,6 +35,7 @@ follow-ups). F-numbers are stable IDs; the document order, not the number, is th
 | F-006c1 | Deploy + server-side verification → **gateway live behind the operator's reverse proxy (non-root container), public discovery/JWKS `200`, `/mcp` fail-closed `401`, and a full OAuth+PKCE round-trip with a proxied MCP `initialize` reaching the upstream verified end-to-end through the proxy** (credential injection + SSE streaming confirmed). Runbook `docs/VERIFICATION.md`; deploy artefacts in `private/` (gitignored). Surfaced/handled 3 deploy gotchas (bare-IP `TRUSTED_PROXIES`=M8→`/32`, `NO_AUTO_TLS`, Compose `env_file` `$`→`$$`). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-006c | Live client verification → **Claude web *and* iOS both connect via real CIMD and read/search/write against the live upstream; passkey enrol+login verified in Safari (desktop) + iOS (iCloud Keychain); operator disabled the password fallback (passkey-only, SR-6 uniform error); live negatives denied**. Chrome skipped (operator's choice). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-006 | **Verify against Claude + security review — complete** (a/b/c1/c2/c3 done): assembled e2e harness, adversarial audit + security fixes, and live end-to-end verification against Claude web + iOS. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
+| F-007a | Code fixes → **M8 bare-IP `TRUSTED_PROXIES` normalised to `/32`·`/128` (fail-fast on garbage), M7 §3.1 http-issuer startup WARNING + cookie `Secure` from actually-served TLS, `rotate-key` offline ops command (SPEC §2.3)**; 13 regression tests, suite + `-race` green, live smoke on the binary. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 
 ---
 
@@ -64,6 +65,76 @@ Then the backlog **F-012** (audit low-severity follow-ups). Each task below carr
 - **Release gate:** re-verify against the MCP authorization spec **2026-07-28 RC** (watch item, REQUIREMENTS §0), unless already done in F-006.
 
 **Dependencies:** F-006.
+
+**Substeps** (ordered: code fixes → container/CI → release pipeline/artefacts → docs → gate;
+each is independently runnable and committable):
+**F-007a done** (2026-07-08 — M7 + M8 fixes and the `rotate-key` ops command; see Done table +
+archive).
+
+#### F-007b — Container & CI hardening: M9 + M10
+
+- **What:** ① **M9:** non-root runtime image (fixed-UID `USER`, `/data` owned in-image so fresh
+  named volumes inherit ownership), drop `python3/pip/nodejs/npm/curl`, digest-pin both base
+  images; Docker `HEALTHCHECK` via a new `healthcheck` subcommand in the binary (no curl needed);
+  wire the real version via `-ldflags -X` (replaces the hardcoded `"dev"` in
+  `pkg/backend/proxy.go`); ② **M10:** pinned `golangci-lint` job + `.golangci.yml`
+  (curated linter set — fix real findings, document deliberate exceptions); pin `go-licenses`.
+- **Files:** `Dockerfile`, `.github/workflows/ci.yml`, `.golangci.yml` (new), `main.go`,
+  `pkg/backend/proxy.go`, lint-driven fixes.
+- **Dependencies:** F-007a (lint runs over the fixed code).
+- **Acceptance:**
+  - [ ] Container runs as non-root with a working Docker healthcheck and correct version string.
+  - [ ] No interpreters in the runtime image; base images digest-pinned.
+  - [ ] CI green including the pinned lint job; `go-licenses` pinned.
+
+#### F-007c — Release workflow + install artefacts
+
+- **What:** ① `release.yml`: on git tag, build a multi-arch (amd64+arm64) image and push to
+  `ghcr.io/xnyzer/mcp-oauth-gateway` (workflow `packages: write`); ② `.env.example` documenting
+  **all** SPEC §3 env vars (incl. the Compose `env_file` `$`→`$$` bcrypt-escaping note);
+  ③ switch `docker-compose.example.yml` to `env_file:` + healthchecks +
+  `depends_on: condition: service_healthy`; ④ optional `setup.sh` quickstart — universal parts
+  only (generate bcrypt hash, write `.env`); **no firewall scripting** (docs only, F-007d).
+- **Files:** `.github/workflows/release.yml` (new), `.env.example` (new),
+  `docker-compose.example.yml`, `setup.sh` (new).
+- **Dependencies:** F-007b (only the hardened image gets published).
+- **Acceptance:**
+  - [ ] A tag push produces a pullable GHCR image (amd64+arm64).
+  - [ ] Fresh `docker compose up` with a filled-in `.env` comes up healthy.
+  - [ ] `.env.example` covers §3.1+§3.2 completely; placeholders only (GR-5).
+
+#### F-007d — Docs
+
+- **What:** README usage docs: quickstart, front an MCP server, add as a Claude custom
+  connector, **both install modes** — (A) behind an own TLS-terminating reverse proxy
+  (`NO_AUTO_TLS` + `TRUSTED_PROXIES` CIDR), (B) standalone built-in ACME (`TLS_HOST` +
+  `TLS_ACCEPT_TOS`, port 443) — plus the firewall note (allow Anthropic egress
+  **160.79.104.0/21** — blocking it fails *silently*), the complete §3 config reference and the
+  key-rotation ops doc; SECURITY.md refresh (drop "once implemented", supported-versions table);
+  NOTICE check; `CHANGELOG.md` (SPEC §2.5 wants migrations documented in release notes);
+  replace the "early development / not yet released" status banner.
+- **Files:** `README.md`, `SECURITY.md`, `NOTICE`, `CHANGELOG.md` (new),
+  `docs/VERIFICATION.md` (cross-links).
+- **Dependencies:** F-007c (documents the published artefacts).
+- **Acceptance:**
+  - [ ] A stranger can deploy with README + `.env.example` alone; every §3 env var documented.
+  - [ ] Both install modes documented incl. the egress/firewall note.
+  - [ ] No real hostnames/IPs/tokens anywhere (GR-5).
+
+#### F-007e — Release gate + publish (go/no-go with the operator)
+
+- **What:** ① check whether the MCP authorization spec **2026-07-28 RC** has landed (dated
+  after this task started — if unreleased, document as watch item per REQUIREMENTS §0);
+  ② final license sweep (`go-licenses`, NOTICE); ③ SemVer decision (recommendation: **v0.1.0**;
+  1.0 after the RC re-verify) + tag; ④ verify the GHCR image post-workflow (pull, run, healthy);
+  ⑤ **flip the repo public — explicit operator go/no-go**; ⑥ GitHub release with notes.
+- **Files:** git tag, GitHub release/settings; watch-item note in `PROGRESS.md`/`REQUIREMENTS.md`
+  if the RC is unreleased.
+- **Dependencies:** F-007a–d.
+- **Acceptance:**
+  - [ ] Tag exists; image pullable; release published.
+  - [ ] RC checked; outcome documented (verified or watch item).
+  - [ ] Repo visibility decided explicitly by the operator.
 
 ---
 

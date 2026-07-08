@@ -313,8 +313,8 @@ func (m *Manager) Maintain(now time.Time) error {
 	return m.sweepLocked(now)
 }
 
-// Rotate forces a key rotation (used by tests; the interval-based trigger
-// is Maintain).
+// Rotate forces a key rotation (the manual rotate-key ops command and
+// tests; the interval-based trigger is Maintain).
 func (m *Manager) Rotate(now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

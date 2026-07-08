@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -266,6 +267,14 @@ func Run(cfg Config) error {
 		return err
 	}
 
+	// TRUSTED_PROXIES accepts bare IPs and CIDR ranges (SPEC §3.1, audit
+	// M8); normalise once so gin and the transparent backend see the same
+	// list and an invalid entry fails fast here.
+	trustedProxy, err = backend.NormalizeTrustedProxies(trustedProxy)
+	if err != nil {
+		return fmt.Errorf("invalid TRUSTED_PROXIES: %w", err)
+	}
+
 	if (tlsCertFile == "") != (tlsKeyFile == "") {
 		return fmt.Errorf("both TLS certificate and key files must be provided together")
 	}
@@ -309,6 +318,7 @@ func Run(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to build logger: %w", err)
 	}
+	warnPlainHTTPIssuer(logger, parsedExternalURL)
 
 	if len(proxyTarget) == 0 {
 		return fmt.Errorf("proxy target must be specified")
@@ -597,7 +607,9 @@ func Run(cfg Config) error {
 	}
 
 	router := gin.New()
-	router.SetTrustedProxies(trustedProxy)
+	if err := router.SetTrustedProxies(trustedProxy); err != nil {
+		return fmt.Errorf("failed to set trusted proxies: %w", err)
+	}
 
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -616,7 +628,7 @@ func Run(cfg Config) error {
 		Path:     "/",
 		MaxAge:   600,
 		HttpOnly: true,
-		Secure:   sessionCookieSecure(parsedExternalURL),
+		Secure:   sessionCookieSecure(parsedExternalURL, manualTLS || tlsHost != ""),
 		SameSite: http.SameSiteLaxMode,
 	})
 	router.Use(sessions.Sessions("session", store))
@@ -828,8 +840,35 @@ func Run(cfg Config) error {
 	return errors.Join(errs...)
 }
 
-func sessionCookieSecure(externalURL *url.URL) bool {
-	return externalURL.Scheme == "https"
+// sessionCookieSecure decides the operator session cookie's Secure flag:
+// set for an https issuer, and also when the gateway itself terminates TLS
+// while the issuer says http (a misconfiguration — the §3.1 warning fires,
+// but the cookie must not travel unprotected either; audit M7).
+func sessionCookieSecure(externalURL *url.URL, servesTLS bool) bool {
+	return externalURL.Scheme == "https" || servesTLS
+}
+
+// warnPlainHTTPIssuer emits the SPEC §3.1 startup WARNING: an http issuer
+// on a non-loopback host sends tokens and cookies over the network
+// unencrypted (audit M7). Loopback stays silent — local development.
+func warnPlainHTTPIssuer(logger *zap.Logger, externalURL *url.URL) {
+	if externalURL.Scheme != "http" || isLoopbackHost(externalURL.Hostname()) {
+		return
+	}
+	logger.Warn("EXTERNAL_URL uses plain http on a non-loopback host — tokens and session cookies are exposed in transit; use https, or keep http strictly behind a TLS-terminating reverse proxy",
+		zap.String("external_url", externalURL.String()))
+}
+
+// isLoopbackHost reports whether the issuer host is loopback ("localhost",
+// "*.localhost", 127.0.0.0/8, ::1) — the only hosts where a plain-http
+// issuer needs no warning (SPEC §3.1).
+func isLoopbackHost(hostname string) bool {
+	lower := strings.ToLower(hostname)
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(hostname)
+	return err == nil && addr.Unmap().IsLoopback()
 }
 
 // hasEnrolledPasskey reports whether the operator account exists and has at

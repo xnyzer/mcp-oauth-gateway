@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/proxy"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestRun_NormalizesExternalURLTrailingSlash(t *testing.T) {
@@ -154,20 +156,121 @@ func TestRun_RequiresAuthBackend(t *testing.T) {
 
 func TestSessionCookieSecure(t *testing.T) {
 	cases := []struct {
+		name        string
 		externalURL string
+		servesTLS   bool
 		want        bool
 	}{
-		{externalURL: "https://example.com", want: true},
-		{externalURL: "http://example.com", want: false},
+		{name: "https issuer behind TLS proxy", externalURL: "https://example.com", servesTLS: false, want: true},
+		{name: "https issuer with built-in TLS", externalURL: "https://example.com", servesTLS: true, want: true},
+		{name: "plain http, no TLS", externalURL: "http://example.com", servesTLS: false, want: false},
+		{name: "http issuer but gateway serves TLS (audit M7)", externalURL: "http://example.com", servesTLS: true, want: true},
 	}
 
 	for _, tt := range cases {
-		t.Run(tt.externalURL, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			parsedURL, err := url.Parse(tt.externalURL)
 			require.NoError(t, err)
-			require.Equal(t, tt.want, sessionCookieSecure(parsedURL))
+			require.Equal(t, tt.want, sessionCookieSecure(parsedURL, tt.servesTLS))
 		})
 	}
+}
+
+func TestIsLoopbackHost(t *testing.T) {
+	cases := []struct {
+		hostname string
+		want     bool
+	}{
+		{hostname: "localhost", want: true},
+		{hostname: "LocalHost", want: true},
+		{hostname: "gateway.localhost", want: true},
+		{hostname: "127.0.0.1", want: true},
+		{hostname: "127.8.9.10", want: true},
+		{hostname: "::1", want: true},
+		{hostname: "::ffff:127.0.0.1", want: true},
+		{hostname: "example.com", want: false},
+		{hostname: "192.0.2.7", want: false},
+		{hostname: "notlocalhost", want: false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.hostname, func(t *testing.T) {
+			require.Equal(t, tt.want, isLoopbackHost(tt.hostname))
+		})
+	}
+}
+
+// TestWarnPlainHTTPIssuer covers the SPEC §3.1 startup WARNING (audit M7):
+// it fires for an http non-loopback issuer and stays silent otherwise.
+func TestWarnPlainHTTPIssuer(t *testing.T) {
+	cases := []struct {
+		externalURL string
+		wantWarning bool
+	}{
+		{externalURL: "http://example.com", wantWarning: true},
+		{externalURL: "http://192.0.2.7:8080", wantWarning: true},
+		{externalURL: "http://localhost", wantWarning: false},
+		{externalURL: "http://127.0.0.1:8080", wantWarning: false},
+		{externalURL: "https://example.com", wantWarning: false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.externalURL, func(t *testing.T) {
+			core, logs := observer.New(zap.WarnLevel)
+			parsedURL, err := url.Parse(tt.externalURL)
+			require.NoError(t, err)
+
+			warnPlainHTTPIssuer(zap.New(core), parsedURL)
+
+			warnings := logs.FilterMessageSnippet("plain http").All()
+			if tt.wantWarning {
+				require.Len(t, warnings, 1)
+			} else {
+				require.Empty(t, warnings)
+			}
+		})
+	}
+}
+
+// TestRun_NormalizesTrustedProxies covers audit M8 at the Run level: a
+// bare-IP TRUSTED_PROXIES entry must start (it previously crashed backend
+// creation), an invalid entry must fail fast with a clear message.
+func TestRun_NormalizesTrustedProxies(t *testing.T) {
+	originalNewProxyRouter := newProxyRouter
+	t.Cleanup(func() {
+		newProxyRouter = originalNewProxyRouter
+	})
+	newProxyRouter = func(cfg proxy.Config) (*proxy.ProxyRouter, error) {
+		return nil, errors.New("stop early")
+	}
+
+	baseConfig := func() Config {
+		return Config{
+			Listen:            ":0",
+			TLSListen:         ":0",
+			DataPath:          t.TempDir(),
+			RepositoryBackend: "local",
+			ExternalURL:       "http://localhost",
+			Password:          "test-password",
+			ProxyTargets:      []string{"http://example.com"},
+			HeaderMappingBase: "/userinfo",
+			DCREnabled:        true,
+		}
+	}
+
+	t.Run("bare IP is normalised and starts", func(t *testing.T) {
+		cfg := baseConfig()
+		cfg.TrustedProxies = []string{"192.0.2.1"}
+		err := Run(cfg)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "stop early", "a bare IP must reach the stub, not fail backend creation")
+	})
+
+	t.Run("invalid entry fails fast", func(t *testing.T) {
+		cfg := baseConfig()
+		cfg.TrustedProxies = []string{"proxy.internal"}
+		err := Run(cfg)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid TRUSTED_PROXIES")
+	})
 }
 
 func TestUserInfoFieldsFromConfig(t *testing.T) {

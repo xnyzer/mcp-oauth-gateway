@@ -73,6 +73,81 @@ func TestTransparentBackendWithProxy(t *testing.T) {
 	require.Equal(t, "8443", header.Get("X-Forwarded-Port"), "a trusted proxy's X-Forwarded-Port is preserved")
 }
 
+// TestTransparentBackendWithBareIPProxy covers audit M8: a bare-IP
+// TRUSTED_PROXIES entry must work like its /32 form instead of failing the
+// constructor (httptest requests arrive from 192.0.2.1).
+func TestTransparentBackendWithBareIPProxy(t *testing.T) {
+	r := gin.New()
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, c.Request.Header)
+	})
+	ts := httptest.NewServer(r)
+	u, _ := url.Parse(ts.URL)
+
+	be, err := NewTransparentBackend(zap.NewNop(), u, []string{"192.0.2.1"})
+	require.NoError(t, err, "a bare IP must be accepted (audit M8)")
+	handler, err := be.Run(context.Background())
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-For", "192.0.3.1")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var header http.Header
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &header))
+	require.Equal(t, "192.0.3.1, 192.0.2.1", header.Get("X-Forwarded-For"),
+		"a bare-IP entry must trust exactly that peer")
+}
+
+func TestParseTrustedProxies(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []string
+		want    []string
+		wantErr string
+	}{
+		{name: "empty", entries: nil, want: []string{}},
+		{name: "bare IPv4", entries: []string{"192.0.2.1"}, want: []string{"192.0.2.1/32"}},
+		{name: "bare IPv6", entries: []string{"2001:db8::1"}, want: []string{"2001:db8::1/128"}},
+		{name: "bare 4-in-6 unmapped", entries: []string{"::ffff:192.0.2.1"}, want: []string{"192.0.2.1/32"}},
+		{name: "CIDR kept", entries: []string{"10.0.0.0/8", "2001:db8::/32"}, want: []string{"10.0.0.0/8", "2001:db8::/32"}},
+		{name: "mixed", entries: []string{"192.0.2.1", "10.0.0.0/8"}, want: []string{"192.0.2.1/32", "10.0.0.0/8"}},
+		{name: "hostname rejected", entries: []string{"proxy.internal"}, wantErr: `invalid trusted proxy entry "proxy.internal"`},
+		{name: "garbage rejected", entries: []string{"10.0.0.0/8", "not-an-ip/24"}, wantErr: `invalid trusted proxy entry "not-an-ip/24"`},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			prefixes, err := ParseTrustedProxies(tt.entries)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			got := make([]string, len(prefixes))
+			for i, p := range prefixes {
+				got[i] = p.String()
+			}
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNormalizeTrustedProxies(t *testing.T) {
+	normalized, err := NormalizeTrustedProxies([]string{"192.0.2.1", "10.0.0.0/8", "2001:db8::1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"192.0.2.1/32", "10.0.0.0/8", "2001:db8::1/128"}, normalized)
+
+	normalized, err = NormalizeTrustedProxies(nil)
+	require.NoError(t, err)
+	require.Nil(t, normalized)
+
+	_, err = NormalizeTrustedProxies([]string{"bogus"})
+	require.Error(t, err)
+}
+
 func TestTransparentBackendWithInvalidProxy(t *testing.T) {
 	r := gin.New()
 	r.GET("/", func(c *gin.Context) {

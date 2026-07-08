@@ -24,13 +24,9 @@ type TransparentBackend struct {
 }
 
 func NewTransparentBackend(logger *zap.Logger, u *url.URL, trusted []string) (Backend, error) {
-	trn := make([]netip.Prefix, 0, len(trusted))
-	for _, c := range trusted {
-		p, err := netip.ParsePrefix(c)
-		if err != nil {
-			return nil, err
-		}
-		trn = append(trn, p)
+	trn, err := ParseTrustedProxies(trusted)
+	if err != nil {
+		return nil, err
 	}
 
 	return &TransparentBackend{
@@ -38,6 +34,45 @@ func NewTransparentBackend(logger *zap.Logger, u *url.URL, trusted []string) (Ba
 		url:     u,
 		trusted: trn,
 	}, nil
+}
+
+// ParseTrustedProxies parses TRUSTED_PROXIES entries into prefixes. Both
+// entry forms documented in SPEC §3.1 are accepted: CIDR ranges as-is, bare
+// IP addresses normalised to single-host prefixes (/32 or /128, matching
+// gin's behaviour — audit M8).
+func ParseTrustedProxies(entries []string) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(entries))
+	for _, entry := range entries {
+		if prefix, err := netip.ParsePrefix(entry); err == nil {
+			prefixes = append(prefixes, prefix)
+			continue
+		}
+		addr, err := netip.ParseAddr(entry)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy entry %q: must be an IP address or CIDR range", entry)
+		}
+		addr = addr.Unmap()
+		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return prefixes, nil
+}
+
+// NormalizeTrustedProxies rewrites bare-IP entries to CIDR form. Called
+// once at startup so every consumer (gin, the transparent backend) sees the
+// same normalised list and an invalid entry fails fast with a clear message.
+func NormalizeTrustedProxies(entries []string) ([]string, error) {
+	prefixes, err := ParseTrustedProxies(entries)
+	if err != nil {
+		return nil, err
+	}
+	if len(prefixes) == 0 {
+		return nil, nil
+	}
+	normalized := make([]string, len(prefixes))
+	for i, prefix := range prefixes {
+		normalized[i] = prefix.String()
+	}
+	return normalized, nil
 }
 
 const maxBackendRedirects = 10

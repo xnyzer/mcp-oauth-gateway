@@ -940,3 +940,41 @@ project's original goal. Two audit findings were additionally confirmed *live* d
 (M8 bare-IP `TRUSTED_PROXIES` crash; the http-issuer/ACME interaction handled via `NO_AUTO_TLS`).
 Remaining before a tagged public release: **F-007** (release hygiene — docs, SemVer, golangci-lint,
 the real M7–M10 deployment fixes, and the 2026-07-28 RC re-verify) and the **F-012** backlog.
+
+---
+
+## F-007a — Code fixes: M7 + M8 + manual key-rotation command — DONE 2026-07-08
+
+First F-007 substep (release hygiene): the two remaining code-level audit fixes plus the
+SPEC §2.3 ops command deferred from F-005d.
+
+- **M8 — bare-IP `TRUSTED_PROXIES` no longer crashes startup:** new
+  `backend.ParseTrustedProxies` / `backend.NormalizeTrustedProxies` accept both documented
+  entry forms — CIDR as-is, bare IPs normalised to `/32`·`/128` (4-in-6 unmapped first,
+  matching gin); anything else fails fast with a clear message. `Run()` normalises once so
+  gin and the transparent backend see the same list; gin's previously ignored
+  `SetTrustedProxies` error is now checked.
+- **M7 — SPEC §3.1 startup WARNING + cookie `Secure`:** `warnPlainHTTPIssuer` warns on an
+  `http` issuer with a non-loopback host (localhost / `*.localhost` / 127.0.0.0/8 / ::1 stay
+  silent); the session cookie's `Secure` flag is now "https issuer **or** the gateway itself
+  serves TLS" instead of the URL scheme alone.
+- **`rotate-key` ops command (SPEC §2.3):** offline cobra subcommand on the data directory —
+  same env twins (`DATA_PATH`, `KEY_ALG`, `ACCESS_TOKEN_TTL`, `CLOCK_SKEW`), same retiring
+  window as the server, refuses `JWT_PRIVATE_KEY` static mode, prints kid continuity and a
+  restart reminder. **Decision:** offline subcommand over signal/admin-endpoint because the
+  running manager keeps the key set in memory (it would neither pick up nor reliably preserve
+  an on-disk rotation) and an offline command adds no attack surface; the restart requirement
+  is documented in the command help and SPEC §2.3.
+- **Cobra gotcha:** adding the first subcommand made cobra treat the positional upstream
+  target as an "unknown command" — the root command now sets `Args: cobra.ArbitraryArgs`
+  (regression caught by the existing root-command tests).
+
+Verification: 13 new test cases (parse/normalise tables, bare-IP constructor + Run-level,
+Secure-flag matrix, loopback table, WARNING via zap observer, rotation continuity, static-mode
+refusal, flag validation); full suite + `-race` green; live smoke on the built binary (bare-IP
+start, WARNING in the JSON log, `/healthz` 200, no-token `/mcp` 401, two `rotate-key` runs with
+a correct manifest).
+
+**Files:** `pkg/backend/transparent.go` (+tests), `pkg/mcp-proxy/main.go` (+tests), `main.go`
+(+tests), `pkg/keys/manager.go` (comment), `SPEC.md` §2.3, `docs/VERIFICATION.md` (M8 gotcha
+scoped to pre-F-007a builds).
