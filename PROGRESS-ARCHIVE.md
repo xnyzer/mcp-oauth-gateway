@@ -1066,3 +1066,36 @@ ci.yml's go-licenses step).
 
 **Files:** `.github/workflows/release.yml` (new), `.env.example` (new), `setup.sh` (new),
 `docker-compose.example.yml`, `.github/workflows/ci.yml` (quoting).
+
+---
+
+## F-007d — Docs — DONE 2026-07-08
+
+Fourth F-007 substep: the public-facing documentation.
+
+- **`README.md` rewritten as full usage docs** (replacing the "early development / not yet
+  released" banner with the audited/live-verified status): quickstart via `setup.sh` +
+  compose; **install modes A** (behind a TLS-terminating reverse proxy — `NO_AUTO_TLS`,
+  `TRUSTED_PROXIES`, streaming/no-buffering proxy note) **and B** (standalone built-in ACME —
+  `TLS_HOST`/`TLS_ACCEPT_TOS`, host 80/443 published onto the non-privileged container
+  ports); the **Anthropic-egress firewall note** (160.79.104.0/21 — blocking fails
+  *silently*); a step-by-step **Claude custom-connector guide** incl. passkey enrolment and
+  disabling the password fallback; upstream fronting (bearer optional, host-only-target path
+  gotcha, stdio-needs-own-image note); a **complete §3 config reference** (six grouped
+  tables); operations (health, manual + automatic key rotation, backup, auth-event logs,
+  version, upgrade policy); endpoint map; security posture.
+- **`CHANGELOG.md`** (new, Keep-a-Changelog): `[Unreleased]` section ready to become v0.1.0 —
+  everything relative to the forked base (CIMD, discovery, token lifecycle, keys, passkeys,
+  abuse protection, packaging), the audit-hardening list, and **upgrade notes** (no
+  data-directory compatibility with sigbit/mcp-auth-proxy; legacy single-key adoption).
+- **`SECURITY.md`**: scope no longer "once implemented" (it is); supported-versions table
+  stays "pre-release" until the F-007e tag flips it.
+- **`NOTICE`**: stale `go-sql-driver/mysql` entry removed (dependency dropped long ago),
+  license-scan reference updated to the CI job. Attribution (sigbit MIT block) verified.
+- **`docs/VERIFICATION.md`**: cross-linked to the README install modes + `.env.example`.
+
+Verified by script: all relative links in README/CHANGELOG resolve; every SPEC §3.1+§3.2 env
+var appears in both README and `.env.example`; GR-5 scan clean (only documented public
+ranges/TEST-NET addresses).
+
+**Files:** `README.md`, `CHANGELOG.md` (new), `SECURITY.md`, `NOTICE`, `docs/VERIFICATION.md`.

@@ -41,6 +41,5 @@ Go module dependencies are distributed under their own licenses — predominantl
 MIT / BSD / Apache-2.0, plus a few weak-copyleft MPL-2.0 modules:
   - github.com/hashicorp/go-retryablehttp, github.com/hashicorp/go-cleanhttp
     (transitive via github.com/ory/fosite — our vetted OAuth library)
-  - github.com/go-sql-driver/mysql (via the GORM MySQL driver; to be dropped in F-008c)
-There is NO GPL / AGPL / LGPL dependency. See the dependency license scan (F-008c CI)
+There is NO GPL / AGPL / LGPL dependency. See the CI license check (go-licenses)
 and `go.mod` for the authoritative list.

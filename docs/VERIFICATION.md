@@ -27,6 +27,10 @@ Internet → reverse proxy (public TLS for <mcp.example.com>) → gateway :<port
 
 ## 2. Configuration (behind a TLS-terminating proxy)
 
+This is install mode A; both modes and the full option reference live in the
+[README](../README.md#install-modes) and [`.env.example`](../.env.example). The rows below
+are the verification-relevant subset.
+
 | Env | Value | Why |
 |---|---|---|
 | `EXTERNAL_URL` | `https://<mcp.example.com>` | Public base URL = OAuth issuer. `https` even though the gateway serves HTTP internally (the proxy does TLS). |

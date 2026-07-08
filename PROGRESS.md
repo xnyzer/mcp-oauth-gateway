@@ -38,6 +38,7 @@ follow-ups). F-numbers are stable IDs; the document order, not the number, is th
 | F-007a | Code fixes → **M8 bare-IP `TRUSTED_PROXIES` normalised to `/32`·`/128` (fail-fast on garbage), M7 §3.1 http-issuer startup WARNING + cookie `Secure` from actually-served TLS, `rotate-key` offline ops command (SPEC §2.3)**; 13 regression tests, suite + `-race` green, live smoke on the binary. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007b | Container & CI hardening → **M9 digest-pinned distroless non-root image (no interpreters, `HEALTHCHECK` via new `healthcheck` subcommand, non-privileged default ports, `/data` owned in-image) + M10 pinned golangci-lint v2.12.2 in CI (76 findings triaged: real fixes incl. `ReadHeaderTimeout`, data-dir `0700`, deprecated-ECDSA-API swap; documented nolints) + `go-licenses/v2` pinned**; version wired via ldflags (`--version` + MCP ClientInfo); container smoke green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007c | Release workflow + install artefacts → **`release.yml` (SemVer tag → multi-arch amd64+arm64 → GHCR, no `latest`, VERSION from tag), `.env.example` covering every §3 env var (incl. the `$`→`$$` Compose pitfall), compose example on `env_file:` + health-gated `depends_on`, `setup.sh` quickstart (stdin bcrypt hash, writes `.env` 0600)**; verified live: setup.sh run → compose up healthy → login 302/400 proves the escaping chain; workflows actionlint-clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
+| F-007d | Docs → **README rewritten as full usage docs (quickstart, install modes A/B, Claude-connector guide, Anthropic-egress 160.79.104.0/21 silent-failure note, complete §3 config reference, upstream/path/stdio gotchas, ops incl. `rotate-key`, endpoints, security posture); `CHANGELOG.md` (Keep-a-Changelog, Unreleased→v0.1.0 incl. upgrade notes); SECURITY.md + NOTICE refreshed (stale mysql line dropped); runbook cross-linked**; links + §3 completeness verified by script, GR-5 clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 
 ---
 
@@ -74,24 +75,8 @@ each is independently runnable and committable):
 archive). **F-007b done** (2026-07-08 — hardened image + lint/license CI; see Done table +
 archive). **F-007c done** (2026-07-08 — release workflow + install artefacts; the "GHCR image
 pullable after a tag push" acceptance moves to the F-007e tag; see Done table + archive).
-
-#### F-007d — Docs
-
-- **What:** README usage docs: quickstart, front an MCP server, add as a Claude custom
-  connector, **both install modes** — (A) behind an own TLS-terminating reverse proxy
-  (`NO_AUTO_TLS` + `TRUSTED_PROXIES` CIDR), (B) standalone built-in ACME (`TLS_HOST` +
-  `TLS_ACCEPT_TOS`, port 443) — plus the firewall note (allow Anthropic egress
-  **160.79.104.0/21** — blocking it fails *silently*), the complete §3 config reference and the
-  key-rotation ops doc; SECURITY.md refresh (drop "once implemented", supported-versions table);
-  NOTICE check; `CHANGELOG.md` (SPEC §2.5 wants migrations documented in release notes);
-  replace the "early development / not yet released" status banner.
-- **Files:** `README.md`, `SECURITY.md`, `NOTICE`, `CHANGELOG.md` (new),
-  `docs/VERIFICATION.md` (cross-links).
-- **Dependencies:** F-007c (documents the published artefacts).
-- **Acceptance:**
-  - [ ] A stranger can deploy with README + `.env.example` alone; every §3 env var documented.
-  - [ ] Both install modes documented incl. the egress/firewall note.
-  - [ ] No real hostnames/IPs/tokens anywhere (GR-5).
+**F-007d done** (2026-07-08 — README usage docs, CHANGELOG, SECURITY/NOTICE refresh; see Done
+table + archive).
 
 #### F-007e — Release gate + publish (go/no-go with the operator)
 

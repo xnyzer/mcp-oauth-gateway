@@ -41,7 +41,7 @@ please be patient.
 
 ## Scope
 
-In scope (once implemented):
+In scope:
 
 - The OAuth/MCP gateway code: discovery (PRM/AS metadata), DCR, authorize+token (PKCE), JWKS and
   key management, login/consent, the upstream proxy, rate-limiting.
