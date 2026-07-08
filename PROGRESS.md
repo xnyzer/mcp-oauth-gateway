@@ -8,9 +8,10 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 image on GHCR (`ghcr.io/xnyzer/mcp-oauth-gateway`), verified against the MCP **2026-07-28 spec
 RC**. The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 incl. F-007 (release
-hygiene) are done — rationale archived in `PROGRESS-ARCHIVE.md`. **Open: only the F-012 backlog**
-(audit low-severity follow-ups) and the watch item to re-check the final MCP spec after
-2026-07-28. F-numbers are stable IDs; the document order, not the number, is the path.
+hygiene) are done — rationale archived in `PROGRESS-ARCHIVE.md`. **Open: F-012** (audit
+low-severity follow-ups — prepared into substeps a–e, target patch release **v0.1.1**) and the
+watch item to re-check the final MCP spec after 2026-07-28. F-numbers are stable IDs; the
+document order, not the number, is the path.
 
 ---
 
@@ -49,43 +50,132 @@ hygiene) are done — rationale archived in `PROGRESS-ARCHIVE.md`. **Open: only 
 
 ## Open tasks — work top to bottom
 
-**No roadmap tasks open.** The backlog below holds **F-012** (audit low-severity follow-ups);
-new work is intaked via `/add-feature`. Standing watch item: **re-check the final MCP
-authorization spec once it publishes on 2026-07-28** (v0.1.0 is verified against its RC).
+Standing watch item: **re-check the final MCP authorization spec once it publishes on
+2026-07-28** (v0.1.0 is verified against its RC; becomes its own small task once published).
+
+### F-012 — Audit low-severity follow-ups (from the F-006b `/audit-code` run)
+
+**Problem:** The F-006b audit surfaced 19 low-severity findings — hardening and hygiene, none a
+security hole — deferred so F-006 could gate on the high/medium security batch. Since then:
+2 were pulled forward into F-007b (data dir `0700`; `os.Exit(1)` via cobra `RunE`), 2 landed
+with F-007 (compose health gating; `go-licenses` pin), and M3 (XFF) was already fixed in
+F-006b. **16 actionable items remain** (full detail per finding: `AUDIT-RESULTS.md`, local/
+gitignored). Two further notes are informational only (introspection breadth; pre-auth
+authorize records — both mitigated by the M4 fixes) and are closed as accepted, no code change.
+
+**Goal:** Work through the 16 items in five substeps (guards → auth flow → login surface →
+persistence → release). Every substep is independently committable (one commit each), ships
+regression tests incl. negatives (CODING-STANDARDS §9), keeps the full suite + `-race` +
+`golangci-lint` green, and updates its SPEC delta notes in the same commit. Finish with patch
+release **v0.1.1**. No new endpoints, no new env vars, no new dependencies (`crypto/hkdf` is
+stdlib since Go 1.24).
+
+**Dependencies:** none (independent hardening; F-006/F-007 done).
+
+#### F-012a — Fail-fast & crypto/proxy guards
+
+- **What:** ① `getEnvBoolWithDefault` rejects everything but `true|1|false|0` (fail-fast like
+  the sibling duration/int parsers); ② `algForKey` rejects RSA keys < 2048 bits (covers
+  `JWT_PRIVATE_KEY`, legacy-key adoption, and manifest loads centrally); ③ proxy JWT
+  verification adds `jwt.WithExpirationRequired()`; ④ cap upstream request-body buffering at a
+  named constant (4 MiB) — larger/streaming bodies pass through unbuffered and a 307/308 is
+  then not followed (SPEC §1.11.3); ⑤ CIMD documents get the same grant/response-type
+  whitelist as DCR (whitelist lives in `pkg/cimd`, referenced by `pkg/idp` — same pattern as
+  `ValidateRedirectURI`).
+- **Files:** `main.go`, `pkg/keys/keys.go`, `pkg/proxy/proxy.go`, `pkg/backend/transparent.go`,
+  `pkg/cimd/resolver.go`, `pkg/idp/idp.go` (+ tests).
+- **Dependencies:** none.
+- **Acceptance:**
+  - [ ] Negative tests: bool typo (`yes`) aborts startup; 1024-bit RSA key refused; JWT
+        without `exp` → 401; oversized body → redirect not followed (response passed through);
+        CIMD document declaring `implicit`/`token` → `invalid_client`.
+  - [ ] Full suite + `-race` + `golangci-lint` green.
+
+#### F-012b — Auth-flow hardening
+
+- **What:** ① `EnforcePKCE: true` (SPEC §1.5 lists PKCE REQUIRED — closes the open delta note;
+  CIMD/public clients unaffected); ② empty password takes the same bcrypt + uniform-error path
+  as a wrong one (and counts toward the lockout); ③ delete the dead POST branch in
+  `handleLogin` (route is GET-only); ④ bcrypt comparison without early `break` (constant hash
+  count for multi-hash configs); ⑤ logout does `session.Clear()` + `Options{MaxAge:-1}`;
+  ⑥ shared same-origin guard for the stored `redirect_url` (must start with `/`, not `//` or
+  `/\`) applied at all three consumers (password login, passkey finish, OIDC callback).
+- **Files:** `pkg/idp/idp.go`, `pkg/auth/auth.go`, `pkg/auth/webauthn.go`, `SPEC.md` (§1.5
+  delta) (+ tests).
+- **Dependencies:** none.
+- **Acceptance:**
+  - [ ] Negative tests: confidential DCR client without `code_challenge` rejected;
+        empty-password response byte-identical to wrong-password; post-logout session carries
+        no identity/ceremony keys; `https://evil`, `//evil`, `/\evil` redirect targets
+        neutralised to `/`.
+  - [ ] Full suite + `-race` + `golangci-lint` green.
+
+#### F-012c — Login surface: CSRF tokens + discoverable passkey login
+
+- **What:** ① per-session CSRF token (crypto/rand via `pkg/utils`, stored in the HMAC-signed
+  session): hidden field + constant-time check on the password-login, consent, and both
+  settings POSTs; the WebAuthn fetches send it as a request header (defence-in-depth on top of
+  `SameSite=Lax`, SPEC §1.12); ② passkey login via `BeginDiscoverableLogin` /
+  `FinishDiscoverableLogin` (empty allow-list — no credential-ID disclosure to anonymous
+  callers), registration raised to `ResidentKeyRequirementRequired` so new passkeys are
+  guaranteed discoverable.
+- **Files:** `pkg/auth/auth.go`, `pkg/auth/webauthn.go`, `pkg/auth/templates/login.html` +
+  `settings.html` + `webauthn_script.html`, `pkg/idp/idp.go` (consent template + handler),
+  `e2e_test.go`/`e2e_harness_test.go` (token extraction), `SPEC.md` (§1.12 delta) (+ tests).
+- **Dependencies:** none (ordered after F-012b to avoid overlapping edits in the same
+  handlers). Both items deliberately share one substep: they touch the same templates/JS and
+  the live login flows, concentrating the behaviour-change risk in a single verify step.
+- **Acceptance:**
+  - [ ] Negative tests: form POSTs without / with a wrong CSRF token are rejected;
+        `login/begin` response contains no credential descriptors.
+  - [ ] e2e login + consent flows green with token extraction; full suite + `-race` +
+        `golangci-lint` green.
+  - [ ] Deploy note recorded (CHANGELOG draft): non-resident passkeys stop working
+        (synced-keychain passkeys are resident → live setup expected fine); rescue path =
+        delete passkey records in the data dir → password fallback re-activates (SPEC §1.12
+        lockout-rescue rule).
+
+#### F-012d — Persistence hardening
+
+- **What:** ① DCR cap enforced inside the write transaction (TOCTOU): `RegisterClient` takes
+  the cap, both backends count+insert atomically (bbolt `Update` tx; GORM `Transaction`),
+  sentinel error → 503 in the handler; drop `CountClients` from the interface if unused
+  afterwards; ② SQLite backend sets `SetMaxOpenConns(1)` + `busy_timeout` + WAL pragmas after
+  open, DSN note in the README config reference; ③ session-cookie store gets HKDF-derived
+  subkeys (stdlib `crypto/hkdf`) from the 32-byte secret: distinct auth + block key → cookies
+  signed **and encrypted**; **fosite keeps the raw secret**, so outstanding grants/refresh
+  tokens stay valid — only operator session cookies (MaxAge 600) break once (intentional,
+  documented).
+- **Files:** `pkg/repository/interface.go` + `kvs.go` + `sql.go`, `pkg/idp/idp.go`,
+  `pkg/mcp-proxy/main.go`, `README.md` (DSN note), `SPEC.md` (§1.12/§2.2 delta) (+ tests).
+- **Dependencies:** none.
+- **Acceptance:**
+  - [ ] Concurrency regression test: parallel registrations never exceed the cap (under
+        `-race`).
+  - [ ] Cookie value is opaque (no plaintext session keys readable); fosite HMAC secret
+        unchanged — existing e2e token flows pass untouched.
+  - [ ] Full suite + `-race` + `golangci-lint` green.
+
+#### F-012e — Docs, bookkeeping & release v0.1.1
+
+- **What:** `CHANGELOG.md` v0.1.1 entry (upgrade notes: one-time operator-session reset;
+  startup now fails on bool-typo envs and RSA < 2048; passkey resident-key note); mark the
+  findings done in `AUDIT-RESULTS.md` (local); move F-012 to the Done table + archive the
+  rationale; Graphiti update; then — **only after explicit operator go** — tag `v0.1.1`
+  (release workflow builds + pushes the multi-arch image; operator bumps the live deployment
+  afterwards).
+- **Files:** `CHANGELOG.md`, `AUDIT-RESULTS.md` (local), `PROGRESS.md`,
+  `PROGRESS-ARCHIVE.md`, git tag.
+- **Dependencies:** F-012a–d.
+- **Acceptance:**
+  - [ ] CHANGELOG documents every behaviour change; SPEC/README deltas consistent.
+  - [ ] Tag pushed only after operator go; release workflow green, GHCR image pullable.
 
 ---
 
 ## Feature ideas (backlog)
 
-### F-012 — Audit low-severity follow-ups (from the F-006b `/audit-code` run)
-
-**Problem:** The F-006b audit surfaced 19 low-severity findings — hardening and hygiene, none
-a security hole — deferred so F-006 could gate on the high/medium security batch.
-
-**Idea:** Work through them in a focused hardening pass (each is small and independent).
-
-**Possible implementation (grouped):**
-- **Fail-fast/config:** reject malformed boolean env values (currently silently `false`).
-  *(Done early in F-007b: data dir `0700`; `os.Exit(1)` instead of `panic()` via cobra `RunE`.)*
-- **Auth hardening:** confidential-client PKCE (`EnforcePKCE: true`); passkey login via
-  `BeginDiscoverableLogin` (don't expose credential IDs pre-auth); `session.Clear()` on logout;
-  uniform empty-password response; delete the dead GET-only `handleLogin` POST branch; per-session
-  CSRF tokens on login/consent/settings/register; same-origin-validate `redirect_url`; constant
-  bcrypt count for multi-hash configs.
-- **Crypto/proxy:** reject RSA `JWT_PRIVATE_KEY`/legacy keys `< 2048` bits; add
-  `jwt.WithExpirationRequired()`; cap proxy request-body buffering (only buffer on a followed
-  redirect); apply the DCR grant/response-type whitelist to CIMD documents too.
-- **Persistence:** enforce the DCR client cap inside the write transaction (TOCTOU); SQLite
-  `SetMaxOpenConns(1)` + busy-timeout/WAL (or document required DSN pragmas); cookie-store block
-  key + key-separation from the fosite HMAC secret.
-
-Full detail per finding: `AUDIT-RESULTS.md` (regenerated; gitignored).
-
-**Dependencies:** none (independent hardening; can follow F-006/F-007).
-
----
-
-_New ideas beyond the path above are intaked via `/add-feature` and get the next F-number._
+_None parked. New ideas are intaked via `/add-feature` and get the next F-number._
 
 ---
 
