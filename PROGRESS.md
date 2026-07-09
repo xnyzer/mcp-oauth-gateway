@@ -9,9 +9,9 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
-`PROGRESS-ARCHIVE.md`. **No tasks in the execution queue;** parked in the backlog is **F-013**
-(fix the CI `ci.yml` workflow, which never runs), plus the standing watch item to re-check the
-final MCP spec after 2026-07-28. F-numbers are stable IDs; the document order, not the number, is
+`PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
+**No open tasks and an empty backlog;** only the standing watch item to re-check the final MCP
+spec after 2026-07-28 remains. F-numbers are stable IDs; the document order, not the number, is
 the path.
 
 ---
@@ -49,6 +49,7 @@ the path.
 | F-012a | Fail-fast & crypto/proxy guards → **malformed boolean envs abort startup; RSA < 2048 refused (`JWT_PRIVATE_KEY`/legacy/manifest); `jwt.WithExpirationRequired()`; redirect-replay body buffering capped at 4 MiB (larger bodies stream, redirect passed through); CIMD grant/response-type whitelist shared with DCR** — five negative regression tests; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-012b | Auth-flow hardening → **`EnforcePKCE: true` (confidential DCR clients need PKCE too, closes the SPEC §1.5 delta); empty password takes the uniform bcrypt+error path; bcrypt loop without early `break` (constant multi-hash timing); dead `handleLogin` POST branch removed; logout `session.Clear()` + cookie `MaxAge -1`; shared `safeRedirectTarget` same-origin guard at all three login consumers** — new negative tests (confidential-without-PKCE, empty==wrong-password, logout clears, redirect-guard table); e2e confidential flows threaded through PKCE; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012c | Login surface: CSRF + discoverable passkey → **per-session anti-CSRF token (32 B crypto/rand in the HMAC-signed session; new `pkg/auth/csrf.go`) checked constant-time (`crypto/subtle`) on password-login, consent, both settings POSTs, and all WebAuthn ceremonies — hidden field for forms, `X-CSRF-Token` header for the fetches; passkey login switched to `BeginDiscoverableLogin`/`FinishDiscoverableLogin` (empty allow-list → no credential-ID disclosure), registration raised to `ResidentKeyRequirementRequired`** — negatives (missing/wrong token → 403, begin omits descriptors), consent-CSRF test, whole login+consent+e2e harness threaded through token extraction; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
+| F-013 | Fix the CI workflow → **`ci.yml` had a YAML syntax error (the `license-check` `run:` value began with a `"`), which invalidated the whole file → GitHub created 0 jobs on every push since v0.1.0 ("No jobs were run"). Fixed with a block-scalar `run:` + a new pinned `actionlint` job that lints all workflow files so a malformed one fails loudly**; verified the run now creates 4 jobs (build-test/lint/license-check/workflow-lint), all green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012 | **Audit low-severity follow-ups — complete** (a/b/c/d/e done): all 16 actionable F-006b lows fixed across guards → auth flow → login surface → persistence, each with negative regression tests; **v0.1.1 released** (git tag `v0.1.1`, multi-arch `0.1.1`/`0.1` image on GHCR, release workflow green, anonymous pull verified). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012d | Persistence hardening → **DCR cap enforced inside the write transaction (`RegisterClient(…, maxClients)` counts+inserts atomically — bbolt `Update` / GORM `Transaction`; sentinel `ErrClientCapReached` → 503, no TOCTOU; handler pre-check dropped); SQLite `SetMaxOpenConns(1)` + `busy_timeout`/WAL/`synchronous=NORMAL`/`foreign_keys=ON`; session cookie signed *and* encrypted via HKDF-derived auth+AES-256 subkeys (`crypto/hkdf`, new `pkg/mcp-proxy/cookie.go`) while fosite keeps the raw `GlobalSecret`** — concurrency cap test (both backends, `-race`: exactly cap succeed) + cookie-opaqueness test; suite + `-race` + golangci-lint clean; README DSN note + SPEC §1.12/§2.2 deltas. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 
@@ -63,38 +64,7 @@ Standing watch item: **re-check the final MCP authorization spec once it publish
 
 ## Feature ideas (backlog)
 
-### F-013 — Fix the CI workflow (`ci.yml` never runs)
-
-**Problem:** `.github/workflows/ci.yml` has failed to load on **every** push since v0.1.0 —
-GitHub reports "No jobs were run" / "workflow file issue" and creates **0 jobs**, so the
-build/test/`gofmt`/`vet` + `golangci-lint` + `go-licenses` gate has been effectively disabled the
-whole time (only `vulncheck.yml` and `release.yml` actually run). The operator receives repeated
-GitHub failure emails. F-012 was validated by running the checks by hand locally instead.
-
-**Idea:** Fix the YAML syntax error, lint **all** workflow files with `actionlint` to catch any
-other silent rejection, and verify by observing that the jobs actually run and pass — not merely
-that the file parses.
-
-**Possible implementation:**
-- Root cause (verified locally with `actionlint`): [`ci.yml:59`](.github/workflows/ci.yml#L59) in
-  the `license-check` job — `run: "$(go env GOPATH)/bin/go-licenses" check ./… --disallowed_types=…`.
-  The value **begins with a double quote**, so YAML parses `"$(go env GOPATH)/bin/go-licenses"` as
-  a quoted scalar and the trailing ` check …` is a syntax error ("did not find expected key"),
-  which invalidates the entire file. Fix with a block scalar (`run: |` on the next line) or by not
-  starting the scalar with a quote.
-- Run `actionlint` over `.github/workflows/*.yml` (all three) as part of the fix; consider adding
-  it as a lightweight CI step so a future malformed workflow fails loudly instead of silently
-  producing 0 jobs.
-- **Verify it actually runs:** after pushing, confirm via `gh run list` / `gh run view` that the
-  `build-test`, `lint` and `license-check` jobs are created and **pass** (the action refs
-  `actions/checkout@v7`, `actions/setup-go@v6`, `golangci/golangci-lint-action@v9.3.0` were all
-  verified to exist — they are **not** the cause).
-- Correct the earlier incorrect root-cause note in `PROGRESS-ARCHIVE.md` (F-012 umbrella section)
-  and Graphiti, which speculated the `golangci-lint-action@v9.3.0` ref was to blame — it resolves
-  fine; the actual cause is the YAML quoting above.
-- No product-code change; CI-infra/hygiene only. No new runtime dependencies.
-
-**Dependencies:** none.
+_None parked. New ideas are intaked via `/add-feature` and get the next F-number._
 
 ---
 
@@ -112,5 +82,5 @@ F-005 Implement on the chosen base (sigbit fork) (DONE)
 F-006 Verify against Claude + security review (DONE)
 F-007 Release hygiene (DONE)
 F-012 Audit low-severity follow-ups (from F-006b) (DONE)
-F-013 Fix the CI workflow (ci.yml never runs)
+F-013 Fix the CI workflow (ci.yml never runs) (DONE)
 -->
