@@ -7,6 +7,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -215,20 +216,12 @@ func (a *AuthRouter) SetupRoutes(router gin.IRouter) {
 					session.Set(SessionKeyUserInfo, string(userInfoJSON))
 				}
 			}
-			redirectURL := session.Get(SessionKeyRedirectURL)
-			if redirectURL != nil {
-				session.Delete(SessionKeyRedirectURL)
-			}
+			redirectTarget := takeRedirectTarget(session)
 			if err := session.Save(); err != nil {
 				a.renderError(c, err)
 				return
 			}
-
-			if redirectURL == nil {
-				c.Redirect(http.StatusFound, "/")
-			} else {
-				c.Redirect(http.StatusFound, redirectURL.(string))
-			}
+			c.Redirect(http.StatusFound, redirectTarget)
 		})
 
 		router.GET(provider.AuthURL(), func(c *gin.Context) {
@@ -254,11 +247,9 @@ func (a *AuthRouter) SetupRoutes(router gin.IRouter) {
 	}
 }
 
+// handleLogin serves the login page (the route is GET-only; POST is wired
+// straight to handleLoginPost in SetupRoutes).
 func (a *AuthRouter) handleLogin(c *gin.Context) {
-	if c.Request.Method == "POST" {
-		a.handleLoginPost(c)
-		return
-	}
 	// Auto-redirect to the sole provider if enabled and no password is set
 	if !a.noProviderAutoSelect && len(a.passwordHash) == 0 && len(a.providers) == 1 {
 		c.Redirect(http.StatusFound, a.providers[0].AuthURL())
@@ -273,20 +264,15 @@ const lockoutKey = "operator"
 
 func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 	password := c.PostForm("password")
-	if password == "" {
-		a.renderLogin(c, "Password is required")
-		return
-	}
 
-	// The bcrypt comparison always runs first so neither the lockout state
-	// nor the disabled-fallback check below can be distinguished by
-	// response timing (SR-6).
+	// The bcrypt comparison always runs first — over every configured hash
+	// (no early break) and for an empty password too — so neither the
+	// lockout state, the disabled-fallback check below, nor the match
+	// position can be distinguished by response timing or body (SR-6).
 	var isValid bool
 	for _, hash := range a.passwordHash {
-		err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-		if err == nil {
+		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil {
 			isValid = true
-			break
 		}
 	}
 	now := time.Now().UTC()
@@ -326,20 +312,37 @@ func (a *AuthRouter) handleLoginPost(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Set(SessionKeyAuthorized, true)
 	session.Set(SessionKeyUserID, subject)
-	redirectURL := session.Get(SessionKeyRedirectURL)
-	if redirectURL != nil {
-		session.Delete(SessionKeyRedirectURL)
-	}
+	redirectTarget := takeRedirectTarget(session)
 	if err := session.Save(); err != nil {
 		a.renderError(c, err)
 		return
 	}
+	c.Redirect(http.StatusFound, redirectTarget)
+}
 
-	if redirectURL == nil {
-		c.Redirect(http.StatusFound, "/")
-	} else {
-		c.Redirect(http.StatusFound, redirectURL.(string))
+// takeRedirectTarget consumes the stored post-login redirect target and
+// normalises it to a safe local path. Only RequireAuth writes the value —
+// from a matched route — but the session value must never be able to become
+// an open redirect, even if that changes (SR-6 hardening).
+func takeRedirectTarget(session sessions.Session) string {
+	stored, ok := session.Get(SessionKeyRedirectURL).(string)
+	if !ok || stored == "" {
+		return "/"
 	}
+	session.Delete(SessionKeyRedirectURL)
+	return safeRedirectTarget(stored)
+}
+
+// safeRedirectTarget returns stored if it is a same-origin local path —
+// starting with a single "/" and not "//" or "/\", both of which browsers
+// resolve as scheme-relative (cross-origin) URLs — otherwise "/".
+func safeRedirectTarget(stored string) string {
+	if !strings.HasPrefix(stored, "/") ||
+		strings.HasPrefix(stored, "//") ||
+		strings.HasPrefix(stored, `/\`) {
+		return "/"
+	}
+	return stored
 }
 
 // loginFailed emits the login_fail event (SR-8) and renders the uniform
@@ -394,7 +397,11 @@ func (a *AuthRouter) isPasswordLoginActive(user *models.User, passkeyCount int) 
 
 func (a *AuthRouter) handleLogout(c *gin.Context) {
 	session := sessions.Default(c)
-	session.Delete(SessionKeyAuthorized)
+	// Drop the entire session — identity, user info, WebAuthn ceremony
+	// state and pending redirect targets — not just the authorized flag,
+	// and expire the cookie client-side (MaxAge -1).
+	session.Clear()
+	session.Options(sessions.Options{Path: "/", MaxAge: -1})
 	if err := session.Save(); err != nil {
 		a.renderError(c, err)
 		return

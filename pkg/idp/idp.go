@@ -142,13 +142,16 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 	}
 	refreshEnabled := cfg.RefreshTokenTTL > 0
 	fositeConfig := &fosite.Config{
-		GlobalSecret:                   cfg.Secret,
-		AccessTokenLifespan:            accessTokenTTL,
-		AuthorizeCodeLifespan:          authCodeTTL,
-		RefreshTokenLifespan:           cfg.RefreshTokenTTL,
-		RefreshTokenScopes:             []string{},
-		AccessTokenIssuer:              cfg.ExternalURL,
-		EnforcePKCE:                    false,
+		GlobalSecret:          cfg.Secret,
+		AccessTokenLifespan:   accessTokenTTL,
+		AuthorizeCodeLifespan: authCodeTTL,
+		RefreshTokenLifespan:  cfg.RefreshTokenTTL,
+		RefreshTokenScopes:    []string{},
+		AccessTokenIssuer:     cfg.ExternalURL,
+		// PKCE is REQUIRED for every client (SPEC §1.5) — confidential DCR
+		// clients included, not only public/CIMD ones. The public-client
+		// flag stays set as defence-in-depth should EnforcePKCE ever change.
+		EnforcePKCE:                    true,
 		EnforcePKCEForPublicClients:    true,
 		EnablePKCEPlainChallengeMethod: false,
 		ScopeStrategy:                  fosite.HierarchicScopeStrategy,

@@ -203,9 +203,10 @@ blanket grants in v1).
 error page (§1.12 template) with `400` and MUST NOT redirect.
 
 **Delta:** flow exists (Fosite); `iss` parameter **done (F-005a)**; `resource` validation
-**done (F-005b)**; CIMD client support **done (F-005c)**. PKCE presence is enforced by Fosite
-config for public clients (which covers every CIMD client) — enforcing it for confidential
-DCR clients too remains open (F-005e picks this up with the auth rework).
+**done (F-005b)**; CIMD client support **done (F-005c)**. PKCE presence is now enforced by
+Fosite config for **every** client — `EnforcePKCE: true`, so confidential DCR clients must
+send `code_challenge` too, not only public/CIMD ones (**done, F-012b**; closes the prior
+open delta).
 
 ### 1.6 Token endpoint — `POST /.idp/token`
 
@@ -387,6 +388,11 @@ are fixed server-side texts selected by code) and MUST NOT reveal whether a user
 fallback semantics, and the startup auth-backend check are implemented (side fix: the
 session-gate middleware previously continued the handler chain after its login redirect;
 it now aborts). Rate limiting, lockout, and the auth events are **done (F-005e2)**.
+Login-flow hardening **done (F-012b)**: an empty password runs the same bcrypt path and
+returns the same uniform error as a wrong one (SR-6, no distinct pre-bcrypt body); logout
+clears the whole session and expires the cookie (`MaxAge -1`), not just the authorized flag;
+the stored post-login redirect target is normalised to a local path (must start with `/`,
+never `//` or `/\`) at all three login consumers (password, passkey, OIDC callback).
 
 ### 1.13 Health — `GET /healthz`
 

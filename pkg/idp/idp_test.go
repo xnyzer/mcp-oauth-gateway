@@ -267,7 +267,10 @@ func TestPrivateClient(t *testing.T) {
 		},
 	}
 	state := "test-state"
-	authURL := config.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	// PKCE is mandatory for confidential clients too (EnforcePKCE, SPEC §1.5).
+	authURL := config.AuthCodeURL(state, oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("code_challenge", testPKCEChallenge()),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"))
 
 	jar, err := cookiejar.New(nil)
 	require.NoError(t, err)
@@ -322,6 +325,7 @@ func TestPrivateClient(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 	require.NoError(t, err)
@@ -371,6 +375,17 @@ func TestPrivateClient(t *testing.T) {
 	require.NotEqual(t, originalAccessToken, newAccessToken, "Access token should be different after refresh")
 }
 
+// testPKCEVerifier / testPKCEChallenge are the shared S256 PKCE material.
+// Every client now requires PKCE (EnforcePKCE, SPEC §1.5 / F-012b), so the
+// confidential-client flows carry it too: testAuthFlowWithURL appends the
+// challenge and the token exchanges send the verifier.
+const testPKCEVerifier = "pkce-verifier-pkce-verifier-pkce-verifier-01"
+
+func testPKCEChallenge() string {
+	sum := sha256.Sum256([]byte(testPKCEVerifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 // registerTestClient is a helper that registers a private OAuth client and returns the registration response.
 func registerTestClient(t *testing.T, serverURL string) registrationResponse {
 	t.Helper()
@@ -404,6 +419,14 @@ func registerTestClient(t *testing.T, serverURL string) registrationResponse {
 // and returns the callback URL after authorization completes.
 func testAuthFlowWithURL(t *testing.T, serverURL, authURL string) *url.URL {
 	t.Helper()
+
+	// PKCE is mandatory for every client now (EnforcePKCE, SPEC §1.5).
+	// Append the shared test challenge unless the caller already set one
+	// (CIMD/public tests supply their own); callers exchange the code with
+	// testPKCEVerifier.
+	if !strings.Contains(authURL, "code_challenge") {
+		authURL += "&code_challenge=" + testPKCEChallenge() + "&code_challenge_method=S256"
+	}
 
 	jar, err := cookiejar.New(nil)
 	require.NoError(t, err)
@@ -546,6 +569,46 @@ func mustCookieJar(t *testing.T) http.CookieJar {
 	return jar
 }
 
+// TestConfidentialClientRequiresPKCE verifies EnforcePKCE now applies to
+// confidential DCR clients too (SPEC §1.5 / F-012b): an authorize flow
+// without code_challenge must end in an error, not an authorization code.
+func TestConfidentialClientRequiresPKCE(t *testing.T) {
+	server, _, _ := setupTestServer(t)
+	regResp := registerTestClient(t, server.URL)
+	require.NotEmpty(t, regResp.ClientSecret, "this client is confidential")
+
+	authURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state",
+		server.URL, AuthorizationEndpoint, regResp.ClientID,
+		url.QueryEscape("http://localhost:8080/callback"))
+
+	client := &http.Client{
+		Jar:           mustCookieJar(t),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	authResp, err := client.Get(authURL)
+	require.NoError(t, err)
+	defer authResp.Body.Close()
+	require.Contains(t, []int{http.StatusFound, http.StatusSeeOther}, authResp.StatusCode)
+	location := authResp.Header.Get("Location")
+	require.NotEmpty(t, location)
+
+	formResp, err := client.Get(server.URL + location)
+	require.NoError(t, err)
+	formResp.Body.Close()
+
+	// fosite enforces PKCE presence when the consent POST triggers the
+	// authorize response — the redirect carries an error, never a code.
+	authReturnResp, err := client.Post(server.URL+location, "application/x-www-form-urlencoded", nil)
+	require.NoError(t, err)
+	defer authReturnResp.Body.Close()
+	require.Contains(t, []int{http.StatusFound, http.StatusSeeOther}, authReturnResp.StatusCode)
+
+	callbackURL, err := url.Parse(authReturnResp.Header.Get("Location"))
+	require.NoError(t, err)
+	require.Empty(t, callbackURL.Query().Get("code"), "confidential client without PKCE must not receive a code")
+	require.NotEmpty(t, callbackURL.Query().Get("error"), "missing code_challenge must be an error")
+}
+
 func TestAuthWithoutState(t *testing.T) {
 	server, _, _ := setupTestServer(t)
 	regResp := registerTestClient(t, server.URL)
@@ -568,6 +631,7 @@ func TestAuthWithoutState(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 	require.NoError(t, err)
@@ -603,6 +667,7 @@ func TestAuthWithEmptyState(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 	require.NoError(t, err)
@@ -640,6 +705,7 @@ func TestAccessTokenAudienceClaim(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 	require.NoError(t, err)
@@ -714,6 +780,7 @@ func TestResourceParameterValidation(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 	tokenReq.Set("resource", "https://other.example.com")
 
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
@@ -741,6 +808,7 @@ func TestRevocationEndpoint(t *testing.T) {
 		tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 		tokenReq.Set("client_id", regResp.ClientID)
 		tokenReq.Set("client_secret", regResp.ClientSecret)
+		tokenReq.Set("code_verifier", testPKCEVerifier)
 		tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 		require.NoError(t, err)
 		defer tokenResp.Body.Close()
@@ -1043,6 +1111,7 @@ func TestAccessTokenPreservesUserIdentity(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 	require.NoError(t, err)
@@ -1109,6 +1178,7 @@ func TestKeyRotationKeepsOldTokensValid(t *testing.T) {
 		tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 		tokenReq.Set("client_id", regResp.ClientID)
 		tokenReq.Set("client_secret", regResp.ClientSecret)
+		tokenReq.Set("code_verifier", testPKCEVerifier)
 		tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 		require.NoError(t, err)
 		defer tokenResp.Body.Close()
@@ -1194,6 +1264,7 @@ func TestES256TokenIssuance(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 	require.NoError(t, err)
 	defer tokenResp.Body.Close()
@@ -1285,6 +1356,7 @@ func TestTokenAndRegisterEvents(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 	require.NoError(t, err)
 	var tokens map[string]any
@@ -1356,6 +1428,7 @@ func TestRevocationStoreFailureReturns503(t *testing.T) {
 	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
 	tokenReq.Set("client_id", regResp.ClientID)
 	tokenReq.Set("client_secret", regResp.ClientSecret)
+	tokenReq.Set("code_verifier", testPKCEVerifier)
 	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
 	require.NoError(t, err)
 	defer tokenResp.Body.Close()

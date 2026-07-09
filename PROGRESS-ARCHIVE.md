@@ -1188,3 +1188,47 @@ body → 307 passed through **and** streamed untruncated; CIMD unsupported types
 **Files:** `main.go` (+tests), `pkg/keys/keys.go` (+new `keys_test.go`), `pkg/proxy/proxy.go`
 (+tests), `pkg/backend/transparent.go` (+tests), `pkg/cimd/resolver.go` (+tests),
 `pkg/idp/idp.go`, `SPEC.md` (§1.3/§1.11/§2.2 deltas).
+
+## F-012b — Auth-flow hardening — DONE 2026-07-09
+
+Second F-012 substep: six login-path hardening items from the F-006b audit lows, all on
+surfaces Claude web/iOS + passkey use live, so the e2e harness had to stay green.
+
+- **`EnforcePKCE: true`** (`pkg/idp`): PKCE is now enforced for **every** client, not only
+  public/CIMD ones — confidential DCR clients must send `code_challenge` too. Closes the
+  long-standing SPEC §1.5 open delta (the metadata already advertised S256-only). Claude uses
+  CIMD/public clients, which were already covered; only confidential DCR clients change.
+- **Uniform empty-password** (`pkg/auth`): the empty-password branch that returned a distinct
+  "Password is required" body before bcrypt is gone — an empty password now runs the same
+  bcrypt comparison and returns the byte-identical uniform "Invalid password" as a wrong one
+  (SR-6, no pre-bcrypt oracle), and consequently counts toward the lockout.
+- **Constant bcrypt timing** (`pkg/auth`): the comparison loop dropped its early `break`, so
+  for a multi-hash `PasswordHashes` config the bcrypt count no longer depends on the match
+  index (the in-code uniformity claim now holds; single-hash was already uniform).
+- **Dead-branch removal** (`pkg/auth`): the unreachable `if method == "POST"` branch in the
+  GET-only `handleLogin` was deleted (POST is wired straight to `handleLoginPost` in
+  `SetupRoutes`).
+- **Full logout clear** (`pkg/auth`): logout now `session.Clear()` + `Options{MaxAge:-1}`
+  instead of deleting only the `authorized` flag — identity, user info, WebAuthn ceremony
+  blobs and pending redirect targets are all dropped and the cookie is expired client-side.
+- **`redirect_url` same-origin guard** (`pkg/auth`): new pure `safeRedirectTarget` (must start
+  with a single `/`, never `//` or `/\`, both scheme-relative in browsers) applied via the
+  shared `takeRedirectTarget` at all three login consumers — password login, passkey finish
+  (`webauthn.go`), and the OIDC callback. A latent open-redirect invariant closed even though
+  only `RequireAuth` writes the value today. SPEC §1.5/§1.12 deltas noted.
+
+**Behaviour-change handling:** `EnforcePKCE: true` broke every confidential-client test that
+drove the flow without PKCE. Rather than exempt them, the shared `testAuthFlowWithURL` helper
+now appends a shared S256 challenge and the token exchanges send the verifier (idp_test.go);
+the four confidential e2e flows (`e2e_test.go`) were threaded through `pkcePair` + a
+`code_verifier`, keeping the Claude-representative harness green. A new
+`TestConfidentialClientRequiresPKCE` asserts the negative (no `code_challenge` → error, no
+code).
+
+Verification: new negatives — confidential-without-PKCE rejected, empty-password response
+byte-identical to wrong-password, logout makes the protected route redirect to login again and
+expires the cookie, `safeRedirectTarget` table (`//evil`, `/\evil`, `https://evil`, … → `/`);
+full suite + `-race` green; golangci-lint v2.12.2 0 issues.
+
+**Files:** `pkg/auth/auth.go`, `pkg/auth/webauthn.go`, `pkg/idp/idp.go`, `SPEC.md` (§1.5/§1.12
+deltas); tests `pkg/idp/idp_test.go`, `e2e_test.go`, new `pkg/auth/hardening_test.go`.

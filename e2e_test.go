@@ -82,18 +82,21 @@ func TestE2EAuthCodeProxyAndRevocation(t *testing.T) {
 	gw := newE2EGateway(t, e2eOpts{})
 	clientID, clientSecret := gw.registerClient(t, "client_secret_basic")
 
-	// Authorize + real password login + consent.
+	// Authorize + real password login + consent. PKCE is mandatory for
+	// every client now (EnforcePKCE, SPEC §1.5) — confidential ones too.
+	verifier, challenge := pkcePair("confidential")
 	client := newFlowClient(t)
-	callback := gw.driveAuthCode(t, client, gw.authCodeURL(clientID, e2eRedirectURI, ""))
+	callback := gw.driveAuthCode(t, client, gw.authCodeURL(clientID, e2eRedirectURI, challenge))
 	require.Equal(t, gw.issuer, callback.Query().Get("iss"), "RFC 9207 iss must be in the redirect")
 	require.Equal(t, "e2e-state-value", callback.Query().Get("state"))
 	code := callback.Query().Get("code")
 	require.NotEmpty(t, code)
 
-	// Token exchange (client_secret_post).
+	// Token exchange (client_secret_post + PKCE verifier).
 	tokenResp := gw.exchangeCode(t, code, url.Values{
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
+		"code_verifier": {verifier},
 	})
 	require.Equal(t, http.StatusOK, tokenResp.StatusCode)
 	tokens := decodeJSON(t, tokenResp)
@@ -140,6 +143,7 @@ func TestE2EAuthCodeProxyAndRevocation(t *testing.T) {
 		resp := gw.exchangeCode(t, code, url.Values{
 			"client_id":     {clientID},
 			"client_secret": {clientSecret},
+			"code_verifier": {verifier},
 		})
 		defer resp.Body.Close()
 		require.NotEqual(t, http.StatusOK, resp.StatusCode)
@@ -259,11 +263,13 @@ func TestE2EKeyRotationContinuity(t *testing.T) {
 	gw := newE2EGateway(t, e2eOpts{})
 	clientID, clientSecret := gw.registerClient(t, "client_secret_basic")
 
+	verifier, challenge := pkcePair("rotation")
 	client := newFlowClient(t)
-	callback := gw.driveAuthCode(t, client, gw.authCodeURL(clientID, e2eRedirectURI, ""))
+	callback := gw.driveAuthCode(t, client, gw.authCodeURL(clientID, e2eRedirectURI, challenge))
 	tokenResp := gw.exchangeCode(t, callback.Query().Get("code"), url.Values{
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
+		"code_verifier": {verifier},
 	})
 	require.Equal(t, http.StatusOK, tokenResp.StatusCode)
 	oldToken, _ := decodeJSON(t, tokenResp)["access_token"].(string)
@@ -296,11 +302,13 @@ func TestE2EKeyRotationContinuity(t *testing.T) {
 func TestE2EReservedNamespaceNotProxied(t *testing.T) {
 	gw := newE2EGateway(t, e2eOpts{})
 	clientID, clientSecret := gw.registerClient(t, "client_secret_basic")
+	verifier, challenge := pkcePair("reserved")
 	client := newFlowClient(t)
-	callback := gw.driveAuthCode(t, client, gw.authCodeURL(clientID, e2eRedirectURI, ""))
+	callback := gw.driveAuthCode(t, client, gw.authCodeURL(clientID, e2eRedirectURI, challenge))
 	tokenResp := gw.exchangeCode(t, callback.Query().Get("code"), url.Values{
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
+		"code_verifier": {verifier},
 	})
 	token, _ := decodeJSON(t, tokenResp)["access_token"].(string)
 

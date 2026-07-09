@@ -46,6 +46,7 @@ document order, not the number, is the path.
 | F-007e | Release gate + publish → **RC-check: the 2026-07-28 RC is out and all six authorization SEPs are already satisfied (watch item resolved; re-check at the final spec); govulncheck found 3 reachable vulns → x/net v0.55.0, quic-go v0.59.1, Go 1.26.5 (0 reachable after); gitleaks over the full history clean; Dependabot + weekly govulncheck CI added; tag `v0.1.0` → multi-arch GHCR image verified by anonymous pull + smoke; repo + package public (operator go); GitHub release published; PVR + Dependabot alerts enabled**. License decision re-confirmed: Apache-2.0 over MIT/MPL/AGPL. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-007 | **Release hygiene — complete** (a/b/c/d/e done): M7–M10 deployment fixes, `rotate-key`, hardened image, lint/license/vuln CI, release pipeline, install artefacts, full docs, **v0.1.0 released publicly**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-012a | Fail-fast & crypto/proxy guards → **malformed boolean envs abort startup; RSA < 2048 refused (`JWT_PRIVATE_KEY`/legacy/manifest); `jwt.WithExpirationRequired()`; redirect-replay body buffering capped at 4 MiB (larger bodies stream, redirect passed through); CIMD grant/response-type whitelist shared with DCR** — five negative regression tests; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
+| F-012b | Auth-flow hardening → **`EnforcePKCE: true` (confidential DCR clients need PKCE too, closes the SPEC §1.5 delta); empty password takes the uniform bcrypt+error path; bcrypt loop without early `break` (constant multi-hash timing); dead `handleLogin` POST branch removed; logout `session.Clear()` + cookie `MaxAge -1`; shared `safeRedirectTarget` same-origin guard at all three login consumers** — new negative tests (confidential-without-PKCE, empty==wrong-password, logout clears, redirect-guard table); e2e confidential flows threaded through PKCE; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 
 ---
 
@@ -76,24 +77,9 @@ stdlib since Go 1.24).
 **F-012a done** (2026-07-08 — fail-fast & crypto/proxy guards, all five items with negative
 regression tests; see Done table + archive).
 
-#### F-012b — Auth-flow hardening
-
-- **What:** ① `EnforcePKCE: true` (SPEC §1.5 lists PKCE REQUIRED — closes the open delta note;
-  CIMD/public clients unaffected); ② empty password takes the same bcrypt + uniform-error path
-  as a wrong one (and counts toward the lockout); ③ delete the dead POST branch in
-  `handleLogin` (route is GET-only); ④ bcrypt comparison without early `break` (constant hash
-  count for multi-hash configs); ⑤ logout does `session.Clear()` + `Options{MaxAge:-1}`;
-  ⑥ shared same-origin guard for the stored `redirect_url` (must start with `/`, not `//` or
-  `/\`) applied at all three consumers (password login, passkey finish, OIDC callback).
-- **Files:** `pkg/idp/idp.go`, `pkg/auth/auth.go`, `pkg/auth/webauthn.go`, `SPEC.md` (§1.5
-  delta) (+ tests).
-- **Dependencies:** none.
-- **Acceptance:**
-  - [ ] Negative tests: confidential DCR client without `code_challenge` rejected;
-        empty-password response byte-identical to wrong-password; post-logout session carries
-        no identity/ceremony keys; `https://evil`, `//evil`, `/\evil` redirect targets
-        neutralised to `/`.
-  - [ ] Full suite + `-race` + `golangci-lint` green.
+**F-012b done** (2026-07-09 — auth-flow hardening: EnforcePKCE for all clients, uniform
+empty-password, constant bcrypt timing, dead-branch removal, full logout clear, redirect
+same-origin guard; negative tests + e2e threaded through PKCE; see Done table + archive).
 
 #### F-012c — Login surface: CSRF tokens + discoverable passkey login
 

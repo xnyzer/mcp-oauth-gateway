@@ -179,11 +179,7 @@ func (a *AuthRouter) handleWebAuthnLoginFinish(c *gin.Context) {
 
 	session.Set(SessionKeyAuthorized, true)
 	session.Set(SessionKeyUserID, user.user.ID)
-	redirectURL := "/"
-	if stored, ok := session.Get(SessionKeyRedirectURL).(string); ok && stored != "" {
-		redirectURL = stored
-		session.Delete(SessionKeyRedirectURL)
-	}
+	redirectURL := takeRedirectTarget(session)
 	if err := session.Save(); err != nil {
 		deny(err)
 		return
