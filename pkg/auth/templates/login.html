@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="csrf-token" content="{{.CSRFToken}}" />
     <title>Login - MCP OAuth Gateway</title>
     <style>
       body {
@@ -146,6 +147,7 @@
       </div>
       {{end}} {{if .HasPassword}}
       <form class="password-form" action="/.auth/login" method="POST">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
         <div class="form-group">
           <label class="form-label" for="password">Password</label>
           <input
@@ -181,6 +183,7 @@
           try {
             const beginResp = await fetch("/.auth/webauthn/login/begin", {
               method: "POST",
+              headers: csrfHeader(),
             });
             if (!beginResp.ok) throw new Error("begin failed");
             const options = await beginResp.json();
@@ -189,7 +192,7 @@
             });
             const finishResp = await fetch("/.auth/webauthn/login/finish", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: { "Content-Type": "application/json", ...csrfHeader() },
               body: JSON.stringify(credentialToJSON(assertion)),
             });
             if (!finishResp.ok) throw new Error("finish failed");

@@ -48,3 +48,15 @@ func GenerateUserID() (string, error) {
 	}
 	return hex.EncodeToString(bytes), nil
 }
+
+// GenerateCSRFToken returns a per-session anti-CSRF token (SPEC §1.12): 32
+// random bytes hex-encoded, embedded in the login/consent/settings forms and
+// checked in constant time on state-changing POSTs as defence-in-depth on top
+// of the session cookie's SameSite=Lax attribute.
+func GenerateCSRFToken() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}

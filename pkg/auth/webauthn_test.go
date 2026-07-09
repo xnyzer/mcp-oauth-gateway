@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -68,10 +69,54 @@ func newTestClient(t *testing.T) *http.Client {
 	}
 }
 
-// passwordLogin performs the form login and returns the final status code.
+// csrfTokenRE matches the per-session token in either the hidden form field or
+// the meta tag rendered by the login/settings pages (SPEC §1.12).
+var csrfTokenRE = regexp.MustCompile(`(?:name="csrf_token" value|name="csrf-token" content)="([0-9a-f]+)"`)
+
+// fetchCSRFToken GETs a page with the given client (establishing the session
+// cookie) and returns its CSRF token.
+func fetchCSRFToken(t *testing.T, client *http.Client, pageURL string) string {
+	t.Helper()
+	resp, err := client.Get(pageURL)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.NoError(t, err)
+	m := csrfTokenRE.FindSubmatch(body)
+	require.NotNil(t, m, "no CSRF token in %s: %s", pageURL, body)
+	return string(m[1])
+}
+
+// postWithCSRF issues a POST carrying the token in the X-CSRF-Token header (the
+// WebAuthn fetch path).
+func postWithCSRF(t *testing.T, client *http.Client, rawURL, token, contentType string, body io.Reader) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, rawURL, body)
+	require.NoError(t, err)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set(CSRFHeaderName, token)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
+// postFormWithCSRF POSTs a form with the csrf_token field set to token.
+func postFormWithCSRF(t *testing.T, client *http.Client, rawURL, token string, form url.Values) *http.Response {
+	t.Helper()
+	form.Set(CSRFFieldName, token)
+	resp, err := client.PostForm(rawURL, form)
+	require.NoError(t, err)
+	return resp
+}
+
+// passwordLogin performs the form login (fetching the CSRF token first) and
+// returns the final status code.
 func passwordLogin(t *testing.T, client *http.Client, serverURL, password string) *http.Response {
 	t.Helper()
-	resp, err := client.PostForm(serverURL+LoginEndpoint, url.Values{"password": {password}})
+	token := fetchCSRFToken(t, client, serverURL+LoginEndpoint)
+	resp, err := client.PostForm(serverURL+LoginEndpoint, url.Values{"password": {password}, CSRFFieldName: {token}})
 	require.NoError(t, err)
 	resp.Body.Close()
 	return resp
@@ -82,9 +127,9 @@ func passwordLogin(t *testing.T, client *http.Client, serverURL, password string
 func enrollPasskey(t *testing.T, client *http.Client, serverURL string, rp virtualwebauthn.RelyingParty, authenticator virtualwebauthn.Authenticator, name string) virtualwebauthn.Credential {
 	t.Helper()
 	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	token := fetchCSRFToken(t, client, serverURL+SettingsEndpoint)
 
-	beginResp, err := client.Post(serverURL+WebAuthnRegisterBeginEndpoint, "application/json", nil)
-	require.NoError(t, err)
+	beginResp := postWithCSRF(t, client, serverURL+WebAuthnRegisterBeginEndpoint, token, "application/json", nil)
 	beginBody, err := io.ReadAll(beginResp.Body)
 	beginResp.Body.Close()
 	require.NoError(t, err)
@@ -94,8 +139,7 @@ func enrollPasskey(t *testing.T, client *http.Client, serverURL string, rp virtu
 	require.NoError(t, err)
 	attestation := virtualwebauthn.CreateAttestationResponse(rp, authenticator, credential, *options)
 
-	finishResp, err := client.Post(serverURL+WebAuthnRegisterFinishEndpoint+"?name="+url.QueryEscape(name), "application/json", strings.NewReader(attestation))
-	require.NoError(t, err)
+	finishResp := postWithCSRF(t, client, serverURL+WebAuthnRegisterFinishEndpoint+"?name="+url.QueryEscape(name), token, "application/json", strings.NewReader(attestation))
 	finishBody, err := io.ReadAll(finishResp.Body)
 	finishResp.Body.Close()
 	require.NoError(t, err)
@@ -109,19 +153,24 @@ func enrollPasskey(t *testing.T, client *http.Client, serverURL string, rp virtu
 // so callers can assert success or denial.
 func passkeyLogin(t *testing.T, client *http.Client, serverURL string, rp virtualwebauthn.RelyingParty, authenticator virtualwebauthn.Authenticator, credential virtualwebauthn.Credential) *http.Response {
 	t.Helper()
-	beginResp, err := client.Post(serverURL+WebAuthnLoginBeginEndpoint, "application/json", nil)
-	require.NoError(t, err)
+	token := fetchCSRFToken(t, client, serverURL+LoginEndpoint)
+
+	beginResp := postWithCSRF(t, client, serverURL+WebAuthnLoginBeginEndpoint, token, "application/json", nil)
 	beginBody, err := io.ReadAll(beginResp.Body)
 	beginResp.Body.Close()
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, beginResp.StatusCode, "login begin: %s", beginBody)
 
+	// Discoverable login: the begin response must not enumerate the operator's
+	// credential IDs to an anonymous caller (SPEC §1.12).
+	require.NotContains(t, string(beginBody), "allowCredentials",
+		"discoverable login must not disclose credential descriptors")
+
 	options, err := virtualwebauthn.ParseAssertionOptions(string(beginBody))
 	require.NoError(t, err)
 	assertion := virtualwebauthn.CreateAssertionResponse(rp, authenticator, credential, *options)
 
-	finishResp, err := client.Post(serverURL+WebAuthnLoginFinishEndpoint, "application/json", strings.NewReader(assertion))
-	require.NoError(t, err)
+	finishResp := postWithCSRF(t, client, serverURL+WebAuthnLoginFinishEndpoint, token, "application/json", strings.NewReader(assertion))
 	return finishResp
 }
 
@@ -137,6 +186,9 @@ func TestPasskeyEnrollmentAndLoginRoundTrip(t *testing.T) {
 	user, err := repo.GetUser(t.Context())
 	require.NoError(t, err, "first password login must bootstrap the user")
 	require.Equal(t, "admin", user.Username)
+	// A resident passkey returns the user handle on assertion; the virtual
+	// authenticator carries it in its options (discoverable login).
+	authenticator.Options.UserHandle = []byte(user.ID)
 
 	// Enroll a passkey on the session-gated settings surface.
 	credential := enrollPasskey(t, client, server.URL, rp, authenticator, "Test Key")
@@ -175,8 +227,8 @@ func TestPasskeyEnrollmentAndLoginRoundTrip(t *testing.T) {
 	require.False(t, stored[0].LastUsedAt.IsZero(), "login must stamp LastUsedAt")
 
 	// Replay: the consumed ceremony state must not allow a second finish.
-	replayResp, err := freshClient.Post(server.URL+WebAuthnLoginFinishEndpoint, "application/json", strings.NewReader("{}"))
-	require.NoError(t, err)
+	replayToken := fetchCSRFToken(t, freshClient, server.URL+LoginEndpoint)
+	replayResp := postWithCSRF(t, freshClient, server.URL+WebAuthnLoginFinishEndpoint, replayToken, "application/json", strings.NewReader("{}"))
 	replayResp.Body.Close()
 	require.Equal(t, http.StatusUnauthorized, replayResp.StatusCode)
 }
@@ -185,8 +237,8 @@ func TestPasskeyLoginUnavailableBeforeEnrollment(t *testing.T) {
 	server, _ := newWebAuthnTestServer(t)
 	client := newTestClient(t)
 
-	resp, err := client.Post(server.URL+WebAuthnLoginBeginEndpoint, "application/json", nil)
-	require.NoError(t, err)
+	token := fetchCSRFToken(t, client, server.URL+LoginEndpoint)
+	resp := postWithCSRF(t, client, server.URL+WebAuthnLoginBeginEndpoint, token, "application/json", nil)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
@@ -206,10 +258,13 @@ func TestPasswordFallbackDisableSemantics(t *testing.T) {
 
 	client := newTestClient(t)
 	passwordLogin(t, client, server.URL, testPassword)
+	user0, err := repo.GetUser(t.Context())
+	require.NoError(t, err)
+	authenticator.Options.UserHandle = []byte(user0.ID)
 
 	// Disabling the password without a passkey is refused (lockout guard).
-	resp, err := client.PostForm(server.URL+SettingsPasswordEndpoint, url.Values{"disabled": {"true"}})
-	require.NoError(t, err)
+	token := fetchCSRFToken(t, client, server.URL+SettingsEndpoint)
+	resp := postFormWithCSRF(t, client, server.URL+SettingsPasswordEndpoint, token, url.Values{"disabled": {"true"}})
 	resp.Body.Close()
 	require.Equal(t, http.StatusFound, resp.StatusCode)
 	require.Contains(t, resp.Header.Get("Location"), "msg=need_passkey")
@@ -219,8 +274,7 @@ func TestPasswordFallbackDisableSemantics(t *testing.T) {
 
 	// With a passkey enrolled, disabling works.
 	credential := enrollPasskey(t, client, server.URL, rp, authenticator, "Key")
-	resp, err = client.PostForm(server.URL+SettingsPasswordEndpoint, url.Values{"disabled": {"true"}})
-	require.NoError(t, err)
+	resp = postFormWithCSRF(t, client, server.URL+SettingsPasswordEndpoint, token, url.Values{"disabled": {"true"}})
 	resp.Body.Close()
 	require.Contains(t, resp.Header.Get("Location"), "msg=saved")
 
@@ -244,8 +298,8 @@ func TestPasswordFallbackDisableSemantics(t *testing.T) {
 	stored, err := repo.ListWebAuthnCredentials(t.Context(), user.ID)
 	require.NoError(t, err)
 	require.Len(t, stored, 1)
-	resp, err = freshClient.PostForm(server.URL+SettingsCredentialDeleteEndpoint, url.Values{"id": {stored[0].ID}})
-	require.NoError(t, err)
+	freshToken := fetchCSRFToken(t, freshClient, server.URL+SettingsEndpoint)
+	resp = postFormWithCSRF(t, freshClient, server.URL+SettingsCredentialDeleteEndpoint, freshToken, url.Values{"id": {stored[0].ID}})
 	resp.Body.Close()
 	require.Contains(t, resp.Header.Get("Location"), "msg=deleted")
 
@@ -289,10 +343,14 @@ func TestSettingsRejectForeignSession(t *testing.T) {
 	router.Use(sessions.Sessions("test_session", cookie.NewStore(secret[:])))
 	// Simulate an OIDC-provider session: authorized, but with a provider
 	// identity instead of the persisted operator account.
+	const foreignCSRF = "foreignsessioncsrftoken"
 	router.Use(func(c *gin.Context) {
 		session := sessions.Default(c)
 		session.Set(SessionKeyAuthorized, true)
 		session.Set(SessionKeyUserID, "someone@idp.example.com")
+		// A matching CSRF token so the register POST reaches the own-user
+		// gate under test rather than tripping the CSRF guard first.
+		session.Set(SessionKeyCSRF, foreignCSRF)
 		require.NoError(t, session.Save())
 		c.Next()
 	})
@@ -306,8 +364,7 @@ func TestSettingsRejectForeignSession(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, http.StatusForbidden, resp.StatusCode)
 
-	resp, err = http.Post(server.URL+WebAuthnRegisterBeginEndpoint, "application/json", nil)
-	require.NoError(t, err)
+	resp = postWithCSRF(t, &http.Client{}, server.URL+WebAuthnRegisterBeginEndpoint, foreignCSRF, "application/json", nil)
 	resp.Body.Close()
 	require.Equal(t, http.StatusForbidden, resp.StatusCode)
 }

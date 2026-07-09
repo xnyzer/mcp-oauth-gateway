@@ -1232,3 +1232,87 @@ full suite + `-race` green; golangci-lint v2.12.2 0 issues.
 
 **Files:** `pkg/auth/auth.go`, `pkg/auth/webauthn.go`, `pkg/idp/idp.go`, `SPEC.md` (§1.5/§1.12
 deltas); tests `pkg/idp/idp_test.go`, `e2e_test.go`, new `pkg/auth/hardening_test.go`.
+
+---
+
+## F-012c — Login surface: CSRF tokens + discoverable passkey login — DONE 2026-07-09
+
+Third F-012 substep. Two audit lows deliberately bundled because they touch the same login
+templates/JS and the live Claude web/iOS + passkey flows — concentrating the behaviour-change
+risk in one verify step.
+
+### What was done
+
+**① Per-session anti-CSRF token (defence-in-depth on top of `SameSite=Lax`, SPEC §1.12):**
+- New `pkg/utils.GenerateCSRFToken()` — 32 bytes `crypto/rand`, hex (stdlib, no new dep).
+- New `pkg/auth/csrf.go` (extracted so `auth.go` stays cohesive): `SessionKeyCSRF` lives with
+  the other session keys; `CSRFFieldName`/`CSRFHeaderName` consts; `EnsureCSRFToken` (get-or-
+  create, stored in the HMAC-signed session); constant-time `validCSRF` (`crypto/subtle`,
+  fail-closed — a missing/empty stored token never matches); `RequireCSRF()` gin middleware
+  that checks the `X-CSRF-Token` header **first** (so the JSON WebAuthn fetches never trigger
+  form-body parsing, which would consume the ceremony request body) and falls back to the
+  hidden `csrf_token` form field.
+- Middleware wired onto every state-changing POST on the surface: password login, both
+  WebAuthn login ceremonies, both WebAuthn register ceremonies, both settings POSTs
+  (`auth.go`), and the consent POST `/.idp/auth/:ar_id` (`idp.go`, on top of its existing
+  `ar_id` session binding).
+- Token minted + persisted in the GET handlers that render forms: `renderLogin` (`auth.go`),
+  `handleSettings` (`settings.go`), `handleAuthorizationReturnForm` (`idp.go`).
+- Templates deliver it: a `<meta name="csrf-token">` tag + hidden `csrf_token` fields in
+  `login.html`/`settings.html` and the consent form (inline template in `idp.go`); a shared
+  `csrfHeader()` JS helper in `webauthn_script.html` adds `X-CSRF-Token` to every WebAuthn
+  `fetch()`.
+
+**② Discoverable (usernameless) passkey login (SPEC §1.12, `webauthn.go`):**
+- `handleWebAuthnLoginBegin` now calls `BeginDiscoverableLogin()` (empty allow-list), so the
+  begin response no longer enumerates the operator's credential IDs to an anonymous caller.
+- `handleWebAuthnLoginFinish` uses `FinishDiscoverableLogin` with a single-operator
+  `DiscoverableUserHandler` that resolves the sole operator account and validates the asserted
+  user handle against its ID (go-webauthn additionally enforces credential ownership + a
+  non-blank handle — fail-closed). Clone-warning / sign-count-persist denials unchanged.
+- Registration raised from `ResidentKeyRequirementPreferred` to `…Required`, so every newly
+  enrolled passkey is guaranteed discoverable.
+
+### Tests
+
+- New `pkg/auth/csrf_test.go` (negatives, acceptance a/b): login POST missing/wrong token →
+  `403` (correct token → `302`); session-gated settings POST missing token → `403`; WebAuthn
+  login begin missing header → `403`; discoverable begin response omits credential descriptors
+  (`allowCredentials`).
+- New `TestConsentPostRejectsMissingOrWrongCSRF` in `pkg/idp/idp_test.go`.
+- Existing harness threaded through token extraction (acceptance c): `pkg/auth` helpers
+  (`passwordLogin`/`enrollPasskey`/`passkeyLogin`/`postLogin`) fetch the token and send it via
+  field or header; body-comparison uniformity tests (empty-vs-wrong password, lockout oracle)
+  reuse one session so the embedded token is identical; the two discoverable-login tests set
+  the virtual authenticator's `Options.UserHandle`; `idp` `testAuthFlowWithURL` + a new
+  `postConsent` helper extract the consent token; the root e2e `driveAuthCode`
+  (`e2e_harness_test.go`) fetches the login token and the consent token so all five e2e flows
+  stay green.
+
+### Decisions / deviations
+
+- **CSRF applied to the public passkey-login ceremony too** (not only the audit-named
+  password/consent/settings/register POSTs): the token is minted on the login-page GET and the
+  fetch sends it, so it is free defence-in-depth and keeps every state-changing POST uniform.
+- **Handler over library user-lookup:** the discoverable handler loads the single operator
+  regardless of the raw credential ID (go-webauthn verifies ownership + signature), matching
+  the single-operator model.
+- **Live/deploy note (rescue path, captured in the SPEC §1.12 delta; CHANGELOG draft belongs
+  to F-012e):** a **non-resident** passkey enrolled before F-012c can no longer complete the
+  empty-allow-list login. Synced-keychain (iCloud) passkeys are resident → the live setup is
+  expected fine. Rescue (unchanged §1.12 lockout-rescue rule): delete the passkey records in
+  the data dir → the password fallback re-activates. No real paths/hosts recorded.
+- **No new deps, endpoints, or env vars.** `crypto/rand`, `crypto/subtle` are stdlib.
+
+### Verification
+
+Full suite + `go test -race ./...` green; `gofmt`/`go vet` clean; golangci-lint v2.12.2 →
+0 issues. The assembled-gateway e2e harness (real login + consent + proxied upstream) exercises
+the CSRF-guarded flow end to end; the virtual-authenticator round-trip exercises the
+discoverable ceremony.
+
+**Files:** `pkg/utils/rand.go`, new `pkg/auth/csrf.go`, `pkg/auth/auth.go`,
+`pkg/auth/settings.go`, `pkg/auth/webauthn.go`, `pkg/auth/templates/{login,settings,
+webauthn_script}.html`, `pkg/idp/idp.go`, `SPEC.md` (§1.5/§1.12 deltas); tests
+`new pkg/auth/csrf_test.go`, `pkg/auth/{webauthn,abuse,hardening}_test.go`,
+`pkg/idp/idp_test.go`, `e2e_harness_test.go`.

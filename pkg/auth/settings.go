@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -36,6 +37,9 @@ type settingsTemplateData struct {
 	PasswordLoginDisabled bool
 	PasswordLoginActive   bool
 	Message               string
+	// CSRFToken is the per-session anti-CSRF token embedded in the settings
+	// forms and the passkey-register fetch header (SPEC §1.12).
+	CSRFToken string
 }
 
 // handleSettings renders the session-gated settings page (SPEC §1.12):
@@ -54,6 +58,19 @@ func (a *AuthRouter) handleSettings(c *gin.Context) {
 			LastUsedAt: record.LastUsedAt,
 		})
 	}
+	// Mint (or reuse) the per-session CSRF token and persist it before the
+	// forms are served (SPEC §1.12); the settings POSTs and the register
+	// ceremony are checked against it.
+	session := sessions.Default(c)
+	csrfToken, err := EnsureCSRFToken(session)
+	if err != nil {
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+	if err := session.Save(); err != nil {
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
 	data := settingsTemplateData{
 		Username:              user.user.Username,
 		Credentials:           views,
@@ -61,6 +78,7 @@ func (a *AuthRouter) handleSettings(c *gin.Context) {
 		PasswordLoginDisabled: user.user.PasswordLoginDisabled,
 		PasswordLoginActive:   a.isPasswordLoginActive(user.user, len(records)),
 		Message:               settingsMessages[c.Query("msg")],
+		CSRFToken:             csrfToken,
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)

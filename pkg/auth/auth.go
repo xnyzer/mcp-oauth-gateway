@@ -166,6 +166,8 @@ const (
 	SessionKeyOAuthState  = "oauth_state"
 	SessionKeyUserID      = "user_id"
 	SessionKeyUserInfo    = "user_info"
+	// SessionKeyCSRF stores the per-session anti-CSRF token (SPEC §1.12).
+	SessionKeyCSRF = "csrf_token"
 
 	sessionKeyWebAuthnLogin        = "webauthn_login"
 	sessionKeyWebAuthnRegistration = "webauthn_registration"
@@ -173,16 +175,16 @@ const (
 
 func (a *AuthRouter) SetupRoutes(router gin.IRouter) {
 	router.GET(LoginEndpoint, a.handleLogin)
-	router.POST(LoginEndpoint, a.withRateLimit(a.handleLoginPost)...)
+	router.POST(LoginEndpoint, a.withRateLimit(a.RequireCSRF(), a.handleLoginPost)...)
 	router.GET(LogoutEndpoint, a.handleLogout)
 	if a.webAuthn != nil {
-		router.POST(WebAuthnLoginBeginEndpoint, a.withRateLimit(a.handleWebAuthnLoginBegin)...)
-		router.POST(WebAuthnLoginFinishEndpoint, a.withRateLimit(a.handleWebAuthnLoginFinish)...)
-		router.POST(WebAuthnRegisterBeginEndpoint, a.RequireAuth(), a.handleWebAuthnRegisterBegin)
-		router.POST(WebAuthnRegisterFinishEndpoint, a.RequireAuth(), a.handleWebAuthnRegisterFinish)
+		router.POST(WebAuthnLoginBeginEndpoint, a.withRateLimit(a.RequireCSRF(), a.handleWebAuthnLoginBegin)...)
+		router.POST(WebAuthnLoginFinishEndpoint, a.withRateLimit(a.RequireCSRF(), a.handleWebAuthnLoginFinish)...)
+		router.POST(WebAuthnRegisterBeginEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleWebAuthnRegisterBegin)
+		router.POST(WebAuthnRegisterFinishEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleWebAuthnRegisterFinish)
 		router.GET(SettingsEndpoint, a.RequireAuth(), a.handleSettings)
-		router.POST(SettingsPasswordEndpoint, a.RequireAuth(), a.handleSettingsPassword)
-		router.POST(SettingsCredentialDeleteEndpoint, a.RequireAuth(), a.handleSettingsCredentialDelete)
+		router.POST(SettingsPasswordEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleSettingsPassword)
+		router.POST(SettingsCredentialDeleteEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleSettingsCredentialDelete)
 	}
 	for _, provider := range a.providers {
 		router.GET(provider.RedirectURL(), func(c *gin.Context) {
@@ -442,6 +444,9 @@ type loginTemplateData struct {
 	// PasskeyAvailable shows the passkey button once the operator account
 	// has at least one registered credential (SPEC §1.12).
 	PasskeyAvailable bool
+	// CSRFToken is the per-session anti-CSRF token embedded in the password
+	// form and the passkey fetch header (SPEC §1.12).
+	CSRFToken string
 }
 
 type unauthorizedTemplateData struct {
@@ -454,11 +459,25 @@ type errorTemplateData struct {
 }
 
 func (a *AuthRouter) renderLogin(c *gin.Context, passwordError string) {
+	// Mint (or reuse) the per-session CSRF token and persist it before the
+	// form is served, so the subsequent login POST / passkey fetch can be
+	// checked against it (SPEC §1.12).
+	session := sessions.Default(c)
+	csrfToken, err := EnsureCSRFToken(session)
+	if err != nil {
+		a.renderError(c, err)
+		return
+	}
+	if err := session.Save(); err != nil {
+		a.renderError(c, err)
+		return
+	}
 	data := loginTemplateData{
 		Providers:        a.providers,
 		HasPassword:      len(a.passwordHash) > 0,
 		PasswordError:    passwordError,
 		PasskeyAvailable: a.hasPasskeys(c.Request.Context()),
+		CSRFToken:        csrfToken,
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	if passwordError != "" {

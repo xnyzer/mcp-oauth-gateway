@@ -206,7 +206,9 @@ error page (§1.12 template) with `400` and MUST NOT redirect.
 **done (F-005b)**; CIMD client support **done (F-005c)**. PKCE presence is now enforced by
 Fosite config for **every** client — `EnforcePKCE: true`, so confidential DCR clients must
 send `code_challenge` too, not only public/CIMD ones (**done, F-012b**; closes the prior
-open delta).
+open delta). The consent approval POST additionally carries the §1.12 per-session anti-CSRF
+token (hidden field, constant-time check) on top of its existing `ar_id` session binding
+(**done, F-012c**).
 
 ### 1.6 Token endpoint — `POST /.idp/token`
 
@@ -338,7 +340,11 @@ through unbuffered and a redirect for it passes to the client instead of being f
 ### 1.12 User authentication & consent — `/.auth/*`
 
 FR-4/SR-6. Session-cookie based (`Secure`, `HttpOnly`, `SameSite=Lax`; HMAC key from
-`AUTH_HMAC_SECRET` or generated, part 2/3).
+`AUTH_HMAC_SECRET` or generated, part 2/3). A per-session anti-CSRF token (32 random bytes,
+crypto/rand) is stored in the HMAC-signed session and embedded in the login/consent/settings
+forms; every state-changing POST on this surface is checked against it in constant time —
+defence-in-depth on top of `SameSite=Lax` (**done, F-012c**). Form POSTs carry it in a hidden
+`csrf_token` field; the WebAuthn `fetch()` calls send it as the `X-CSRF-Token` request header.
 
 - `GET /.auth/login` — login page. Backends: **passkey/WebAuthn** (preferred, offered once a
   credential is enrolled), **password** (bcrypt hash(es) from the env config — see below),
@@ -368,10 +374,10 @@ only identity, passkeys, and the password-disabled flag.
 
 | Endpoint | Access | Purpose |
 |---|---|---|
-| `POST /.auth/webauthn/login/begin` / `finish` | public | assertion ceremony; `400`/`401` with a uniform error when unavailable or failed; a sign-count regression (clone warning) or a failed sign-count persist denies the login (fail-closed) |
-| `POST /.auth/webauthn/register/begin` / `finish` | session-gated | enrollment (attestation) ceremony; existing credentials are excluded |
+| `POST /.auth/webauthn/login/begin` / `finish` | public (CSRF-checked) | **discoverable** (usernameless) assertion ceremony — empty allow-list, so the begin response never enumerates the operator's credential IDs to an anonymous caller (F-012c); `400`/`401` with a uniform error when unavailable or failed; a sign-count regression (clone warning) or a failed sign-count persist denies the login (fail-closed) |
+| `POST /.auth/webauthn/register/begin` / `finish` | session-gated (CSRF-checked) | enrollment (attestation) ceremony; existing credentials are excluded; a resident (discoverable) key is **required** so every new passkey supports discoverable login (F-012c) |
 | `GET /.auth/settings` | session-gated | passkey list/enroll/delete + password-fallback toggle |
-| `POST /.auth/settings/password`, `POST /.auth/settings/credentials/delete` | session-gated | form posts (CSRF-mitigated by `SameSite=Lax`) |
+| `POST /.auth/settings/password`, `POST /.auth/settings/credentials/delete` | session-gated (CSRF-checked) | form posts (per-session CSRF token + `SameSite=Lax`, F-012c) |
 
 Settings and enrollment additionally require the session to belong to the persisted operator
 account (OIDC-provider sessions get `403`). **Password-fallback rule:** disabling requires ≥ 1
@@ -393,6 +399,15 @@ returns the same uniform error as a wrong one (SR-6, no distinct pre-bcrypt body
 clears the whole session and expires the cookie (`MaxAge -1`), not just the authorized flag;
 the stored post-login redirect target is normalised to a local path (must start with `/`,
 never `//` or `/\`) at all three login consumers (password, passkey, OIDC callback).
+Login-surface hardening **done (F-012c)**: a per-session anti-CSRF token guards every
+state-changing POST (login, consent §1.5, both settings POSTs, and the WebAuthn ceremonies)
+in constant time, defence-in-depth on top of `SameSite=Lax`; passkey login is now
+**discoverable** (`BeginDiscoverableLogin` / `FinishDiscoverableLogin`, empty allow-list) so
+anonymous callers can no longer enumerate the operator's credential IDs, and registration
+requires a resident key so new passkeys are always discoverable. **Operational note:** a
+non-resident passkey enrolled before F-012c can no longer complete the empty-allow-list login;
+synced-keychain passkeys are resident and unaffected. Rescue path (unchanged, §1.12 lockout
+rescue): delete the passkey records in the data dir → the password fallback re-activates.
 
 ### 1.13 Health — `GET /healthz`
 

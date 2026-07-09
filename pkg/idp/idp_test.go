@@ -7,12 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -299,8 +301,7 @@ func TestPrivateClient(t *testing.T) {
 	require.Equal(t, http.StatusOK, authReturnResp.StatusCode)
 
 	// Step 3: POST the confirmation to complete authorization
-	authReturnResp, err = client.Post(server.URL+location, "application/x-www-form-urlencoded", nil)
-	require.NoError(t, err)
+	authReturnResp = postConsent(t, client, server.URL+location)
 	defer authReturnResp.Body.Close()
 
 	// Should get another redirect with authorization code
@@ -415,6 +416,25 @@ func registerTestClient(t *testing.T, serverURL string) registrationResponse {
 	return regResp
 }
 
+// consentCSRFRE extracts the per-session CSRF token from the consent form.
+var consentCSRFRE = regexp.MustCompile(`name="csrf_token" value="([0-9a-f]+)"`)
+
+// postConsent GETs the consent form to read its per-session CSRF token, then
+// POSTs the approval carrying it (SPEC §1.5/§1.12).
+func postConsent(t *testing.T, client *http.Client, consentURL string) *http.Response {
+	t.Helper()
+	getResp, err := client.Get(consentURL)
+	require.NoError(t, err)
+	body, err := io.ReadAll(getResp.Body)
+	getResp.Body.Close()
+	require.NoError(t, err)
+	m := consentCSRFRE.FindSubmatch(body)
+	require.NotNil(t, m, "consent form must embed a CSRF token: %s", body)
+	resp, err := client.PostForm(consentURL, url.Values{auth.CSRFFieldName: {string(m[1])}})
+	require.NoError(t, err)
+	return resp
+}
+
 // testAuthFlowWithURL performs the OAuth authorization flow given a raw authorization URL
 // and returns the callback URL after authorization completes.
 func testAuthFlowWithURL(t *testing.T, serverURL, authURL string) *url.URL {
@@ -451,11 +471,18 @@ func testAuthFlowWithURL(t *testing.T, serverURL, authURL string) *url.URL {
 	// Step 2: GET renders the authorization confirmation form without granting
 	authReturnResp, err := client.Get(serverURL + location)
 	require.NoError(t, err)
-	defer authReturnResp.Body.Close()
+	formBody, err := io.ReadAll(authReturnResp.Body)
+	authReturnResp.Body.Close()
+	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, authReturnResp.StatusCode)
 
+	// The consent form carries the per-session CSRF token (SPEC §1.5/§1.12);
+	// the POST must echo it back.
+	csrfMatch := consentCSRFRE.FindSubmatch(formBody)
+	require.NotNil(t, csrfMatch, "consent form must embed a CSRF token: %s", formBody)
+
 	// Step 3: POST the confirmation to complete authorization
-	authReturnResp, err = client.Post(serverURL+location, "application/x-www-form-urlencoded", nil)
+	authReturnResp, err = client.PostForm(serverURL+location, url.Values{auth.CSRFFieldName: {string(csrfMatch[1])}})
 	require.NoError(t, err)
 	defer authReturnResp.Body.Close()
 
@@ -549,8 +576,7 @@ func TestPublicClientRequiresPKCE(t *testing.T) {
 	defer formResp.Body.Close()
 	require.Equal(t, http.StatusOK, formResp.StatusCode)
 
-	authReturnResp, err := client.Post(server.URL+location, "application/x-www-form-urlencoded", nil)
-	require.NoError(t, err)
+	authReturnResp := postConsent(t, client, server.URL+location)
 	defer authReturnResp.Body.Close()
 	require.Contains(t, []int{http.StatusFound, http.StatusSeeOther}, authReturnResp.StatusCode)
 
@@ -560,6 +586,58 @@ func TestPublicClientRequiresPKCE(t *testing.T) {
 	require.NotEmpty(t, callbackURL.Query().Get("error"))
 	// RFC 9207: error redirects identify the issuer, too (SPEC §1.5).
 	require.Equal(t, "http://localhost:8080", callbackURL.Query().Get("iss"))
+}
+
+// TestConsentPostRejectsMissingOrWrongCSRF covers the consent-form CSRF guard
+// (SPEC §1.5/§1.12): the approval POST is refused without a matching token,
+// even though the ar_id is bound to the session.
+func TestConsentPostRejectsMissingOrWrongCSRF(t *testing.T) {
+	server, _, _ := setupTestServer(t)
+	regResp := registerTestClient(t, server.URL)
+
+	authURL := fmt.Sprintf("%s%s?response_type=code&client_id=%s&redirect_uri=%s&state=test-state&code_challenge=%s&code_challenge_method=S256",
+		server.URL, AuthorizationEndpoint, regResp.ClientID,
+		url.QueryEscape("http://localhost:8080/callback"), testPKCEChallenge())
+
+	client := &http.Client{
+		Jar:           mustCookieJar(t),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	location := requireRedirectLocation(t, mustGetResp(t, client, authURL))
+
+	// Render the consent form so the session holds a token.
+	formResp := mustGetResp(t, client, server.URL+location)
+	formResp.Body.Close()
+	require.Equal(t, http.StatusOK, formResp.StatusCode)
+
+	// No token -> 403.
+	missing, err := client.PostForm(server.URL+location, url.Values{})
+	require.NoError(t, err)
+	missing.Body.Close()
+	require.Equal(t, http.StatusForbidden, missing.StatusCode)
+
+	// Wrong token -> 403.
+	wrong, err := client.PostForm(server.URL+location, url.Values{auth.CSRFFieldName: {"deadbeef"}})
+	require.NoError(t, err)
+	wrong.Body.Close()
+	require.Equal(t, http.StatusForbidden, wrong.StatusCode)
+}
+
+// mustGetResp / requireRedirectLocation are tiny helpers for the CSRF test.
+func mustGetResp(t *testing.T, client *http.Client, rawURL string) *http.Response {
+	t.Helper()
+	resp, err := client.Get(rawURL)
+	require.NoError(t, err)
+	return resp
+}
+
+func requireRedirectLocation(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	defer resp.Body.Close()
+	require.Contains(t, []int{http.StatusFound, http.StatusSeeOther}, resp.StatusCode)
+	loc := resp.Header.Get("Location")
+	require.NotEmpty(t, loc)
+	return loc
 }
 
 func mustCookieJar(t *testing.T) http.CookieJar {
@@ -598,8 +676,7 @@ func TestConfidentialClientRequiresPKCE(t *testing.T) {
 
 	// fosite enforces PKCE presence when the consent POST triggers the
 	// authorize response — the redirect carries an error, never a code.
-	authReturnResp, err := client.Post(server.URL+location, "application/x-www-form-urlencoded", nil)
-	require.NoError(t, err)
+	authReturnResp := postConsent(t, client, server.URL+location)
 	defer authReturnResp.Body.Close()
 	require.Contains(t, []int{http.StatusFound, http.StatusSeeOther}, authReturnResp.StatusCode)
 

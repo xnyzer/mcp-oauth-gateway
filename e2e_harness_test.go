@@ -32,6 +32,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -308,20 +309,26 @@ func (g *e2eGateway) driveAuthCode(t *testing.T, client *http.Client, authURL st
 	loginPath := requireRedirect(t, mustGet(t, client, g.server.URL+returnPath))
 	require.Contains(t, loginPath, auth.LoginEndpoint)
 
-	// 3. POST the password -> 302 back to the return endpoint.
-	form := url.Values{"password": {e2ePassword}}
+	// 3. GET the login page for its CSRF token, then POST the password -> 302
+	//    back to the return endpoint (SPEC §1.12: the login POST is CSRF-checked).
+	loginToken := extractCSRFToken(t, client, g.server.URL+auth.LoginEndpoint)
+	form := url.Values{"password": {e2ePassword}, auth.CSRFFieldName: {loginToken}}
 	loginResp, err := client.PostForm(g.server.URL+auth.LoginEndpoint, form)
 	require.NoError(t, err)
 	afterLogin := requireRedirect(t, loginResp)
 	require.Contains(t, afterLogin, returnPath)
 
-	// 4. GET the consent form -> 200.
+	// 4. GET the consent form -> 200; read its CSRF token.
 	formResp := mustGet(t, client, g.server.URL+returnPath)
 	require.Equal(t, http.StatusOK, formResp.StatusCode)
+	formBody, err := io.ReadAll(formResp.Body)
 	formResp.Body.Close()
+	require.NoError(t, err)
+	consentMatch := csrfTokenRE.FindSubmatch(formBody)
+	require.NotNil(t, consentMatch, "consent form must embed a CSRF token: %s", formBody)
 
-	// 5. POST consent -> 302 to redirect_uri with code + iss.
-	consentResp, err := client.Post(g.server.URL+returnPath, "application/x-www-form-urlencoded", nil)
+	// 5. POST consent with the token -> 302 to redirect_uri with code + iss.
+	consentResp, err := client.PostForm(g.server.URL+returnPath, url.Values{auth.CSRFFieldName: {string(consentMatch[1])}})
 	require.NoError(t, err)
 	callback := requireRedirect(t, consentResp)
 	parsed, err := url.Parse(callback)
@@ -334,6 +341,23 @@ func mustGet(t *testing.T, client *http.Client, rawURL string) *http.Response {
 	resp, err := client.Get(rawURL)
 	require.NoError(t, err)
 	return resp
+}
+
+// csrfTokenRE matches the per-session CSRF token in the login/consent forms
+// (hidden field or meta tag, SPEC §1.12).
+var csrfTokenRE = regexp.MustCompile(`(?:name="csrf_token" value|name="csrf-token" content)="([0-9a-f]+)"`)
+
+// extractCSRFToken GETs a page with the client (establishing/reusing the
+// session cookie) and returns its CSRF token.
+func extractCSRFToken(t *testing.T, client *http.Client, pageURL string) string {
+	t.Helper()
+	resp := mustGet(t, client, pageURL)
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.NoError(t, err)
+	m := csrfTokenRE.FindSubmatch(body)
+	require.NotNil(t, m, "no CSRF token in %s: %s", pageURL, body)
+	return string(m[1])
 }
 
 // requireRedirect asserts a 3xx with a Location and returns it, closing the body.

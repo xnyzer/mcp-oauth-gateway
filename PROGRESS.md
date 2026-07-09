@@ -47,6 +47,7 @@ document order, not the number, is the path.
 | F-007 | **Release hygiene — complete** (a/b/c/d/e done): M7–M10 deployment fixes, `rotate-key`, hardened image, lint/license/vuln CI, release pipeline, install artefacts, full docs, **v0.1.0 released publicly**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-012a | Fail-fast & crypto/proxy guards → **malformed boolean envs abort startup; RSA < 2048 refused (`JWT_PRIVATE_KEY`/legacy/manifest); `jwt.WithExpirationRequired()`; redirect-replay body buffering capped at 4 MiB (larger bodies stream, redirect passed through); CIMD grant/response-type whitelist shared with DCR** — five negative regression tests; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-012b | Auth-flow hardening → **`EnforcePKCE: true` (confidential DCR clients need PKCE too, closes the SPEC §1.5 delta); empty password takes the uniform bcrypt+error path; bcrypt loop without early `break` (constant multi-hash timing); dead `handleLogin` POST branch removed; logout `session.Clear()` + cookie `MaxAge -1`; shared `safeRedirectTarget` same-origin guard at all three login consumers** — new negative tests (confidential-without-PKCE, empty==wrong-password, logout clears, redirect-guard table); e2e confidential flows threaded through PKCE; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
+| F-012c | Login surface: CSRF + discoverable passkey → **per-session anti-CSRF token (32 B crypto/rand in the HMAC-signed session; new `pkg/auth/csrf.go`) checked constant-time (`crypto/subtle`) on password-login, consent, both settings POSTs, and all WebAuthn ceremonies — hidden field for forms, `X-CSRF-Token` header for the fetches; passkey login switched to `BeginDiscoverableLogin`/`FinishDiscoverableLogin` (empty allow-list → no credential-ID disclosure), registration raised to `ResidentKeyRequirementRequired`** — negatives (missing/wrong token → 403, begin omits descriptors), consent-CSRF test, whole login+consent+e2e harness threaded through token extraction; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 
 ---
 
@@ -81,30 +82,13 @@ regression tests; see Done table + archive).
 empty-password, constant bcrypt timing, dead-branch removal, full logout clear, redirect
 same-origin guard; negative tests + e2e threaded through PKCE; see Done table + archive).
 
-#### F-012c — Login surface: CSRF tokens + discoverable passkey login
-
-- **What:** ① per-session CSRF token (crypto/rand via `pkg/utils`, stored in the HMAC-signed
-  session): hidden field + constant-time check on the password-login, consent, and both
-  settings POSTs; the WebAuthn fetches send it as a request header (defence-in-depth on top of
-  `SameSite=Lax`, SPEC §1.12); ② passkey login via `BeginDiscoverableLogin` /
-  `FinishDiscoverableLogin` (empty allow-list — no credential-ID disclosure to anonymous
-  callers), registration raised to `ResidentKeyRequirementRequired` so new passkeys are
-  guaranteed discoverable.
-- **Files:** `pkg/auth/auth.go`, `pkg/auth/webauthn.go`, `pkg/auth/templates/login.html` +
-  `settings.html` + `webauthn_script.html`, `pkg/idp/idp.go` (consent template + handler),
-  `e2e_test.go`/`e2e_harness_test.go` (token extraction), `SPEC.md` (§1.12 delta) (+ tests).
-- **Dependencies:** none (ordered after F-012b to avoid overlapping edits in the same
-  handlers). Both items deliberately share one substep: they touch the same templates/JS and
-  the live login flows, concentrating the behaviour-change risk in a single verify step.
-- **Acceptance:**
-  - [ ] Negative tests: form POSTs without / with a wrong CSRF token are rejected;
-        `login/begin` response contains no credential descriptors.
-  - [ ] e2e login + consent flows green with token extraction; full suite + `-race` +
-        `golangci-lint` green.
-  - [ ] Deploy note recorded (CHANGELOG draft): non-resident passkeys stop working
-        (synced-keychain passkeys are resident → live setup expected fine); rescue path =
-        delete passkey records in the data dir → password fallback re-activates (SPEC §1.12
-        lockout-rescue rule).
+**F-012c done** (2026-07-09 — login surface: per-session anti-CSRF token on password-login,
+consent, both settings POSTs and all WebAuthn ceremonies (constant-time, defence-in-depth on
+`SameSite=Lax`); discoverable passkey login (empty allow-list, resident-key required);
+negatives + whole login/consent/e2e harness threaded through token extraction; see Done table +
+archive). **Deploy note for F-012e / CHANGELOG:** non-resident passkeys can no longer log in
+(synced-keychain/iCloud passkeys are resident → live setup fine); rescue = delete the passkey
+records in the data dir → the password fallback re-activates (SPEC §1.12 lockout-rescue).
 
 #### F-012d — Persistence hardening
 

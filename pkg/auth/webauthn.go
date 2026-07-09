@@ -123,7 +123,11 @@ func (a *AuthRouter) handleWebAuthnLoginBegin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "passkey login is not available"})
 		return
 	}
-	options, sessionData, err := a.webAuthn.BeginLogin(user)
+	// Discoverable (client-side) login: no allow-list, so the response never
+	// enumerates the operator's credential IDs to an anonymous caller. The
+	// authenticator selects the resident passkey and returns its user handle,
+	// which FinishDiscoverableLogin resolves via the handler below (SPEC §1.12).
+	options, sessionData, err := a.webAuthn.BeginDiscoverableLogin()
 	if err != nil {
 		a.logger.Error("Failed to begin passkey login", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "passkey login failed"})
@@ -160,7 +164,17 @@ func (a *AuthRouter) handleWebAuthnLoginFinish(c *gin.Context) {
 		deny(err)
 		return
 	}
-	credential, err := a.webAuthn.FinishLogin(user, *sessionData, c.Request)
+	// Single-operator discoverable-login handler: the user handle from the
+	// assertion is validated against the sole operator account. go-webauthn
+	// additionally enforces that the asserted credential belongs to this user
+	// and that the handle matches the user ID (fail-closed).
+	handler := func(_, userHandle []byte) (webauthn.User, error) {
+		if string(userHandle) != user.user.ID {
+			return nil, errors.New("user handle does not match the operator account")
+		}
+		return user, nil
+	}
+	credential, err := a.webAuthn.FinishDiscoverableLogin(handler, *sessionData, c.Request)
 	if err != nil {
 		deny(err)
 		return
@@ -244,7 +258,10 @@ func (a *AuthRouter) handleWebAuthnRegisterBegin(c *gin.Context) {
 	options, sessionData, err := a.webAuthn.BeginRegistration(user,
 		webauthn.WithExclusions(exclusions),
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
-			ResidentKey:      protocol.ResidentKeyRequirementPreferred,
+			// Require a resident (discoverable) credential so every newly
+			// enrolled passkey supports the discoverable login ceremony
+			// (empty allow-list, SPEC §1.12).
+			ResidentKey:      protocol.ResidentKeyRequirementRequired,
 			UserVerification: protocol.VerificationPreferred,
 		}),
 	)

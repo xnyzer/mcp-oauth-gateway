@@ -244,7 +244,7 @@ const (
 func (a *IDPRouter) SetupRoutes(router gin.IRouter) {
 	router.GET(AuthorizationEndpoint, withRateLimit(a.authorizeRateLimit, a.handleAuth)...)
 	router.GET(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturnForm)
-	router.POST(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturn)
+	router.POST(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.authRouter.RequireCSRF(), a.handleAuthorizationReturn)
 	router.POST(TokenEndpoint, withRateLimit(a.tokenRateLimit, a.handleToken)...)
 	router.POST(IntrospectionEndpoint, a.handleIntrospect)
 	router.POST(RevocationEndpoint, a.handleRevoke)
@@ -362,6 +362,10 @@ type consentTemplateData struct {
 	ClientID    string
 	RedirectURI string
 	Scopes      []string
+	// CSRFToken is the per-session anti-CSRF token embedded in the approval
+	// form and checked on the consent POST (SPEC §1.5/§1.12), defence-in-depth
+	// on top of the ar_id session binding.
+	CSRFToken string
 }
 
 // consentTemplate shows the client identity and requested scopes (SPEC §1.5):
@@ -379,13 +383,14 @@ var consentTemplate = template.Must(template.New("consent").Parse(`<!doctype htm
 <dt>Redirect to</dt><dd>{{.RedirectURI}}</dd>
 <dt>Requested scopes</dt><dd>{{if .Scopes}}{{range .Scopes}}<code>{{.}}</code> {{end}}{{else}}(none){{end}}</dd>
 </dl>
-<form method="post"><button type="submit">Authorize</button></form>
+<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">Authorize</button></form>
 </body>
 </html>`))
 
 func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 	arID := c.Param("ar_id")
-	if !hasAuthorizeRequestID(sessions.Default(c), arID) {
+	session := sessions.Default(c)
+	if !hasAuthorizeRequestID(session, arID) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid authorization session"})
 		return
 	}
@@ -393,6 +398,21 @@ func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 	ar, err := a.repo.GetAuthorizeRequest(c.Request.Context(), arID)
 	if err != nil {
 		a.logger.Error("Failed to load authorize request for consent", zap.Error(err))
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		return
+	}
+
+	// Mint (or reuse) the per-session CSRF token and persist it before the
+	// approval form is served; the consent POST is checked against it (SPEC
+	// §1.5/§1.12).
+	csrfToken, err := auth.EnsureCSRFToken(session)
+	if err != nil {
+		a.logger.Error("Failed to mint CSRF token for consent", zap.Error(err))
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		return
+	}
+	if err := session.Save(); err != nil {
+		a.logger.Error("Failed to save consent session", zap.Error(err))
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 		return
 	}
@@ -407,6 +427,7 @@ func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 		ClientID:    ar.GetClient().GetID(),
 		RedirectURI: redirectURI,
 		Scopes:      ar.GetRequestedScopes(),
+		CSRFToken:   csrfToken,
 	}); err != nil {
 		a.logger.Error("Failed to render consent page", zap.Error(err))
 	}

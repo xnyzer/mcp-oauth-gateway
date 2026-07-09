@@ -58,17 +58,21 @@ func newAbuseTestServer(t *testing.T, mutate func(*Config)) (*httptest.Server, *
 	return server, logs
 }
 
-// noRedirectClient keeps 302 responses observable instead of following
-// them into the (nonexistent) proxied root.
-var noRedirectClient = &http.Client{
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
-}
-
+// postLogin fetches a CSRF token on a fresh session, then POSTs the password.
+// Each call gets its own cookie jar (the lockout is per-account and the rate
+// limit per-IP, both independent of the session).
 func postLogin(t *testing.T, serverURL, password string) (*http.Response, string) {
 	t.Helper()
-	resp, err := noRedirectClient.PostForm(serverURL+LoginEndpoint, url.Values{"password": {password}})
+	return postLoginClient(t, newTestClient(t), serverURL, password)
+}
+
+// postLoginClient POSTs the password on the given client's session, embedding
+// its (stable) CSRF token. Callers that compare response bodies must reuse one
+// client so the token — and thus the rendered page — is identical.
+func postLoginClient(t *testing.T, client *http.Client, serverURL, password string) (*http.Response, string) {
+	t.Helper()
+	token := fetchCSRFToken(t, client, serverURL+LoginEndpoint)
+	resp, err := client.PostForm(serverURL+LoginEndpoint, url.Values{"password": {password}, CSRFFieldName: {token}})
 	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -81,17 +85,21 @@ func TestLockout_UniformErrorAndCorrectPasswordRejected(t *testing.T) {
 		cfg.Lockout = ratelimit.NewLockout(3, 15*time.Minute)
 	})
 
+	// One session throughout so the rendered CSRF token is identical and the
+	// only difference under test is the password-verification outcome.
+	client := newTestClient(t)
+
 	// Reference: how a plain wrong password answers.
-	wrongResp, wrongBody := postLogin(t, server.URL, "wrong")
+	wrongResp, wrongBody := postLoginClient(t, client, server.URL, "wrong")
 	require.Equal(t, http.StatusBadRequest, wrongResp.StatusCode)
 
 	// Two more wrong attempts reach the threshold of 3.
-	postLogin(t, server.URL, "wrong")
-	postLogin(t, server.URL, "wrong")
+	postLoginClient(t, client, server.URL, "wrong")
+	postLoginClient(t, client, server.URL, "wrong")
 
 	// Locked: even the correct password is rejected, with a byte-identical
 	// response to a wrong password (SR-6 — no lockout oracle).
-	lockedResp, lockedBody := postLogin(t, server.URL, testPassword)
+	lockedResp, lockedBody := postLoginClient(t, client, server.URL, testPassword)
 	require.Equal(t, wrongResp.StatusCode, lockedResp.StatusCode)
 	require.Equal(t, wrongBody, lockedBody)
 }

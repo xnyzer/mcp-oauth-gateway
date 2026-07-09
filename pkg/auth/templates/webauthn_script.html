@@ -1,5 +1,11 @@
 {{define "webauthn_script"}}
 <script>
+  // csrfHeader returns the per-session anti-CSRF token as a request-header
+  // object for the WebAuthn fetch() calls (SPEC §1.12); empty if absent.
+  function csrfHeader() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta && meta.content ? { "X-CSRF-Token": meta.content } : {};
+  }
   function base64urlToBuffer(value) {
     const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
     const raw = atob(base64);

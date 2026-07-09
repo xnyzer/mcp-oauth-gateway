@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"testing"
 
@@ -53,8 +52,11 @@ func TestSafeRedirectTarget(t *testing.T) {
 func TestEmptyPasswordAnswersLikeWrongPassword(t *testing.T) {
 	server, _ := newAbuseTestServer(t, nil)
 
-	wrongResp, wrongBody := postLogin(t, server.URL, "wrong")
-	emptyResp, emptyBody := postLogin(t, server.URL, "")
+	// One session so the embedded CSRF token — and thus the rendered page — is
+	// identical; only the password-verification outcome may differ.
+	client := newTestClient(t)
+	wrongResp, wrongBody := postLoginClient(t, client, server.URL, "wrong")
+	emptyResp, emptyBody := postLoginClient(t, client, server.URL, "")
 
 	require.Equal(t, http.StatusBadRequest, emptyResp.StatusCode)
 	require.Equal(t, wrongResp.StatusCode, emptyResp.StatusCode)
@@ -105,9 +107,7 @@ func TestLogoutClearsSession(t *testing.T) {
 	}
 
 	// Log in, then confirm the protected route is reachable.
-	loginResp, err := client.PostForm(server.URL+LoginEndpoint, url.Values{"password": {testPassword}})
-	require.NoError(t, err)
-	loginResp.Body.Close()
+	loginResp := passwordLogin(t, client, server.URL, testPassword)
 	require.Equal(t, http.StatusFound, loginResp.StatusCode)
 
 	appResp, err := client.Get(server.URL + "/app")
@@ -155,9 +155,7 @@ func TestLoginReturnsToRequestedPath(t *testing.T) {
 	require.Equal(t, LoginEndpoint, resp.Header.Get("Location"))
 
 	// A successful login returns to it.
-	loginResp, err := client.PostForm(server.URL+LoginEndpoint, url.Values{"password": {testPassword}})
-	require.NoError(t, err)
-	loginResp.Body.Close()
+	loginResp := passwordLogin(t, client, server.URL, testPassword)
 	require.Equal(t, http.StatusFound, loginResp.StatusCode)
 	require.Equal(t, "/app", loginResp.Header.Get("Location"))
 }

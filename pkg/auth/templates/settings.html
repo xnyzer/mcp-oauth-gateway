@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="csrf-token" content="{{.CSRFToken}}" />
     <title>Settings - MCP OAuth Gateway</title>
     <style>
       body {
@@ -141,6 +142,7 @@
               method="POST"
               style="margin: 0"
             >
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
               <input type="hidden" name="id" value="{{.ID}}" />
               <button class="button secondary" type="submit">Delete</button>
             </form>
@@ -176,6 +178,7 @@
         active again because no passkeys remain.){{end}}
       </div>
       <form action="/.auth/settings/password" method="POST">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
         {{if .PasswordLoginDisabled}}
         <input type="hidden" name="disabled" value="false" />
         <button class="button secondary" type="submit">
@@ -203,6 +206,7 @@
           try {
             const beginResp = await fetch("/.auth/webauthn/register/begin", {
               method: "POST",
+              headers: csrfHeader(),
             });
             if (!beginResp.ok) throw new Error("begin failed");
             const options = await beginResp.json();
@@ -216,7 +220,7 @@
               "/.auth/webauthn/register/finish?name=" + name,
               {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...csrfHeader() },
                 body: JSON.stringify(credentialToJSON(credential)),
               }
             );
