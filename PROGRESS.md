@@ -9,8 +9,9 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
-`PROGRESS-ARCHIVE.md`. **No open tasks;** only the standing watch item to re-check the final MCP
-spec after 2026-07-28 remains. F-numbers are stable IDs; the document order, not the number, is
+`PROGRESS-ARCHIVE.md`. **No tasks in the execution queue;** parked in the backlog is **F-013**
+(fix the CI `ci.yml` workflow, which never runs), plus the standing watch item to re-check the
+final MCP spec after 2026-07-28. F-numbers are stable IDs; the document order, not the number, is
 the path.
 
 ---
@@ -62,12 +63,43 @@ Standing watch item: **re-check the final MCP authorization spec once it publish
 
 ## Feature ideas (backlog)
 
-_None parked. New ideas are intaked via `/add-feature` and get the next F-number._
+### F-013 — Fix the CI workflow (`ci.yml` never runs)
+
+**Problem:** `.github/workflows/ci.yml` has failed to load on **every** push since v0.1.0 —
+GitHub reports "No jobs were run" / "workflow file issue" and creates **0 jobs**, so the
+build/test/`gofmt`/`vet` + `golangci-lint` + `go-licenses` gate has been effectively disabled the
+whole time (only `vulncheck.yml` and `release.yml` actually run). The operator receives repeated
+GitHub failure emails. F-012 was validated by running the checks by hand locally instead.
+
+**Idea:** Fix the YAML syntax error, lint **all** workflow files with `actionlint` to catch any
+other silent rejection, and verify by observing that the jobs actually run and pass — not merely
+that the file parses.
+
+**Possible implementation:**
+- Root cause (verified locally with `actionlint`): [`ci.yml:59`](.github/workflows/ci.yml#L59) in
+  the `license-check` job — `run: "$(go env GOPATH)/bin/go-licenses" check ./… --disallowed_types=…`.
+  The value **begins with a double quote**, so YAML parses `"$(go env GOPATH)/bin/go-licenses"` as
+  a quoted scalar and the trailing ` check …` is a syntax error ("did not find expected key"),
+  which invalidates the entire file. Fix with a block scalar (`run: |` on the next line) or by not
+  starting the scalar with a quote.
+- Run `actionlint` over `.github/workflows/*.yml` (all three) as part of the fix; consider adding
+  it as a lightweight CI step so a future malformed workflow fails loudly instead of silently
+  producing 0 jobs.
+- **Verify it actually runs:** after pushing, confirm via `gh run list` / `gh run view` that the
+  `build-test`, `lint` and `license-check` jobs are created and **pass** (the action refs
+  `actions/checkout@v7`, `actions/setup-go@v6`, `golangci/golangci-lint-action@v9.3.0` were all
+  verified to exist — they are **not** the cause).
+- Correct the earlier incorrect root-cause note in `PROGRESS-ARCHIVE.md` (F-012 umbrella section)
+  and Graphiti, which speculated the `golangci-lint-action@v9.3.0` ref was to blame — it resolves
+  fine; the actual cause is the YAML quoting above.
+- No product-code change; CI-infra/hygiene only. No new runtime dependencies.
+
+**Dependencies:** none.
 
 ---
 
 <!-- FEATURE-INDEX
-next-feature: F-013
+next-feature: F-014
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -80,4 +112,5 @@ F-005 Implement on the chosen base (sigbit fork) (DONE)
 F-006 Verify against Claude + security review (DONE)
 F-007 Release hygiene (DONE)
 F-012 Audit low-severity follow-ups (from F-006b) (DONE)
+F-013 Fix the CI workflow (ci.yml never runs)
 -->
