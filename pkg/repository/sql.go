@@ -100,6 +100,10 @@ func NewSQLRepository(driver string, dsn string) (Repository, error) {
 		return nil, fmt.Errorf("failed to connect database: %w", err)
 	}
 
+	if err := configureSQLite(db); err != nil {
+		return nil, err
+	}
+
 	if err := db.AutoMigrate(
 		&authorizeCodeSession{},
 		&accessTokenSession{},
@@ -115,6 +119,30 @@ func NewSQLRepository(driver string, dsn string) (Repository, error) {
 	}
 
 	return &sqlRepository{db: db}, nil
+}
+
+// configureSQLite serialises writes and applies durability/concurrency
+// pragmas (SPEC §2.2). SQLite is a single-writer engine: SetMaxOpenConns(1)
+// keeps every statement on one connection so the DCR-cap transaction cannot
+// race a concurrent writer, and WAL + a busy timeout avoid "database is
+// locked" errors under the read-heavy proxy path.
+func configureSQLite(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to access database handle: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	for _, pragma := range []string{
+		"PRAGMA busy_timeout = 5000",
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA synchronous = NORMAL",
+		"PRAGMA foreign_keys = ON",
+	} {
+		if err := db.Exec(pragma).Error; err != nil {
+			return fmt.Errorf("failed to apply %q: %w", pragma, err)
+		}
+	}
+	return nil
 }
 
 func (r *sqlRepository) CreateAuthorizeCodeSession(ctx context.Context, code string, fositeReq fosite.Requester) error {
@@ -301,7 +329,7 @@ func (r *sqlRepository) EnsureSchemaVersion(ctx context.Context, version int) er
 	return nil
 }
 
-func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client, expiresAt time.Time) error {
+func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client, expiresAt time.Time, maxClients int) error {
 	client := models.FromFositeClient(fositeClient)
 	client.CreatedAt = time.Now().UTC()
 	client.ExpiresAt = expiresAt
@@ -315,9 +343,52 @@ func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.
 		Client: data,
 	}
 
-	return r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{UpdateAll: true}).
-		Create(&record).Error
+	// Count and insert in one transaction. With SetMaxOpenConns(1) writes run
+	// on a single connection, so the cap check cannot race a concurrent
+	// registration (SR-5, no TOCTOU).
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if maxClients > 0 {
+			var existing clientRecord
+			err := tx.First(&existing, "id = ?", fositeClient.GetID()).Error
+			isNew := errors.Is(err, gorm.ErrRecordNotFound)
+			if err != nil && !isNew {
+				return fmt.Errorf("failed to check existing client: %w", err)
+			}
+			// A re-registration replaces in place and must not count against
+			// the cap; only a genuinely new ID does.
+			if isNew {
+				count, err := countNonExpiredClientRecords(tx, time.Now().UTC())
+				if err != nil {
+					return err
+				}
+				if count >= maxClients {
+					return ErrClientCapReached
+				}
+			}
+		}
+		return tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&record).Error
+	})
+}
+
+// countNonExpiredClientRecords counts the client registrations whose expiry
+// has not passed (a zero expiry never expires), scoped to the given
+// DB/transaction handle.
+func countNonExpiredClientRecords(db *gorm.DB, now time.Time) (int, error) {
+	var records []clientRecord
+	if err := db.Find(&records).Error; err != nil {
+		return 0, fmt.Errorf("failed to load clients: %w", err)
+	}
+	count := 0
+	for _, record := range records {
+		var client models.Client
+		if err := json.Unmarshal(record.Client, &client); err != nil {
+			continue
+		}
+		if client.ExpiresAt.IsZero() || client.ExpiresAt.After(now) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // getClientModel loads and decodes a stored client registration.
@@ -371,18 +442,7 @@ func (r *sqlRepository) TouchClient(ctx context.Context, id string, expiresAt ti
 
 // CountClients counts stored, non-expired DCR registrations (cap, SR-5).
 func (r *sqlRepository) CountClients(ctx context.Context) (int, error) {
-	clients, err := r.allClientModels(ctx)
-	if err != nil {
-		return 0, err
-	}
-	now := time.Now().UTC()
-	count := 0
-	for _, client := range clients {
-		if client.ExpiresAt.IsZero() || client.ExpiresAt.After(now) {
-			count++
-		}
-	}
-	return count, nil
+	return countNonExpiredClientRecords(r.db.WithContext(ctx), time.Now().UTC())
 }
 
 // DeleteExpiredClients garbage-collects expired DCR registrations.

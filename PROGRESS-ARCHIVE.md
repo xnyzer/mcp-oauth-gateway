@@ -1316,3 +1316,77 @@ discoverable ceremony.
 webauthn_script}.html`, `pkg/idp/idp.go`, `SPEC.md` (§1.5/§1.12 deltas); tests
 `new pkg/auth/csrf_test.go`, `pkg/auth/{webauthn,abuse,hardening}_test.go`,
 `pkg/idp/idp_test.go`, `e2e_harness_test.go`.
+
+---
+
+## F-012d — Persistence hardening — DONE 2026-07-09
+
+Fourth F-012 substep: three persistence-layer audit lows — a TOCTOU-prone DCR cap, missing
+SQLite concurrency/durability pragmas, and a session cookie that was only signed (not
+encrypted) and shared the raw token secret.
+
+### What was done
+
+**① DCR registration cap enforced inside the write transaction (SR-5, no TOCTOU):**
+- `DynamicClientStorage.RegisterClient` gained a `maxClients int` parameter and a new sentinel
+  `repository.ErrClientCapReached` (`interface.go`). `maxClients <= 0` means unlimited.
+- bbolt (`kvs.go`): count + insert now run in a single `db.Update` transaction; bbolt allows
+  one writer at a time, so the cap check cannot race. New `countNonExpiredClients(bucket, now)`
+  helper (also used by `CountClients`, DRY). A re-registration of an existing key replaces in
+  place and does not count against the cap.
+- GORM/SQLite (`sql.go`): count + insert wrapped in `db.Transaction`; new
+  `countNonExpiredClientRecords(db, now)` helper (also used by `CountClients`). Same
+  re-registration semantics.
+- `idp.go handleRegister`: the pre-flight `CountClients` check (the TOCTOU window) is gone; the
+  cap is passed to `RegisterClient` and `ErrClientCapReached` maps to `503`
+  `temporarily_unavailable`.
+- `CountClients` is **kept** on the interface (still used by the maintenance tests as a read
+  query) — a deliberate deviation from the plan's "drop if unused" (it is still used).
+
+**② SQLite concurrency/durability (`sql.go`):** new `configureSQLite(db)` runs right after
+`gorm.Open`: `SetMaxOpenConns(1)` (single-writer → serialises the cap transaction) plus
+`PRAGMA busy_timeout=5000`, `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`. DSN
+guidance added to the README config reference (persistent, non-shared, lock-capable path).
+
+**③ Session-cookie key separation (`pkg/mcp-proxy/cookie.go` + `main.go`):** new
+`deriveCookieKeys(secret)` expands the 32-byte secret via `crypto/hkdf` (SHA-256, two distinct
+context labels) into independent 32-byte auth + AES-256 encryption subkeys; `cookie.NewStore`
+now takes both, so the operator session cookie is signed **and** encrypted. Fosite keeps the
+**raw** secret as its `GlobalSecret`, so issued/refresh tokens are unaffected — only the
+short-lived (`MaxAge` 600 s) operator session cookie changes format and forces a one-time
+re-login after upgrade.
+
+### Tests
+
+- New `pkg/repository/cap_test.go`: `TestRegisterClientCapIsAtomicUnderConcurrency` (both
+  backends, 40 goroutines vs cap 5 → exactly 5 succeed, 35 `ErrClientCapReached`, final count
+  == 5; run under `-race`) and `TestRegisterClientCapAllowsReRegistration` (same ID re-registers
+  in place, a new ID is capped).
+- New `pkg/mcp-proxy/cookie_test.go`: `TestDeriveCookieKeys` (distinct, 32-byte, deterministic,
+  secret-dependent) and `TestSessionCookieIsEncrypted` (a marker stored in the session is not
+  present in plaintext in the emitted cookie).
+- `maintenance_test.go` updated for the new `RegisterClient` arity (cap `0`).
+
+### Decisions / deviations
+
+- **Cap moved into the storage layer, not a DB unique-constraint:** the count is over
+  non-expired records (expiry is inside the JSON blob), so it needs a scan; doing it in the
+  same transaction as the insert is the atomic point. `SetMaxOpenConns(1)` makes the SQLite
+  case genuinely serial.
+- **`CountClients` retained** (plan said drop if unused) — still used by tests as a read query.
+- **HKDF for cookie keys, raw secret for fosite:** one configured secret, two purposes, kept
+  cryptographically independent — avoids a second env var while giving the cookie its own
+  signed+encrypted keys.
+- **No new dependencies** (`crypto/hkdf`, `crypto/sha256` are stdlib; bbolt/GORM already present).
+
+### Verification
+
+Full suite + `go test -race ./...` green (incl. the concurrency cap on both backends);
+`gofmt`/`go vet` clean; golangci-lint v2.12.2 → 0 issues (one G117 on the kvs client-marshal
+carries the same documented nolint as the SQL backend — persisting the DCR secret server-side
+is the repository's purpose, SPEC §2.1).
+
+**Files:** `pkg/repository/interface.go`, `pkg/repository/kvs.go`, `pkg/repository/sql.go`,
+`pkg/idp/idp.go`, `pkg/mcp-proxy/main.go`, new `pkg/mcp-proxy/cookie.go`, `README.md`,
+`SPEC.md` (§1.12/§2.2 deltas); tests new `pkg/repository/cap_test.go`, new
+`pkg/mcp-proxy/cookie_test.go`, `pkg/repository/maintenance_test.go`.

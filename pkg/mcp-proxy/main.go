@@ -628,7 +628,16 @@ func Run(cfg Config) error {
 		}
 		c.AbortWithStatus(http.StatusInternalServerError)
 	}))
-	store := cookie.NewStore(secret)
+	// Derive distinct authentication and encryption subkeys for the operator
+	// session cookie so it is signed AND encrypted (SPEC §1.12/§2.2). fosite
+	// keeps the raw secret as its GlobalSecret, so issued tokens are
+	// unaffected; only the short-lived (MaxAge 600s) operator session cookie
+	// changes format and is re-issued on the next login.
+	cookieAuthKey, cookieEncKey, err := deriveCookieKeys(secret)
+	if err != nil {
+		return fmt.Errorf("failed to derive session cookie keys: %w", err)
+	}
+	store := cookie.NewStore(cookieAuthKey, cookieEncKey)
 	store.Options(sessions.Options{
 		Path:     "/",
 		MaxAge:   600,

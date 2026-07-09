@@ -3,6 +3,7 @@ package idp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -717,21 +718,6 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 		return
 	}
 
-	// Registration cap (SR-5): never silently evict active clients.
-	if a.dcrMaxClients > 0 {
-		count, err := a.repo.CountClients(ctx)
-		if err != nil {
-			a.logger.Error("Failed to count registered clients", zap.Error(err))
-			c.JSON(500, gin.H{"error": "server_error"})
-			return
-		}
-		if count >= a.dcrMaxClients {
-			a.logger.Warn("DCR client cap reached", zap.Int("cap", a.dcrMaxClients))
-			c.JSON(503, gin.H{"error": "temporarily_unavailable", "error_description": "client registration is temporarily unavailable"})
-			return
-		}
-	}
-
 	clientID, err := utils.GenerateClientID()
 	if err != nil {
 		a.logger.Error("Failed to generate client ID", zap.Error(err))
@@ -775,7 +761,15 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 	if a.dcrClientTTL > 0 {
 		expiresAt = time.Now().UTC().Add(a.dcrClientTTL)
 	}
-	if err := a.repo.RegisterClient(ctx, client, expiresAt); err != nil {
+	// The cap is enforced atomically inside the write transaction (SR-5, no
+	// TOCTOU): the store counts non-expired registrations and inserts in one
+	// step, returning ErrClientCapReached rather than evicting active clients.
+	if err := a.repo.RegisterClient(ctx, client, expiresAt, a.dcrMaxClients); err != nil {
+		if errors.Is(err, repository.ErrClientCapReached) {
+			a.logger.Warn("DCR client cap reached", zap.Int("cap", a.dcrMaxClients))
+			c.JSON(503, gin.H{"error": "temporarily_unavailable", "error_description": "client registration is temporarily unavailable"})
+			return
+		}
 		a.logger.Error("Failed to register client", zap.String("client_id", clientID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "server_error"})
 		return

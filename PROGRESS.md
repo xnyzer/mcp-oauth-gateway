@@ -48,6 +48,7 @@ document order, not the number, is the path.
 | F-012a | Fail-fast & crypto/proxy guards → **malformed boolean envs abort startup; RSA < 2048 refused (`JWT_PRIVATE_KEY`/legacy/manifest); `jwt.WithExpirationRequired()`; redirect-replay body buffering capped at 4 MiB (larger bodies stream, redirect passed through); CIMD grant/response-type whitelist shared with DCR** — five negative regression tests; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-012b | Auth-flow hardening → **`EnforcePKCE: true` (confidential DCR clients need PKCE too, closes the SPEC §1.5 delta); empty password takes the uniform bcrypt+error path; bcrypt loop without early `break` (constant multi-hash timing); dead `handleLogin` POST branch removed; logout `session.Clear()` + cookie `MaxAge -1`; shared `safeRedirectTarget` same-origin guard at all three login consumers** — new negative tests (confidential-without-PKCE, empty==wrong-password, logout clears, redirect-guard table); e2e confidential flows threaded through PKCE; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012c | Login surface: CSRF + discoverable passkey → **per-session anti-CSRF token (32 B crypto/rand in the HMAC-signed session; new `pkg/auth/csrf.go`) checked constant-time (`crypto/subtle`) on password-login, consent, both settings POSTs, and all WebAuthn ceremonies — hidden field for forms, `X-CSRF-Token` header for the fetches; passkey login switched to `BeginDiscoverableLogin`/`FinishDiscoverableLogin` (empty allow-list → no credential-ID disclosure), registration raised to `ResidentKeyRequirementRequired`** — negatives (missing/wrong token → 403, begin omits descriptors), consent-CSRF test, whole login+consent+e2e harness threaded through token extraction; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
+| F-012d | Persistence hardening → **DCR cap enforced inside the write transaction (`RegisterClient(…, maxClients)` counts+inserts atomically — bbolt `Update` / GORM `Transaction`; sentinel `ErrClientCapReached` → 503, no TOCTOU; handler pre-check dropped); SQLite `SetMaxOpenConns(1)` + `busy_timeout`/WAL/`synchronous=NORMAL`/`foreign_keys=ON`; session cookie signed *and* encrypted via HKDF-derived auth+AES-256 subkeys (`crypto/hkdf`, new `pkg/mcp-proxy/cookie.go`) while fosite keeps the raw `GlobalSecret`** — concurrency cap test (both backends, `-race`: exactly cap succeed) + cookie-opaqueness test; suite + `-race` + golangci-lint clean; README DSN note + SPEC §1.12/§2.2 deltas. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 
 ---
 
@@ -90,26 +91,11 @@ archive). **Deploy note for F-012e / CHANGELOG:** non-resident passkeys can no l
 (synced-keychain/iCloud passkeys are resident → live setup fine); rescue = delete the passkey
 records in the data dir → the password fallback re-activates (SPEC §1.12 lockout-rescue).
 
-#### F-012d — Persistence hardening
-
-- **What:** ① DCR cap enforced inside the write transaction (TOCTOU): `RegisterClient` takes
-  the cap, both backends count+insert atomically (bbolt `Update` tx; GORM `Transaction`),
-  sentinel error → 503 in the handler; drop `CountClients` from the interface if unused
-  afterwards; ② SQLite backend sets `SetMaxOpenConns(1)` + `busy_timeout` + WAL pragmas after
-  open, DSN note in the README config reference; ③ session-cookie store gets HKDF-derived
-  subkeys (stdlib `crypto/hkdf`) from the 32-byte secret: distinct auth + block key → cookies
-  signed **and encrypted**; **fosite keeps the raw secret**, so outstanding grants/refresh
-  tokens stay valid — only operator session cookies (MaxAge 600) break once (intentional,
-  documented).
-- **Files:** `pkg/repository/interface.go` + `kvs.go` + `sql.go`, `pkg/idp/idp.go`,
-  `pkg/mcp-proxy/main.go`, `README.md` (DSN note), `SPEC.md` (§1.12/§2.2 delta) (+ tests).
-- **Dependencies:** none.
-- **Acceptance:**
-  - [ ] Concurrency regression test: parallel registrations never exceed the cap (under
-        `-race`).
-  - [ ] Cookie value is opaque (no plaintext session keys readable); fosite HMAC secret
-        unchanged — existing e2e token flows pass untouched.
-  - [ ] Full suite + `-race` + `golangci-lint` green.
+**F-012d done** (2026-07-09 — persistence hardening: atomic DCR-cap transaction (no TOCTOU,
+`ErrClientCapReached` → 503), SQLite `SetMaxOpenConns(1)` + WAL/busy_timeout/synchronous/
+foreign_keys pragmas, HKDF-separated signed+encrypted session cookie (fosite keeps the raw
+secret → tokens unaffected, one-time operator re-login); concurrency + cookie-opaqueness tests;
+see Done table + archive).
 
 #### F-012e — Docs, bookkeeping & release v0.1.1
 

@@ -155,7 +155,7 @@ Booleans accept `true|1` / `false|0`. See [`SPEC.md`](SPEC.md) §3 for the norma
 | `TLS_LISTEN` | `:443` (image: `:8443`) | TLS listen address (when TLS is enabled). |
 | `DATA_PATH` | `./data` (image: `/data`) | Data directory: signing keys, token store, auto-generated secrets. **Back this up.** |
 | `REPOSITORY_BACKEND` | `local` | `local` (embedded bbolt) or `sqlite`. |
-| `REPOSITORY_DSN` | — | SQL DSN; required iff backend is `sqlite`. |
+| `REPOSITORY_DSN` | — | SQL DSN; required iff backend is `sqlite`. For a file DB use e.g. `file:/data/gateway.sqlite`. The gateway serialises writes (single connection) and enables WAL + a 5 s busy timeout, so point the DSN at a **persistent, non-shared** path on a filesystem that supports SQLite locking (a local volume, not a network share). |
 
 ### TLS
 

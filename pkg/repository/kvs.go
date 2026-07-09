@@ -252,11 +252,47 @@ func (r *kvsRepository) EnsureSchemaVersion(ctx context.Context, version int) er
 	return nil
 }
 
-func (r *kvsRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client, expiresAt time.Time) error {
+func (r *kvsRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client, expiresAt time.Time, maxClients int) error {
 	client := models.FromFositeClient(fositeClient)
 	client.CreatedAt = time.Now().UTC()
 	client.ExpiresAt = expiresAt
-	return r.create(ctx, "client-"+fositeClient.GetID(), client)
+	data, err := json.Marshal(client) //nolint:gosec // G117: persisting the DCR client secret server-side is the repository's purpose (SPEC §2.1)
+	if err != nil {
+		return fmt.Errorf("failed to marshal client: %w", err)
+	}
+	key := []byte("client-" + fositeClient.GetID())
+
+	// Count and insert in one read-write transaction. bbolt allows only a
+	// single writer at a time, so the cap check cannot race a concurrent
+	// registration (SR-5, no TOCTOU).
+	return r.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		// A re-registration of an existing ID replaces in place and must not
+		// count against the cap; only a genuinely new key does.
+		if maxClients > 0 && bucket.Get(key) == nil &&
+			countNonExpiredClients(bucket, time.Now().UTC()) >= maxClients {
+			return ErrClientCapReached
+		}
+		return bucket.Put(key, data)
+	})
+}
+
+// countNonExpiredClients counts the client-* records in the bucket whose
+// expiry has not passed (a zero expiry never expires).
+func countNonExpiredClients(bucket *bbolt.Bucket, now time.Time) int {
+	cursor := bucket.Cursor()
+	prefix := []byte("client-")
+	count := 0
+	for k, v := cursor.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = cursor.Next() {
+		var client models.Client
+		if err := json.Unmarshal(v, &client); err != nil {
+			continue
+		}
+		if client.ExpiresAt.IsZero() || client.ExpiresAt.After(now) {
+			count++
+		}
+	}
+	return count
 }
 
 // GetClient loads the client by its ID. Expired registrations are treated
@@ -290,18 +326,7 @@ func (r *kvsRepository) CountClients(ctx context.Context) (int, error) {
 	now := time.Now().UTC()
 	count := 0
 	err := r.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(r.bucketName))
-		cursor := bucket.Cursor()
-		prefix := []byte("client-")
-		for k, v := cursor.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = cursor.Next() {
-			var client models.Client
-			if err := json.Unmarshal(v, &client); err != nil {
-				continue
-			}
-			if client.ExpiresAt.IsZero() || client.ExpiresAt.After(now) {
-				count++
-			}
-		}
+		count = countNonExpiredClients(tx.Bucket([]byte(r.bucketName)), now)
 		return nil
 	})
 	return count, err

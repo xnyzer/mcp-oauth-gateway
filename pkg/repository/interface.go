@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -58,11 +59,20 @@ type MaintenanceStorage interface {
 	DeleteExpiredClients(ctx context.Context, now time.Time) error
 }
 
+// ErrClientCapReached is returned by RegisterClient when the registration
+// would exceed maxClients (SR-5). The count and the insert happen in one write
+// transaction, so this is the atomic cap decision — no TOCTOU window.
+var ErrClientCapReached = errors.New("dynamic client registration cap reached")
+
 // DynamicClientStorage manages DCR client registrations (SPEC §1.4).
 // Expired registrations are treated as absent by GetClient (fail-closed).
 type DynamicClientStorage interface {
 	// RegisterClient stores a registration; a zero expiresAt never expires.
-	RegisterClient(ctx context.Context, client fosite.Client, expiresAt time.Time) error
+	// When maxClients > 0 the count of non-expired registrations and the
+	// insert run in a single write transaction; if the store already holds
+	// maxClients non-expired clients it returns ErrClientCapReached and stores
+	// nothing (SR-5, no TOCTOU). maxClients <= 0 means unlimited.
+	RegisterClient(ctx context.Context, client fosite.Client, expiresAt time.Time, maxClients int) error
 	// TouchClient extends a registration's expiry (refresh-on-use, SR-5).
 	TouchClient(ctx context.Context, id string, expiresAt time.Time) error
 	// CountClients returns the number of stored, non-expired registrations.

@@ -339,8 +339,10 @@ through unbuffered and a redirect for it passes to the client instead of being f
 
 ### 1.12 User authentication & consent — `/.auth/*`
 
-FR-4/SR-6. Session-cookie based (`Secure`, `HttpOnly`, `SameSite=Lax`; HMAC key from
-`AUTH_HMAC_SECRET` or generated, part 2/3). A per-session anti-CSRF token (32 random bytes,
+FR-4/SR-6. Session-cookie based (`Secure`, `HttpOnly`, `SameSite=Lax`; keys from
+`AUTH_HMAC_SECRET` or generated, part 2/3). The cookie is **signed and encrypted** with
+HKDF-derived auth+encryption subkeys distinct from the Fosite token secret (§2.2, F-012d);
+upgrading forces a one-time operator re-login. A per-session anti-CSRF token (32 random bytes,
 crypto/rand) is stored in the HMAC-signed session and embedded in the login/consent/settings
 forms; every state-changing POST on this surface is checked against it in constant time —
 defence-in-depth on top of `SameSite=Lax` (**done, F-012c**). Form POSTs carry it in a hidden
@@ -474,10 +476,19 @@ Keys live in the **data directory** (not the DB), permissions `0600`, directory 
   **2048 bits** are refused (fail-fast, F-012a) — this applies to supplied and adopted legacy
   keys alike.
 - `AUTH_HMAC_SECRET` (session cookies + Fosite HMAC): from env (base64) or generated secret
-  file in the data directory (existing behaviour).
+  file in the data directory (existing behaviour). The operator **session cookie** no longer
+  uses the raw secret directly: two independent subkeys (authentication + AES-256 encryption)
+  are HKDF-derived (`crypto/hkdf`, SHA-256, distinct context labels) so the cookie is signed
+  **and** encrypted (**done, F-012d**). Fosite keeps the **raw** secret as its `GlobalSecret`,
+  so issued tokens are unaffected; only the short-lived (`MaxAge` 600 s) operator session
+  cookie changes format and is re-issued on the next login — a one-time re-login after upgrade.
 
 **Delta:** **done, F-005d** — implemented in `pkg/keys` (`Manager`); key files 0600, key
-directory 0700.
+directory 0700. **Persistence hardening done, F-012d:** the DCR registration cap is enforced
+inside the write transaction (count + insert atomic, no TOCTOU → `ErrClientCapReached` → `503`;
+bbolt single-writer / SQLite `SetMaxOpenConns(1)`), the SQLite backend sets
+`busy_timeout`/WAL/`synchronous=NORMAL`/`foreign_keys=ON` pragmas on open, and the session
+cookie gets HKDF-separated auth+encryption keys (above).
 
 ### 2.3 Key rotation (SR-4, NFR "no abrupt invalidation")
 
