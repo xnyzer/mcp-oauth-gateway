@@ -1390,3 +1390,45 @@ is the repository's purpose, SPEC §2.1).
 `pkg/idp/idp.go`, `pkg/mcp-proxy/main.go`, new `pkg/mcp-proxy/cookie.go`, `README.md`,
 `SPEC.md` (§1.12/§2.2 deltas); tests new `pkg/repository/cap_test.go`, new
 `pkg/mcp-proxy/cookie_test.go`, `pkg/repository/maintenance_test.go`.
+
+---
+
+## F-012 — Audit low-severity follow-ups — DONE 2026-07-09
+
+Umbrella task closing out the 16 actionable low-severity findings from the F-006b adversarial
+audit (the remaining lows after 2 were pulled into F-007b, 2 landed with F-007, and M3/XFF was
+fixed in F-006b). Two further notes — introspection accepts any valid access token as auth, and
+`handleAuth` persists an authorize request pre-auth — are closed as **accepted, no code change**
+(both informational, mitigated by the M4 fixes). Worked in five independently-committed substeps,
+each with regression tests incl. negatives, full suite + `-race` + golangci-lint v2.12.2 green,
+and its SPEC/README delta in the same commit. Per-substep detail in the F-012a–e sections above.
+
+- **F-012a** (guards, 2026-07-08): bool-parse fail-fast · RSA < 2048 refused ·
+  `jwt.WithExpirationRequired()` · redirect-replay body cap (4 MiB) · CIMD grant/response-type
+  whitelist shared with DCR.
+- **F-012b** (auth flow, 2026-07-09): `EnforcePKCE:true` for all clients · uniform
+  empty-password · constant multi-hash bcrypt timing · dead `handleLogin` branch removed ·
+  full logout `Clear` + cookie expiry · `safeRedirectTarget` same-origin guard.
+- **F-012c** (login surface, 2026-07-09): per-session anti-CSRF token on login/consent/settings/
+  WebAuthn POSTs (constant-time, new `pkg/auth/csrf.go`) · discoverable passkey login
+  (`BeginDiscoverableLogin`, empty allow-list) + resident-key required.
+- **F-012d** (persistence, 2026-07-09): atomic DCR-cap transaction (`ErrClientCapReached` → 503,
+  no TOCTOU) · SQLite `SetMaxOpenConns(1)` + WAL/busy_timeout/synchronous/foreign_keys pragmas ·
+  HKDF-separated signed+encrypted session cookie (fosite keeps the raw `GlobalSecret`).
+- **F-012e** (docs & release, 2026-07-09): `CHANGELOG.md` `[0.1.1]` entry (every behaviour change
+  + upgrade notes: one-time operator re-login, stricter startup, resident-passkey rescue);
+  `AUDIT-RESULTS.md` (local) findings marked resolved; release-gate `govulncheck` clean
+  (0 reachable). **v0.1.1 released:** git tag `v0.1.1` → release workflow green → multi-arch
+  (amd64+arm64) image on GHCR as `0.1.1`/`0.1` (metadata-action strips the `v`, as with v0.1.0),
+  verified by anonymous `docker manifest inspect`. Operator bumps the live deployment separately.
+
+**Known follow-up (out of scope, pre-existing):** `.github/workflows/ci.yml` fails to load on
+every push since v0.1.0 (0 jobs created, GitHub "workflow file issue") — so the build/test/lint/
+license CI gate is not actually running. Isolated to `ci.yml` (the `vulncheck` and `release`
+workflows run fine, incl. `actions/checkout@v7`); the likely cause is the unresolvable
+`golangci/golangci-lint-action@v9.3.0` reference, which invalidates the whole file. Local
+checks (`go test ./...`, `-race`, golangci-lint v2.12.2) were run by hand for every F-012 substep
+in lieu of the gate. Should be fixed as its own task (F-013).
+
+**Files (umbrella):** see the per-substep sections. **Docs:** `CHANGELOG.md`, `SPEC.md`,
+`README.md`, `AUDIT-RESULTS.md` (local), `PROGRESS.md`, `PROGRESS-ARCHIVE.md`; git tag `v0.1.1`.

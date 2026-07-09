@@ -4,14 +4,14 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State: released.** **v0.1.0 is public** — repo public, GitHub release published, multi-arch
-image on GHCR (`ghcr.io/xnyzer/mcp-oauth-gateway`), verified against the MCP **2026-07-28 spec
-RC**. The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
-verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 incl. F-007 (release
-hygiene) are done — rationale archived in `PROGRESS-ARCHIVE.md`. **Open: F-012** (audit
-low-severity follow-ups — prepared into substeps a–e, target patch release **v0.1.1**) and the
-watch item to re-check the final MCP spec after 2026-07-28. F-numbers are stable IDs; the
-document order, not the number, is the path.
+**State: released.** **v0.1.1 is public** — repo public, multi-arch image on GHCR
+(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.1.1`/`0.1`), verified against the MCP **2026-07-28
+spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
+verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
+low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
+`PROGRESS-ARCHIVE.md`. **No open tasks;** only the standing watch item to re-check the final MCP
+spec after 2026-07-28 remains. F-numbers are stable IDs; the document order, not the number, is
+the path.
 
 ---
 
@@ -48,6 +48,7 @@ document order, not the number, is the path.
 | F-012a | Fail-fast & crypto/proxy guards → **malformed boolean envs abort startup; RSA < 2048 refused (`JWT_PRIVATE_KEY`/legacy/manifest); `jwt.WithExpirationRequired()`; redirect-replay body buffering capped at 4 MiB (larger bodies stream, redirect passed through); CIMD grant/response-type whitelist shared with DCR** — five negative regression tests; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-08 |
 | F-012b | Auth-flow hardening → **`EnforcePKCE: true` (confidential DCR clients need PKCE too, closes the SPEC §1.5 delta); empty password takes the uniform bcrypt+error path; bcrypt loop without early `break` (constant multi-hash timing); dead `handleLogin` POST branch removed; logout `session.Clear()` + cookie `MaxAge -1`; shared `safeRedirectTarget` same-origin guard at all three login consumers** — new negative tests (confidential-without-PKCE, empty==wrong-password, logout clears, redirect-guard table); e2e confidential flows threaded through PKCE; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012c | Login surface: CSRF + discoverable passkey → **per-session anti-CSRF token (32 B crypto/rand in the HMAC-signed session; new `pkg/auth/csrf.go`) checked constant-time (`crypto/subtle`) on password-login, consent, both settings POSTs, and all WebAuthn ceremonies — hidden field for forms, `X-CSRF-Token` header for the fetches; passkey login switched to `BeginDiscoverableLogin`/`FinishDiscoverableLogin` (empty allow-list → no credential-ID disclosure), registration raised to `ResidentKeyRequirementRequired`** — negatives (missing/wrong token → 403, begin omits descriptors), consent-CSRF test, whole login+consent+e2e harness threaded through token extraction; suite + `-race` + golangci-lint clean. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
+| F-012 | **Audit low-severity follow-ups — complete** (a/b/c/d/e done): all 16 actionable F-006b lows fixed across guards → auth flow → login surface → persistence, each with negative regression tests; **v0.1.1 released** (git tag `v0.1.1`, multi-arch `0.1.1`/`0.1` image on GHCR, release workflow green, anonymous pull verified). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012d | Persistence hardening → **DCR cap enforced inside the write transaction (`RegisterClient(…, maxClients)` counts+inserts atomically — bbolt `Update` / GORM `Transaction`; sentinel `ErrClientCapReached` → 503, no TOCTOU; handler pre-check dropped); SQLite `SetMaxOpenConns(1)` + `busy_timeout`/WAL/`synchronous=NORMAL`/`foreign_keys=ON`; session cookie signed *and* encrypted via HKDF-derived auth+AES-256 subkeys (`crypto/hkdf`, new `pkg/mcp-proxy/cookie.go`) while fosite keeps the raw `GlobalSecret`** — concurrency cap test (both backends, `-race`: exactly cap succeed) + cookie-opaqueness test; suite + `-race` + golangci-lint clean; README DSN note + SPEC §1.12/§2.2 deltas. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 
 ---
@@ -56,66 +57,6 @@ document order, not the number, is the path.
 
 Standing watch item: **re-check the final MCP authorization spec once it publishes on
 2026-07-28** (v0.1.0 is verified against its RC; becomes its own small task once published).
-
-### F-012 — Audit low-severity follow-ups (from the F-006b `/audit-code` run)
-
-**Problem:** The F-006b audit surfaced 19 low-severity findings — hardening and hygiene, none a
-security hole — deferred so F-006 could gate on the high/medium security batch. Since then:
-2 were pulled forward into F-007b (data dir `0700`; `os.Exit(1)` via cobra `RunE`), 2 landed
-with F-007 (compose health gating; `go-licenses` pin), and M3 (XFF) was already fixed in
-F-006b. **16 actionable items remain** (full detail per finding: `AUDIT-RESULTS.md`, local/
-gitignored). Two further notes are informational only (introspection breadth; pre-auth
-authorize records — both mitigated by the M4 fixes) and are closed as accepted, no code change.
-
-**Goal:** Work through the 16 items in five substeps (guards → auth flow → login surface →
-persistence → release). Every substep is independently committable (one commit each), ships
-regression tests incl. negatives (CODING-STANDARDS §9), keeps the full suite + `-race` +
-`golangci-lint` green, and updates its SPEC delta notes in the same commit. Finish with patch
-release **v0.1.1**. No new endpoints, no new env vars, no new dependencies (`crypto/hkdf` is
-stdlib since Go 1.24).
-
-**Dependencies:** none (independent hardening; F-006/F-007 done).
-
-**F-012a done** (2026-07-08 — fail-fast & crypto/proxy guards, all five items with negative
-regression tests; see Done table + archive).
-
-**F-012b done** (2026-07-09 — auth-flow hardening: EnforcePKCE for all clients, uniform
-empty-password, constant bcrypt timing, dead-branch removal, full logout clear, redirect
-same-origin guard; negative tests + e2e threaded through PKCE; see Done table + archive).
-
-**F-012c done** (2026-07-09 — login surface: per-session anti-CSRF token on password-login,
-consent, both settings POSTs and all WebAuthn ceremonies (constant-time, defence-in-depth on
-`SameSite=Lax`); discoverable passkey login (empty allow-list, resident-key required);
-negatives + whole login/consent/e2e harness threaded through token extraction; see Done table +
-archive). **Deploy note for F-012e / CHANGELOG:** non-resident passkeys can no longer log in
-(synced-keychain/iCloud passkeys are resident → live setup fine); rescue = delete the passkey
-records in the data dir → the password fallback re-activates (SPEC §1.12 lockout-rescue).
-
-**F-012d done** (2026-07-09 — persistence hardening: atomic DCR-cap transaction (no TOCTOU,
-`ErrClientCapReached` → 503), SQLite `SetMaxOpenConns(1)` + WAL/busy_timeout/synchronous/
-foreign_keys pragmas, HKDF-separated signed+encrypted session cookie (fosite keeps the raw
-secret → tokens unaffected, one-time operator re-login); concurrency + cookie-opaqueness tests;
-see Done table + archive).
-
-#### F-012e — Docs, bookkeeping & release v0.1.1
-
-**Docs & bookkeeping done** (2026-07-09): `CHANGELOG.md` v0.1.1 entry written (every F-012a–d
-behaviour change + upgrade notes: one-time operator-session reset, stricter startup on bool-typo
-envs and RSA < 2048, resident-passkey note + non-resident rescue); F-012 findings marked resolved
-in `AUDIT-RESULTS.md` (local); SPEC/README deltas landed with their substeps.
-
-**Release pending operator go:** tag `v0.1.1` → the release workflow builds + pushes the
-multi-arch GHCR image (operator bumps the live deployment afterwards). The five local commits
-(prep, F-012a–d) + the docs commit are unpushed until then. On go: push → tag → verify workflow +
-anonymous pull → move F-012 to the Done table + archive the umbrella + mark `(DONE)` in the
-FEATURE-INDEX + final Graphiti.
-
-- **Files:** `CHANGELOG.md`, `AUDIT-RESULTS.md` (local), `PROGRESS.md`,
-  `PROGRESS-ARCHIVE.md`, git tag.
-- **Dependencies:** F-012a–d.
-- **Acceptance:**
-  - [x] CHANGELOG documents every behaviour change; SPEC/README deltas consistent.
-  - [ ] Tag pushed only after operator go; release workflow green, GHCR image pullable.
 
 ---
 
@@ -138,5 +79,5 @@ F-004 Complete the spec (make it implementable) (DONE)
 F-005 Implement on the chosen base (sigbit fork) (DONE)
 F-006 Verify against Claude + security review (DONE)
 F-007 Release hygiene (DONE)
-F-012 Audit low-severity follow-ups (from F-006b)
+F-012 Audit low-severity follow-ups (from F-006b) (DONE)
 -->
