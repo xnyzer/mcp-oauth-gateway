@@ -99,17 +99,22 @@ see Done table + archive).
 
 #### F-012e — Docs, bookkeeping & release v0.1.1
 
-- **What:** `CHANGELOG.md` v0.1.1 entry (upgrade notes: one-time operator-session reset;
-  startup now fails on bool-typo envs and RSA < 2048; passkey resident-key note); mark the
-  findings done in `AUDIT-RESULTS.md` (local); move F-012 to the Done table + archive the
-  rationale; Graphiti update; then — **only after explicit operator go** — tag `v0.1.1`
-  (release workflow builds + pushes the multi-arch image; operator bumps the live deployment
-  afterwards).
+**Docs & bookkeeping done** (2026-07-09): `CHANGELOG.md` v0.1.1 entry written (every F-012a–d
+behaviour change + upgrade notes: one-time operator-session reset, stricter startup on bool-typo
+envs and RSA < 2048, resident-passkey note + non-resident rescue); F-012 findings marked resolved
+in `AUDIT-RESULTS.md` (local); SPEC/README deltas landed with their substeps.
+
+**Release pending operator go:** tag `v0.1.1` → the release workflow builds + pushes the
+multi-arch GHCR image (operator bumps the live deployment afterwards). The five local commits
+(prep, F-012a–d) + the docs commit are unpushed until then. On go: push → tag → verify workflow +
+anonymous pull → move F-012 to the Done table + archive the umbrella + mark `(DONE)` in the
+FEATURE-INDEX + final Graphiti.
+
 - **Files:** `CHANGELOG.md`, `AUDIT-RESULTS.md` (local), `PROGRESS.md`,
   `PROGRESS-ARCHIVE.md`, git tag.
 - **Dependencies:** F-012a–d.
 - **Acceptance:**
-  - [ ] CHANGELOG documents every behaviour change; SPEC/README deltas consistent.
+  - [x] CHANGELOG documents every behaviour change; SPEC/README deltas consistent.
   - [ ] Tag pushed only after operator go; release workflow green, GHCR image pullable.
 
 ---
