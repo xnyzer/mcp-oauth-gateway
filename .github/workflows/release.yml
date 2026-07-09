@@ -8,8 +8,8 @@ on:
     tags: ["v*.*.*"]
 
 permissions:
-  contents: read
-  packages: write
+  contents: write # create the GitHub Release
+  packages: write # push the image to GHCR
 
 jobs:
   release-image:
@@ -42,3 +42,19 @@ jobs:
             VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+      # Publish a GitHub Release from the CHANGELOG section for this tag, so a
+      # SemVer tag produces both the GHCR image (above) and a human-readable
+      # release entry — no manual step (F-013 follow-up).
+      - name: Extract changelog section
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v h="## [$version]" 'index($0,h)==1{p=1;next} p&&/^## \[/{exit} p{print}' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::no CHANGELOG.md section found for $version"
+            exit 1
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          make_latest: "true"
