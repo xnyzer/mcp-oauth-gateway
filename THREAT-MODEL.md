@@ -32,8 +32,16 @@
   defense-in-depth.
 
 ## Notable caveats
-- End-to-end behavior against specific clients (e.g. Claude iOS) is **not yet verified** — treat
-  as integration risk; iterative live testing required (web client first, then mobile).
-- Spec is fast-moving (DCR vs CIMD; client behaviors) — re-verify requirements before release.
-- A self-written gateway owns auth-server security; mandatory pre-release **security review** and
-  vetted-library use (SR-1) are non-negotiable.
+- End-to-end behavior against real clients is **verified** (F-006c): Claude web **and** iOS both
+  connect via live CIMD, and passkey enrol+login works in Safari (desktop) + iOS (iCloud
+  Keychain). Residual integration risk remains for untested clients and future client/spec
+  changes — re-verify on each.
+- Spec is fast-moving (DCR vs CIMD; client behaviors). v0.1.x is verified against the MCP
+  **2026-07-28 authorization spec release candidate** (all six authorization SEPs satisfied,
+  F-007e); the **final spec (due 2026-07-28) has not published yet** — a re-check against it is a
+  standing open item (`PROGRESS.md`).
+- A self-written gateway owns auth-server security; the mandatory pre-release **security review**
+  was completed (F-006b: 0 crit / 1 high / 9 med / 19 low — all fixed across F-006b/F-007/F-012)
+  and vetted-library use (SR-1, Ory Fosite) is non-negotiable. The review was an **internal**
+  adversarial audit, not an external third-party pentest; security is maintained continuously
+  (Dependabot + weekly `govulncheck`), not "finished".

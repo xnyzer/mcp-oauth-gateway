@@ -58,7 +58,13 @@ the path.
 ## Open tasks — work top to bottom
 
 Standing watch item: **re-check the final MCP authorization spec once it publishes on
-2026-07-28** (v0.1.0 is verified against its RC; becomes its own small task once published).
+2026-07-28** (v0.1.x is verified against its RC; becomes its own small task once published).
+**Interim re-check 2026-07-09:** the final spec is **not yet published** (still due 2026-07-28);
+the current RC is unchanged — the six authorization SEPs (SEP-2468 `iss`/RFC 9207, SEP-837 DCR
+`application_type`, SEP-2352 issuer-bound credentials, SEP-2207 OIDC refresh tokens, SEP-2350
+step-up scope accumulation, SEP-2351 `.well-known` suffix) carry no amendments since RC
+publication, and the gateway still satisfies all six (F-007e). No code change; the definitive
+re-check against the published final spec stays open.
 
 ---
 
