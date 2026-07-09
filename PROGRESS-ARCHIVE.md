@@ -1422,13 +1422,19 @@ and its SPEC/README delta in the same commit. Per-substep detail in the F-012a�
   (amd64+arm64) image on GHCR as `0.1.1`/`0.1` (metadata-action strips the `v`, as with v0.1.0),
   verified by anonymous `docker manifest inspect`. Operator bumps the live deployment separately.
 
-**Known follow-up (out of scope, pre-existing):** `.github/workflows/ci.yml` fails to load on
-every push since v0.1.0 (0 jobs created, GitHub "workflow file issue") — so the build/test/lint/
-license CI gate is not actually running. Isolated to `ci.yml` (the `vulncheck` and `release`
-workflows run fine, incl. `actions/checkout@v7`); the likely cause is the unresolvable
-`golangci/golangci-lint-action@v9.3.0` reference, which invalidates the whole file. Local
-checks (`go test ./...`, `-race`, golangci-lint v2.12.2) were run by hand for every F-012 substep
-in lieu of the gate. Should be fixed as its own task (F-013).
+**Known follow-up (pre-existing) → intaked as F-013, fixed 2026-07-09:**
+`.github/workflows/ci.yml` failed to load on every push since v0.1.0 (0 jobs created, GitHub
+"No jobs were run") — so the build/test/lint/license CI gate was not actually running. Isolated
+to `ci.yml` (the `vulncheck` and `release` workflows run fine). **Root cause (verified with
+actionlint), correcting an earlier wrong guess in this note:** it was **not** the
+`golangci/golangci-lint-action@v9.3.0` reference (that tag exists and resolves, as do
+`actions/checkout@v7` / `actions/setup-go@v6`). The actual bug was a **YAML syntax error** on the
+`license-check` job's `run:` line — the value began with a double quote
+(`run: "$(go env GOPATH)/bin/go-licenses" check …`), so YAML parsed the quoted scalar and the
+trailing ` check …` was invalid, invalidating the whole file. Local checks (`go test ./...`,
+`-race`, golangci-lint v2.12.2) were run by hand for every F-012 substep in lieu of the gate.
+Fixed in F-013 (block-scalar `run:` + a pinned `actionlint` CI job so a malformed workflow fails
+loudly in future).
 
 **Files (umbrella):** see the per-substep sections. **Docs:** `CHANGELOG.md`, `SPEC.md`,
 `README.md`, `AUDIT-RESULTS.md` (local), `PROGRESS.md`, `PROGRESS-ARCHIVE.md`; git tag `v0.1.1`.
