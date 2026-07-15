@@ -22,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 # package manager, no interpreters; CA roots and tzdata included. Stdio
 # upstreams needing an interpreter (npx/uvx) must run as a separate service
 # or in a custom image.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:aef9602f8710ec12bde19d593fed1f76c708531bb7aba205110f1029786ead7b
 
 COPY --from=builder /app/bin/main /usr/local/bin/mcp-oauth-gateway
 # /data owned by nonroot so a fresh named volume inherits the ownership.
