@@ -10,9 +10,10 @@ spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**No open tasks and an empty backlog;** only the standing watch item to re-check the final MCP
-spec after 2026-07-28 remains. F-numbers are stable IDs; the document order, not the number, is
-the path.
+**Four open tasks (F-014–F-017)** in execution order below: vulnerable indirect dependencies,
+the missing CIMD advertisement, `localhost` loopback redirect matching, and the now-due re-check
+against the published final MCP spec. F-numbers are stable IDs; the document order, not the
+number, is the path.
 
 ---
 
@@ -57,14 +58,131 @@ the path.
 
 ## Open tasks — work top to bottom
 
-Standing watch item: **re-check the final MCP authorization spec once it publishes on
-2026-07-28** (v0.1.x is verified against its RC; becomes its own small task once published).
-**Interim re-check 2026-07-09:** the final spec is **not yet published** (still due 2026-07-28);
-the current RC is unchanged — the six authorization SEPs (SEP-2468 `iss`/RFC 9207, SEP-837 DCR
-`application_type`, SEP-2352 issuer-bound credentials, SEP-2207 OIDC refresh tokens, SEP-2350
-step-up scope accumulation, SEP-2351 `.well-known` suffix) carry no amendments since RC
-publication, and the gateway still satisfies all six (F-007e). No code change; the definitive
-re-check against the published final spec stays open.
+### F-014 — Bump vulnerable indirect dependencies
+
+**Problem:** The weekly `vulncheck` workflow has failed on every run since 2026-07-27, mailing a
+failure notice each Monday. Two advisories are reachable from our code, both in indirect
+dependencies: GO-2026-6061 (`google.golang.org/grpc` 1.80.0, fixed 1.82.1) and GO-2026-5970 — an
+infinite loop on invalid input — (`golang.org/x/text` 0.37.0, fixed 0.39.0).
+
+**Idea:** Bump both modules past their fixed versions, confirm `govulncheck` reports zero
+reachable vulnerabilities, and close the gap that let them go stale — Dependabot does not raise
+PRs for indirect Go modules, so nothing flagged them.
+
+**Possible implementation:**
+- `go get golang.org/x/text@latest google.golang.org/grpc@latest && go mod tidy`; both are
+  `// indirect`, so no source change is expected.
+- Reachability for the record: `x/text` via `autocert.HostWhitelist` and `gorm.init`, `grpc` via
+  `fosite → ory/x/otelx → jaeger-idl`. Neither is a path we call deliberately — they arrive with
+  the dependency tree.
+- Re-run `govulncheck ./...`, the full suite with `-race`, and golangci-lint before pushing.
+- Evaluate whether `.github/dependabot.yml` should cover indirect Go modules; weigh the PR noise
+  against the risk of the next silent lag.
+
+**Dependencies:** none.
+
+### F-015 — Advertise CIMD support in the AS metadata
+
+**Problem:** `SPEC.md` §1.3 declares Client ID Metadata Documents the primary client-identification
+mechanism, but the §1.2 AS metadata table never announces it — and the implementation faithfully
+mirrors that omission: `client_id_metadata_document_supported` appears nowhere in the repository.
+Clients cannot discover a capability that is implemented (`pkg/cimd`) and enabled by default
+(`CIMD_ENABLED=true`), and fall back to the deprecated DCR path instead.
+
+**Idea:** Add the field to SPEC §1.2 and emit it from `authorizationServerResponse`, driven by the
+CIMD config flag so the advertisement always matches actual behaviour. This makes CIMD-first real
+rather than aspirational and takes pressure off the DCR store.
+
+**Possible implementation:**
+- `pkg/idp/idp.go`: add `ClientIDMetadataDocumentSupported` to `authorizationServerResponse`,
+  wired from the CIMD-enabled config rather than hard-coded — with CIMD disabled the field must be
+  absent or `false`.
+- Update the SPEC §1.2 table and its delta line; the optional OIDC discovery mirror serves the
+  same document.
+- Regression test next to the existing `authorization_response_iss_parameter_supported` assertion
+  in `pkg/idp/idp_test.go`: `true` by default, gone when CIMD is off.
+- Documented client behaviour to encode: a client selects CIMD only when the metadata advertises
+  both this flag **and** `none` in `token_endpoint_auth_methods_supported` — we already serve the
+  latter.
+- Expect a live behaviour change: existing connections switch from DCR to CIMD, so the consent
+  screen sources client identity from the CIMD document (F-006b H1) instead of the registration
+  record. Re-verify consent rendering.
+- Removes a latent failure mode: under DCR every fresh connection registers a new client; with
+  `DCR_MAX_CLIENTS=100` and `DCR_CLIENT_TTL=720h` a busy install eventually hits
+  `ErrClientCapReached` and answers new registrations with 503.
+
+**Dependencies:** none (F-014 first for a green baseline).
+
+### F-016 — Port-agnostic loopback matching for `localhost` redirect URIs
+
+**Problem:** Native clients that use the hostname `localhost` for their loopback redirect cannot
+complete authorization. Fosite ignores the port only for IP literals — `isLoopbackAddress()` tests
+`net.ParseIP(hostname).IsLoopback()` — so a client registering `http://localhost/callback` and
+requesting `http://localhost:PORT/callback` is rejected, while the `127.0.0.1` form of the same
+request is accepted.
+
+**Idea:** Supply our own redirect-URI matcher that extends the RFC 8252 §7.3 port-agnostic rule to
+the exact hostname `localhost`, keeping every other component an exact match. The vendor documents
+this as a requirement for its native client; scope stays deliberately narrow.
+
+**Possible implementation:**
+- Verified against the pinned Fosite version: with both portless forms registered,
+  `http://localhost:PORT/callback` → rejected (`invalid_request`), `http://127.0.0.1:PORT/callback`
+  → accepted.
+- Match only when scheme is `http`, requested and registered hostname are both exactly
+  `localhost`, path and raw query are identical, and only the port differs. Explicitly **not**
+  `*.localhost` — RFC 8252 §8.3 discourages the hostname form altogether, so we cover the
+  real-world case and nothing more.
+- Hook it in where registered redirect URIs are matched, so CIMD and DCR clients both benefit;
+  `ValidateRedirectURI` (`pkg/cimd/resolver.go`) stays unchanged — it already admits the loopback
+  forms.
+- Security review against `THREAT-MODEL.md`: any local process can bind a loopback port, so this
+  widens nothing that `127.0.0.1` did not already allow. The consent screen must keep displaying
+  the redirect host prominently, and the MCP spec asks for an extra warning when a client's only
+  registered redirect URIs are loopback addresses — check whether we surface that.
+- Negative tests: differing path, differing query, `https` scheme, and a non-loopback host must all
+  still be rejected when the port differs.
+
+**Dependencies:** none. Best reviewed together with F-015, since both change how clients reach the
+authorize endpoint.
+
+### F-017 — Re-verify against the final MCP 2026-07-28 authorization spec
+
+**Problem:** The standing watch item is due: v0.1.x was verified against the 2026-07-28 release
+candidate, and the final specification has since published. `README.md`, `REQUIREMENTS.md` §0,
+`SPEC.md`, `THREAT-MODEL.md`, `PROGRESS.md` and `docs/VERIFICATION.md` all still name the RC as the
+reference point.
+
+**Idea:** Re-check the gateway against the published final spec, then replace every RC caveat in
+the living documentation with a statement about the final revision, and close the watch item for
+good.
+
+**Possible implementation:**
+- Authorization surface: changes are small and largely already satisfied — RFC 9207 `iss` stays a
+  SHOULD, `application_type` applies to DCR clients, client credentials are issuer-bound (a
+  client-side obligation), and DCR is now formally deprecated in favour of CIMD, which F-015
+  addresses.
+- Transport surface is where the revision is large: no `initialize`/`notifications/initialized`
+  handshake, no `Mcp-Session-Id`, mandatory `Mcp-Method`/`Mcp-Name` headers on Streamable HTTP
+  POSTs, a new `server/discover` RPC, no SSE resumability. The gateway proxies transparently, so
+  this lands on the upstream — but confirm the transparent backend forwards the new headers
+  untouched (`httputil.ReverseProxy`, no allow-list, so a confirmation rather than a change) and
+  that the reserved-namespace guard does not trip over `server/discover`.
+- `pkg/backend/proxy.go` (stdio upstreams) still performs an `initialize` handshake via
+  `mark3labs/mcp-go`. Check what the pinned version supports and whether the stdio path must follow
+  the revision; Dependabot PRs for that module are open.
+- Re-run `docs/VERIFICATION.md` end to end against a live deployment and tick its final-spec
+  checkbox.
+- Documentation sweep: every "release candidate" caveat becomes a final-spec statement.
+- Release gate: once F-014 to F-017 are done, cut the patch release — v0.1.2, or v0.2.0 if the
+  re-check forces behaviour changes.
+- History, so it is not lost with this section: the RC check (F-007e, 2026-07-08) and the interim
+  re-check on 2026-07-09 both found the six authorization SEPs (SEP-2468 `iss`/RFC 9207, SEP-837
+  DCR `application_type`, SEP-2352 issuer-bound credentials, SEP-2207 OIDC refresh tokens,
+  SEP-2350 step-up scope accumulation, SEP-2351 `.well-known` suffix) satisfied and unamended.
+
+**Dependencies:** F-015 (the DCR-deprecation finding is settled there); best done last so the
+re-verification covers the fixed state.
 
 ---
 
@@ -75,7 +193,7 @@ _None parked. New ideas are intaked via `/add-feature` and get the next F-number
 ---
 
 <!-- FEATURE-INDEX
-next-feature: F-014
+next-feature: F-018
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -89,4 +207,8 @@ F-006 Verify against Claude + security review (DONE)
 F-007 Release hygiene (DONE)
 F-012 Audit low-severity follow-ups (from F-006b) (DONE)
 F-013 Fix the CI workflow (ci.yml never runs) (DONE)
+F-014 Bump vulnerable indirect dependencies
+F-015 Advertise CIMD support in the AS metadata
+F-016 Port-agnostic loopback matching for localhost redirect URIs
+F-017 Re-verify against the final MCP 2026-07-28 authorization spec
 -->
