@@ -36,6 +36,7 @@ type IDPRouter struct {
 	authRouter          *auth.AuthRouter
 	oidcDiscoveryMirror bool
 	refreshEnabled      bool
+	cimdEnabled         bool
 	dcrEnabled          bool
 	dcrClientTTL        time.Duration
 	dcrMaxClients       int
@@ -179,12 +180,15 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		authRouter:          cfg.AuthRouter,
 		oidcDiscoveryMirror: cfg.OIDCDiscoveryMirror,
 		refreshEnabled:      refreshEnabled,
-		dcrEnabled:          cfg.DCREnabled,
-		dcrClientTTL:        cfg.DCRClientTTL,
-		dcrMaxClients:       cfg.DCRMaxClients,
-		tokenRateLimit:      cfg.TokenRateLimit,
-		registerRateLimit:   cfg.RegisterRateLimit,
-		authorizeRateLimit:  cfg.AuthorizeRateLimit,
+		// The resolver's presence is what makes CIMD work, so it is also
+		// what the metadata advertises — the two cannot drift apart.
+		cimdEnabled:        cfg.CIMDResolver != nil,
+		dcrEnabled:         cfg.DCREnabled,
+		dcrClientTTL:       cfg.DCRClientTTL,
+		dcrMaxClients:      cfg.DCRMaxClients,
+		tokenRateLimit:     cfg.TokenRateLimit,
+		registerRateLimit:  cfg.RegisterRateLimit,
+		authorizeRateLimit: cfg.AuthorizeRateLimit,
 	}, nil
 }
 
@@ -822,6 +826,9 @@ type authorizationServerResponse struct {
 	TokenEndpointAuthMethodsSupported          []string `json:"token_endpoint_auth_methods_supported"`
 	CodeChallengeMethodsSupported              []string `json:"code_challenge_methods_supported"`
 	AuthorizationResponseIssParameterSupported bool     `json:"authorization_response_iss_parameter_supported"`
+	// Always emitted, true or false: clients decide between CIMD and the
+	// deprecated DCR fallback by reading it (SPEC §1.2/§1.3).
+	ClientIDMetadataDocumentSupported bool `json:"client_id_metadata_document_supported"`
 }
 
 func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
@@ -888,6 +895,7 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 		TokenEndpointAuthMethodsSupported:          []string{"client_secret_basic", "client_secret_post", "none"},
 		CodeChallengeMethodsSupported:              []string{"S256"},
 		AuthorizationResponseIssParameterSupported: true,
+		ClientIDMetadataDocumentSupported:          a.cimdEnabled,
 	}
 	c.JSON(200, res)
 }

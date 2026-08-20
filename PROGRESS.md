@@ -10,9 +10,8 @@ spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**Three open tasks (F-015–F-017)** in execution order below: the missing CIMD advertisement,
-`localhost` loopback redirect matching, and the now-due re-check against the published final MCP
-spec. F-numbers are stable IDs; the document order, not the
+**Two open tasks (F-016–F-017)** in execution order below: `localhost` loopback redirect
+matching, and the now-due re-check against the published final MCP spec. F-numbers are stable IDs; the document order, not the
 number, is the path.
 
 ---
@@ -54,42 +53,11 @@ number, is the path.
 | F-012 | **Audit low-severity follow-ups — complete** (a/b/c/d/e done): all 16 actionable F-006b lows fixed across guards → auth flow → login surface → persistence, each with negative regression tests; **v0.1.1 released** (git tag `v0.1.1`, multi-arch `0.1.1`/`0.1` image on GHCR, release workflow green, anonymous pull verified). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012d | Persistence hardening → **DCR cap enforced inside the write transaction (`RegisterClient(…, maxClients)` counts+inserts atomically — bbolt `Update` / GORM `Transaction`; sentinel `ErrClientCapReached` → 503, no TOCTOU; handler pre-check dropped); SQLite `SetMaxOpenConns(1)` + `busy_timeout`/WAL/`synchronous=NORMAL`/`foreign_keys=ON`; session cookie signed *and* encrypted via HKDF-derived auth+AES-256 subkeys (`crypto/hkdf`, new `pkg/mcp-proxy/cookie.go`) while fosite keeps the raw `GlobalSecret`** — concurrency cap test (both backends, `-race`: exactly cap succeed) + cookie-opaqueness test; suite + `-race` + golangci-lint clean; README DSN note + SPEC §1.12/§2.2 deltas. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-014 | Bump vulnerable indirect dependencies → **`x/text` 0.41.0 + `grpc` 1.83.1 (+ `x/crypto` 0.55.0), Go toolchain 1.26.5 → **1.26.7** in `go.mod` *and* the digest-pinned builder image** — a dry-run `govulncheck` surfaced **six standard-library advisories** (fixed in 1.26.6, published after the last green CI run) on top of the two module ones, several on the auth boundary (`html/template`, `encoding/asn1`, `net/url`); Dependabot now covers indirect Go modules, grouped into one weekly PR. **0 reachable vulns afterwards** (was 8); suite + `-race` + `gofmt` green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-20 |
+| F-015 | Advertise CIMD support in the AS metadata → **`client_id_metadata_document_supported` added to SPEC §1.2 and emitted from `authorizationServerResponse`**, driven by whether a CIMD resolver is configured so metadata and behaviour cannot drift. §1.3 had declared CIMD primary since F-005c while §1.2 never announced it — and clients pick CIMD only when the metadata says so *and* offers `none` auth, so every client silently fell back to deprecated DCR (and toward `DCR_MAX_CLIENTS`). Consent needed no change: it shows `GetClient().GetID()`, which for CIMD is the document URL. New `TestASMetadataAdvertisesCIMD` (with/without resolver + OIDC mirror); suite + `-race` + `gofmt` green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
 ## Open tasks — work top to bottom
-
-### F-015 — Advertise CIMD support in the AS metadata
-
-**Problem:** `SPEC.md` §1.3 declares Client ID Metadata Documents the primary client-identification
-mechanism, but the §1.2 AS metadata table never announces it — and the implementation faithfully
-mirrors that omission: `client_id_metadata_document_supported` appears nowhere in the repository.
-Clients cannot discover a capability that is implemented (`pkg/cimd`) and enabled by default
-(`CIMD_ENABLED=true`), and fall back to the deprecated DCR path instead.
-
-**Idea:** Add the field to SPEC §1.2 and emit it from `authorizationServerResponse`, driven by the
-CIMD config flag so the advertisement always matches actual behaviour. This makes CIMD-first real
-rather than aspirational and takes pressure off the DCR store.
-
-**Possible implementation:**
-- `pkg/idp/idp.go`: add `ClientIDMetadataDocumentSupported` to `authorizationServerResponse`,
-  wired from the CIMD-enabled config rather than hard-coded — with CIMD disabled the field must be
-  absent or `false`.
-- Update the SPEC §1.2 table and its delta line; the optional OIDC discovery mirror serves the
-  same document.
-- Regression test next to the existing `authorization_response_iss_parameter_supported` assertion
-  in `pkg/idp/idp_test.go`: `true` by default, gone when CIMD is off.
-- Documented client behaviour to encode: a client selects CIMD only when the metadata advertises
-  both this flag **and** `none` in `token_endpoint_auth_methods_supported` — we already serve the
-  latter.
-- Expect a live behaviour change: existing connections switch from DCR to CIMD, so the consent
-  screen sources client identity from the CIMD document (F-006b H1) instead of the registration
-  record. Re-verify consent rendering.
-- Removes a latent failure mode: under DCR every fresh connection registers a new client; with
-  `DCR_MAX_CLIENTS=100` and `DCR_CLIENT_TTL=720h` a busy install eventually hits
-  `ErrClientCapReached` and answers new registrations with 503.
-
-**Dependencies:** none (F-014 first for a green baseline).
 
 ### F-016 — Port-agnostic loopback matching for `localhost` redirect URIs
 
@@ -186,7 +154,7 @@ F-007 Release hygiene (DONE)
 F-012 Audit low-severity follow-ups (from F-006b) (DONE)
 F-013 Fix the CI workflow (ci.yml never runs) (DONE)
 F-014 Bump vulnerable indirect dependencies (DONE)
-F-015 Advertise CIMD support in the AS metadata
+F-015 Advertise CIMD support in the AS metadata (DONE)
 F-016 Port-agnostic loopback matching for localhost redirect URIs
 F-017 Re-verify against the final MCP 2026-07-28 authorization spec
 -->

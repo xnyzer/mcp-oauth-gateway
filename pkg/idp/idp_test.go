@@ -182,6 +182,72 @@ func TestOAuthServerMetadata(t *testing.T) {
 	responseModes, ok := metadata["response_modes_supported"].([]any)
 	require.True(t, ok)
 	require.Contains(t, responseModes, "query")
+
+	// Always present, so clients can decide between CIMD and the deprecated
+	// DCR fallback without guessing. This harness configures no resolver, so
+	// the honest answer here is false — see TestASMetadataAdvertisesCIMD.
+	cimdSupported, ok := metadata["client_id_metadata_document_supported"].(bool)
+	require.True(t, ok, "client_id_metadata_document_supported must always be emitted")
+	require.False(t, cimdSupported, "no CIMD resolver configured, so it must not be advertised")
+}
+
+// TestASMetadataAdvertisesCIMD pins the advertisement to the resolver that
+// actually implements it (SPEC §1.2/§1.3). Clients select CIMD only when the
+// metadata says so and offers "none" auth, and otherwise fall back to DCR —
+// so a wrong answer here silently routes every client down the deprecated path.
+func TestASMetadataAdvertisesCIMD(t *testing.T) {
+	readFlag := func(t *testing.T, server *httptest.Server) (bool, map[string]any) {
+		t.Helper()
+		resp, err := http.Get(server.URL + OauthAuthorizationServerEndpoint)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var metadata map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&metadata))
+		flag, ok := metadata["client_id_metadata_document_supported"].(bool)
+		require.True(t, ok, "field must be present in both states")
+		return flag, metadata
+	}
+
+	t.Run("advertised when a resolver is configured", func(t *testing.T) {
+		server, _, _ := setupTestServerWith(t, func(cfg *Config) {
+			cfg.CIMDResolver = &stubResolver{doc: &cimd.Client{
+				ClientID:     "https://client.example.com/oauth/client-metadata.json",
+				ClientName:   "CIMD Test Client",
+				RedirectURIs: []string{"https://client.example.com/callback"},
+			}}
+		})
+		flag, metadata := readFlag(t, server)
+		require.True(t, flag)
+
+		// Both halves are required before a client picks CIMD, so assert the
+		// pair rather than the flag alone.
+		authMethods, ok := metadata["token_endpoint_auth_methods_supported"].([]any)
+		require.True(t, ok)
+		require.Contains(t, authMethods, "none", "CIMD clients authenticate as public clients")
+	})
+
+	t.Run("not advertised without a resolver", func(t *testing.T) {
+		server, _, _ := setupTestServerWith(t, func(cfg *Config) { cfg.CIMDResolver = nil })
+		flag, _ := readFlag(t, server)
+		require.False(t, flag)
+	})
+
+	t.Run("mirrored onto the OIDC discovery path", func(t *testing.T) {
+		server, _, _ := setupTestServerWith(t, func(cfg *Config) {
+			cfg.OIDCDiscoveryMirror = true
+			cfg.CIMDResolver = &stubResolver{}
+		})
+		resp, err := http.Get(server.URL + OIDCDiscoveryEndpoint)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var metadata map[string]any
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&metadata))
+		require.Equal(t, true, metadata["client_id_metadata_document_supported"])
+	})
 }
 
 func TestOIDCDiscoveryMirror(t *testing.T) {

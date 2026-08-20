@@ -99,6 +99,7 @@ RFC 8414. Response `200 application/json`:
 | `token_endpoint_auth_methods_supported` | `["client_secret_basic", "client_secret_post", "none"]` |
 | `code_challenge_methods_supported` | `["S256"]` (plain MUST NOT be offered) |
 | `authorization_response_iss_parameter_supported` | `true` — **target** (RFC 9207) |
+| `client_id_metadata_document_supported` | `true` while CIMD is enabled (§1.3), else `false` — always present |
 | `scopes_supported` | `[]` (until scopes are defined) |
 
 **OIDC Discovery mirror (optional, F-009):** `GET /.well-known/openid-configuration` MAY serve
@@ -107,6 +108,10 @@ is a discovery convenience, not OIDC conformance). Off by default; config flag i
 
 **Delta:** **done, F-005a/b** — all fields including `revocation_endpoint` are served;
 `grant_types_supported` reflects a disabled refresh grant (`REFRESH_TOKEN_TTL=0`).
+**F-015:** added `client_id_metadata_document_supported`, which this table had omitted even
+though §1.3 makes CIMD the primary mechanism. Clients pick CIMD only when the metadata
+advertises it *and* offers `none` auth, so without it every client fell back to the deprecated
+DCR path. Emitted as a boolean either way, driven by whether a CIMD resolver is configured.
 
 ### 1.3 Client identification — CIMD (primary mechanism)
 

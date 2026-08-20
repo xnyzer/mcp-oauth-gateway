@@ -7,6 +7,16 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
 
 ## [Unreleased]
 
+### Added
+
+- **The AS metadata now advertises `client_id_metadata_document_supported`** (SPEC §1.2), driven
+  by whether a CIMD resolver is configured. §1.3 has declared CIMD the primary
+  client-identification mechanism since F-005c, but the metadata never announced it — and
+  clients select CIMD only when the metadata advertises it *and* offers `none` in
+  `token_endpoint_auth_methods_supported`. Without the flag, every client fell back to the
+  deprecated DCR path, which registers a fresh client per connection and eventually meets
+  `DCR_MAX_CLIENTS`. Served on the OIDC discovery mirror alike.
+
 ### Security
 
 - **Go toolchain raised to 1.26.7** — in `go.mod` and in the digest-pinned builder image alike —
