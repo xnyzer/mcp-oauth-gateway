@@ -10,8 +10,9 @@ spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**Two open tasks (F-016–F-017)** in execution order below: `localhost` loopback redirect
-matching, and the now-due re-check against the published final MCP spec. F-numbers are stable IDs; the document order, not the
+**Three open tasks** in execution order below: `localhost` loopback redirect matching (F-016),
+building the container image in CI (F-018), and the now-due re-check against the published final
+MCP spec (F-017), which also gates the next release. One idea parked in the backlog (F-019). F-numbers are stable IDs; the document order, not the
 number, is the path.
 
 ---
@@ -92,6 +93,35 @@ this as a requirement for its native client; scope stays deliberately narrow.
 **Dependencies:** none. Best reviewed together with F-015, since both change how clients reach the
 authorize endpoint.
 
+### F-018 — Build the container image in CI
+
+**Problem:** `ci.yml` runs four jobs — `build-test`, `lint`, `license-check`, `workflow-lint` —
+and none of them builds the container image. Only `release.yml` does, on a SemVer tag push. A
+broken `Dockerfile` change therefore surfaces as a failed *release* rather than a failed push.
+F-014 made this concrete: the freshly pinned builder digest is unverified until the next tag, and
+the open Dependabot PR bumping the distroless runtime digest is equally untested.
+
+**Idea:** Add a CI job that builds the image with buildx (no push) and smoke-tests the result, so
+base-image and `Dockerfile` changes are exercised on every push instead of at release time.
+
+**Possible implementation:**
+- New `image-build` job in `.github/workflows/ci.yml`: `docker/setup-buildx-action`, then
+  `docker/build-push-action` with `push: false` and `load: true` so the image reaches the
+  runner's daemon.
+- **linux/amd64 only.** `release.yml` keeps building both architectures; arm64 here would mean
+  QEMU emulation for a gate whose purpose is catching `Dockerfile` and base-image breakage, which
+  is architecture-independent in practice.
+- Smoke via artefacts F-007b/M9 already provides: `docker run --rm IMAGE --version` (Cobra root,
+  `pkg/version` injected by ldflags) and `docker run --rm IMAGE healthcheck` (the subcommand
+  behind the image's `HEALTHCHECK`). Together they prove the builder produced a working binary
+  *and* that the non-root distroless runtime can execute it.
+- Pin the actions by major version like the existing jobs and keep the `permissions:
+  contents: read` posture — this job must never push.
+- Deliberately **not** a full container start against a dummy upstream: the assembled-gateway
+  e2e harness (F-006a) already covers that flow without a container.
+
+**Dependencies:** none.
+
 ### F-017 — Re-verify against the final MCP 2026-07-28 authorization spec
 
 **Problem:** The standing watch item is due: v0.1.x was verified against the 2026-07-28 release
@@ -134,12 +164,36 @@ re-verification covers the fixed state.
 
 ## Feature ideas (backlog)
 
-_None parked. New ideas are intaked via `/add-feature` and get the next F-number._
+### F-019 — Evaluate whether DCR can be switched off
+
+**Problem:** F-003 decided "CIMD-first with DCR as the deprecated fallback" at a time when the AS
+metadata did not advertise CIMD at all — the very gap F-015 closed. With the advertisement in
+place, real clients pick CIMD, and the final MCP 2026-07-28 spec formally deprecates DCR while
+keeping it for authorization servers that cannot do CIMD. Whether *this* gateway still needs it
+is now an open question rather than a settled one.
+
+**Idea:** Re-run the F-003 decision against the post-F-015 reality: which clients would still need
+DCR, what breaks if it is off, and under what conditions `DCR_ENABLED` could default to `false`.
+A decision task — "keep it as it is" is a valid outcome.
+
+**Possible implementation:**
+- Evidence first: confirm from a live deployment that clients actually switched to CIMD after
+  F-015 (the DCR store should stop growing).
+- Inventory what changes when DCR is off: `registration_endpoint` disappears from the AS metadata
+  (already conditional on `dcrEnabled`), `POST /.idp/register` is not routed, and
+  `DCR_CLIENT_TTL`/`DCR_MAX_CLIENTS` become inert. Startup fails fast if neither mechanism is
+  enabled, so the off-switch cannot strand the gateway.
+- Weigh it against the generic-gateway promise: the README targets *any* OAuth-only MCP client,
+  not only Claude. A `false` default trades reach for a smaller attack surface and a smaller store.
+- If the answer is "switch the default", that is its own implementation task with a CHANGELOG
+  upgrade note — this entry produces only the decision.
+
+**Dependencies:** F-015 (live-verified, not merely committed) and F-017.
 
 ---
 
 <!-- FEATURE-INDEX
-next-feature: F-018
+next-feature: F-020
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -157,4 +211,6 @@ F-014 Bump vulnerable indirect dependencies (DONE)
 F-015 Advertise CIMD support in the AS metadata (DONE)
 F-016 Port-agnostic loopback matching for localhost redirect URIs
 F-017 Re-verify against the final MCP 2026-07-28 authorization spec
+F-018 Build the container image in CI
+F-019 Evaluate whether DCR can be switched off (backlog)
 -->
