@@ -10,9 +10,10 @@ spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**Three open tasks** in execution order below: `localhost` loopback redirect matching (F-016),
-building the container image in CI (F-018), and the now-due re-check against the published final
-MCP spec (F-017), which also gates the next release. One idea parked in the backlog (F-019). F-numbers are stable IDs; the document order, not the
+**Three open tasks** in execution order below: building the container image in CI (F-018), the
+now-due re-check against the published final MCP spec (F-017), which also gates the next release,
+and splitting the oversized `pkg/idp/idp.go` afterwards (F-020). One idea parked in the backlog
+(F-019). F-numbers are stable IDs; the document order, not the
 number, is the path.
 
 ---
@@ -55,43 +56,11 @@ number, is the path.
 | F-012d | Persistence hardening → **DCR cap enforced inside the write transaction (`RegisterClient(…, maxClients)` counts+inserts atomically — bbolt `Update` / GORM `Transaction`; sentinel `ErrClientCapReached` → 503, no TOCTOU; handler pre-check dropped); SQLite `SetMaxOpenConns(1)` + `busy_timeout`/WAL/`synchronous=NORMAL`/`foreign_keys=ON`; session cookie signed *and* encrypted via HKDF-derived auth+AES-256 subkeys (`crypto/hkdf`, new `pkg/mcp-proxy/cookie.go`) while fosite keeps the raw `GlobalSecret`** — concurrency cap test (both backends, `-race`: exactly cap succeed) + cookie-opaqueness test; suite + `-race` + golangci-lint clean; README DSN note + SPEC §1.12/§2.2 deltas. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-014 | Bump vulnerable indirect dependencies → **`x/text` 0.41.0 + `grpc` 1.83.1 (+ `x/crypto` 0.55.0), Go toolchain 1.26.5 → **1.26.7** in `go.mod` *and* the digest-pinned builder image** — a dry-run `govulncheck` surfaced **six standard-library advisories** (fixed in 1.26.6, published after the last green CI run) on top of the two module ones, several on the auth boundary (`html/template`, `encoding/asn1`, `net/url`); Dependabot now covers indirect Go modules, grouped into one weekly PR. **0 reachable vulns afterwards** (was 8); suite + `-race` + `gofmt` green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-20 |
 | F-015 | Advertise CIMD support in the AS metadata → **`client_id_metadata_document_supported` added to SPEC §1.2 and emitted from `authorizationServerResponse`**, driven by whether a CIMD resolver is configured so metadata and behaviour cannot drift. §1.3 had declared CIMD primary since F-005c while §1.2 never announced it — and clients pick CIMD only when the metadata says so *and* offers `none` auth, so every client silently fell back to deprecated DCR (and toward `DCR_MAX_CLIENTS`). Consent needed no change: it shows `GetClient().GetID()`, which for CIMD is the document URL. New `TestASMetadataAdvertisesCIMD` (with/without resolver + OIDC mirror); suite + `-race` + `gofmt` green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-016 | Port-agnostic loopback matching for `localhost` redirect URIs → **new `pkg/idp/loopback.go`; `handleAuth` stashes the raw `redirect_uri` on the request context and `clientSource.GetClient` clones the client to admit a port variant** — fosite ignores the port for IP literals only, so a client registering `http://localhost/callback` and redirecting to an ephemeral port was rejected (Claude Code's exact shape). Scheme/host/path/query still match exactly; no bridge between `localhost` and `127.0.0.1`; consent now warns when *all* redirect URIs are loopback. 28 new test cases incl. 7 through the real authorize endpoint; the positive test verified non-vacuous by disabling the stash (400, red). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
 ## Open tasks — work top to bottom
-
-### F-016 — Port-agnostic loopback matching for `localhost` redirect URIs
-
-**Problem:** Native clients that use the hostname `localhost` for their loopback redirect cannot
-complete authorization. Fosite ignores the port only for IP literals — `isLoopbackAddress()` tests
-`net.ParseIP(hostname).IsLoopback()` — so a client registering `http://localhost/callback` and
-requesting `http://localhost:PORT/callback` is rejected, while the `127.0.0.1` form of the same
-request is accepted.
-
-**Idea:** Supply our own redirect-URI matcher that extends the RFC 8252 §7.3 port-agnostic rule to
-the exact hostname `localhost`, keeping every other component an exact match. The vendor documents
-this as a requirement for its native client; scope stays deliberately narrow.
-
-**Possible implementation:**
-- Verified against the pinned Fosite version: with both portless forms registered,
-  `http://localhost:PORT/callback` → rejected (`invalid_request`), `http://127.0.0.1:PORT/callback`
-  → accepted.
-- Match only when scheme is `http`, requested and registered hostname are both exactly
-  `localhost`, path and raw query are identical, and only the port differs. Explicitly **not**
-  `*.localhost` — RFC 8252 §8.3 discourages the hostname form altogether, so we cover the
-  real-world case and nothing more.
-- Hook it in where registered redirect URIs are matched, so CIMD and DCR clients both benefit;
-  `ValidateRedirectURI` (`pkg/cimd/resolver.go`) stays unchanged — it already admits the loopback
-  forms.
-- Security review against `THREAT-MODEL.md`: any local process can bind a loopback port, so this
-  widens nothing that `127.0.0.1` did not already allow. The consent screen must keep displaying
-  the redirect host prominently, and the MCP spec asks for an extra warning when a client's only
-  registered redirect URIs are loopback addresses — check whether we surface that.
-- Negative tests: differing path, differing query, `https` scheme, and a non-loopback host must all
-  still be rejected when the port differs.
-
-**Dependencies:** none. Best reviewed together with F-015, since both change how clients reach the
-authorize endpoint.
 
 ### F-018 — Build the container image in CI
 
@@ -160,6 +129,43 @@ good.
 **Dependencies:** F-015 (the DCR-deprecation finding is settled there); best done last so the
 re-verification covers the fixed state.
 
+### F-020 — Split `pkg/idp/idp.go` along its seams
+
+**Problem:** `pkg/idp/idp.go` is **1073 lines** against the 500-line hard limit in
+`CODING-STANDARDS.md` §2, and it carries no section comments, so the documented exception for
+"clearly delimited modules" does not apply. `pkg/idp/idp_test.go` is **1684 lines** for the same
+reason. The file predates the limit (it came over with the F-008 fork and grew through F-005a–e);
+F-016 found it during review and moved its own helpers out rather than adding to it. Size is not
+cosmetic here: this is the OAuth authorization surface, the file a reviewer must hold in their head
+to reason about token issuance, consent and DCR at once.
+
+**Idea:** Split it along the seams it already has — the declarations cluster cleanly by endpoint —
+without changing a single behaviour. A pure move: same package, same identifiers, no signature
+changes, so the diff is reviewable as "lines relocated" and the existing tests are the proof.
+
+**Possible implementation:**
+- Candidate cut, following the current order of declarations:
+  - `idp.go` — `IDPRouter`, `Config`, `NewIDPRouter`, `customCompose`, `withRateLimit`, the
+    endpoint constants and route registration (the assembly, ~250 lines).
+  - `client_source.go` — `clientSource`, `CIMDResolver`, the redirect-URI context stash
+    (joins `loopback.go`, which F-016 already carved out).
+  - `authorize.go` — `handleAuth`, `issRedirectWriter`, `errInvalidTarget`, the authorize-request
+    ID helpers.
+  - `consent.go` — `consentTemplate`, `consentTemplateData`, both consent handlers.
+  - `token.go` — token, introspection and revocation handlers.
+  - `register.go` — DCR: `registrationRequest`/`registrationResponse`, `validateRegistration`,
+    `handleRegister`, `supportedAuthMethods`.
+  - `metadata.go` — `authorizationServerResponse`, its handler, `jwks`.
+  - `session.go` — `NewJWTSession`, `Session`.
+- Split `idp_test.go` to match, so each test file sits next to the code it exercises.
+- Add the ASCII section comments §2 asks for wherever a file still groups more than one concern.
+- Acceptance: `go test -race ./...` green with **no test changed** beyond its file location, and
+  `git diff --find-copies-harder` showing moves rather than rewrites.
+
+**Dependencies:** none technically, but **do not run this before the release** that F-017 gates —
+reshuffling an auth-critical file between a verification pass and a tag would invalidate the
+verification it just received.
+
 ---
 
 ## Feature ideas (backlog)
@@ -193,7 +199,7 @@ A decision task — "keep it as it is" is a valid outcome.
 ---
 
 <!-- FEATURE-INDEX
-next-feature: F-020
+next-feature: F-021
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -209,8 +215,9 @@ F-012 Audit low-severity follow-ups (from F-006b) (DONE)
 F-013 Fix the CI workflow (ci.yml never runs) (DONE)
 F-014 Bump vulnerable indirect dependencies (DONE)
 F-015 Advertise CIMD support in the AS metadata (DONE)
-F-016 Port-agnostic loopback matching for localhost redirect URIs
+F-016 Port-agnostic loopback matching for localhost redirect URIs (DONE)
 F-017 Re-verify against the final MCP 2026-07-28 authorization spec
 F-018 Build the container image in CI
 F-019 Evaluate whether DCR can be switched off (backlog)
+F-020 Split pkg/idp/idp.go along its seams
 -->

@@ -133,6 +133,14 @@ store (§1.4).
 3. The document MUST contain `client_id` exactly equal to the fetched URL, and
    `redirect_uris` (non-empty). Accepted redirect URI schemes: `https://` and
    custom/native schemes; `http://` only for loopback literals (RFC 8252 §7.3).
+   **Port tolerance (F-016):** a registered loopback URI matches a request that differs from it
+   in **nothing but the port** — the part a native client cannot pre-register, because the OS
+   assigns it per session. RFC 8252 §7.3 requires this for the IP literals `127.0.0.1`/`[::1]`
+   (fosite implements it); the gateway extends it to the hostname `localhost`, which §8.3
+   discourages but real native clients use. Scheme, host, path and query must be identical, and
+   the tolerance covers `localhost` exactly — not `*.localhost`. It applies at the authorize
+   endpoint only; the token endpoint compares against the authorize request, not the registered
+   list.
 4. Relevant fields: `client_id`, `client_name`, `redirect_uris`, `grant_types` (default
    `["authorization_code"]`), `response_types` (default `["code"]`),
    `token_endpoint_auth_method` — MUST be `none` (CIMD clients are **public**; PKCE is their
@@ -203,6 +211,11 @@ blanket grants in v1).
 10 min, consumed on first token exchange), `state`, and **`iss`** (RFC 9207, **target**).
 
 **Errors:** per RFC 6749 §4.1.2.1 — redirectable errors (`access_denied`,
+**Loopback warning (F-016):** when *every* registered redirect URI of the requesting client is a
+loopback address, the consent page adds an explicit warning that the application runs on the
+operator's own device and that any local program could have claimed the port. A Client ID Metadata
+Document proves who published it, never which process is listening.
+
 `invalid_scope`, `invalid_target`, `server_error`) go to the redirect URI with `state` and
 `iss`; non-redirectable ones (unknown client, invalid/missing `redirect_uri`) render an HTML
 error page (§1.12 template) with `400` and MUST NOT redirect.

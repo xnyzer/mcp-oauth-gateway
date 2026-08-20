@@ -61,7 +61,55 @@ type clientSource struct {
 	logger      *zap.Logger
 }
 
+// requestedRedirectURIKey carries the authorize request's raw redirect_uri
+// down to GetClient. Fosite looks the client up itself and does not pass the
+// request along, so the context is the only channel available.
+type requestedRedirectURIKey struct{}
+
+// withRequestedRedirectURI stashes the raw redirect_uri for GetClient.
+func withRequestedRedirectURI(ctx context.Context, raw string) context.Context {
+	return context.WithValue(ctx, requestedRedirectURIKey{}, raw)
+}
+
+// requestedRedirectURI returns the stashed redirect_uri, or "" outside the
+// authorize path — where GetClient then behaves exactly as it always has.
+func requestedRedirectURI(ctx context.Context) string {
+	raw, _ := ctx.Value(requestedRedirectURIKey{}).(string)
+	return raw
+}
+
 func (s *clientSource) GetClient(ctx context.Context, id string) (fosite.Client, error) {
+	client, err := s.lookupClient(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	// Fosite matches the requested redirect URI against this list and ignores
+	// the port for loopback IP literals only. Admit the "localhost" hostname
+	// on the same terms by adding the requested URI when it differs from a
+	// registered one in nothing but the port (SPEC §1.3.3).
+	raw := requestedRedirectURI(ctx)
+	if raw == "" {
+		return client, nil
+	}
+	// Only DefaultClient exposes a redirect list to extend. Anything else is
+	// returned untouched rather than asserted — models.FromFositeClient type-
+	// asserts without checking, so a foreign client type must never appear.
+	def, ok := client.(*fosite.DefaultClient)
+	if !ok {
+		return client, nil
+	}
+	expanded := expandLoopbackRedirects(def.RedirectURIs, raw)
+	if len(expanded) == len(def.RedirectURIs) {
+		return client, nil
+	}
+	// Copy before handing it back: today both paths build a fresh client per
+	// call, but mutating a store-owned object would be a latent aliasing bug.
+	clone := *def
+	clone.RedirectURIs = expanded
+	return &clone, nil
+}
+
+func (s *clientSource) lookupClient(ctx context.Context, id string) (fosite.Client, error) {
 	if s.resolver == nil || !strings.HasPrefix(id, "https://") {
 		return s.Repository.GetClient(ctx, id)
 	}
@@ -332,6 +380,12 @@ func (a *IDPRouter) handleAuth(c *gin.Context) {
 		c.Request.URL.RawQuery = q.Encode()
 	}
 
+	// Hand the raw redirect_uri to GetClient (see requestedRedirectURIKey) so
+	// a loopback client using the "localhost" hostname can be matched with a
+	// varying port. Only this path stashes it; every other GetClient caller —
+	// token, introspection, revocation — keeps the unmodified client.
+	ctx = withRequestedRedirectURI(ctx, c.Request.URL.Query().Get("redirect_uri"))
+
 	ar, err := a.provider.NewAuthorizeRequest(ctx, c.Request)
 	if err != nil {
 		a.writeAuthorizeError(ctx, c.Writer, ar, err)
@@ -371,6 +425,12 @@ type consentTemplateData struct {
 	// form and checked on the consent POST (SPEC §1.5/§1.12), defence-in-depth
 	// on top of the ar_id session binding.
 	CSRFToken string
+	// LoopbackOnly marks a client whose every registered redirect URI points
+	// at this machine. A Client ID Metadata Document proves who published it,
+	// but not which local process is listening on the port — any program on
+	// the device could have claimed it. The MCP authorization spec therefore
+	// asks for an explicit warning in this case.
+	LoopbackOnly bool
 }
 
 // consentTemplate shows the client identity and requested scopes (SPEC §1.5):
@@ -383,6 +443,7 @@ var consentTemplate = template.Must(template.New("consent").Parse(`<!doctype htm
 <body>
 <h1>Authorize application</h1>
 <p>An application is requesting access to this MCP server. Approve only if you started this yourself and recognise the details below.</p>
+{{if .LoopbackOnly}}<p><strong>This application runs on the device you are using.</strong> It receives the authorization on a local port, which any program on that device could have claimed. Approve only if you started it yourself just now.</p>{{end}}
 <dl>
 <dt>Client</dt><dd>{{.ClientID}}</dd>
 <dt>Redirect to</dt><dd>{{.RedirectURI}}</dd>
@@ -429,10 +490,11 @@ func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
 	if err := consentTemplate.Execute(c.Writer, consentTemplateData{
-		ClientID:    ar.GetClient().GetID(),
-		RedirectURI: redirectURI,
-		Scopes:      ar.GetRequestedScopes(),
-		CSRFToken:   csrfToken,
+		ClientID:     ar.GetClient().GetID(),
+		RedirectURI:  redirectURI,
+		Scopes:       ar.GetRequestedScopes(),
+		CSRFToken:    csrfToken,
+		LoopbackOnly: allRedirectsLoopback(ar.GetClient().GetRedirectURIs()),
 	}); err != nil {
 		a.logger.Error("Failed to render consent page", zap.Error(err))
 	}

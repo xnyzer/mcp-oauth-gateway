@@ -9,6 +9,16 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
 
 ### Added
 
+- **Loopback redirect URIs now match port-agnostically for the `localhost` hostname**, not only
+  for the IP literals `127.0.0.1`/`[::1]`. RFC 8252 §7.3 requires an authorization server to
+  accept any port on a loopback redirect, because a native client gets its port from the OS per
+  session; §8.3 discourages the hostname form, but native clients use it — so a client
+  registering `http://localhost/callback` and redirecting to `http://localhost:54321/callback`
+  was rejected while the `127.0.0.1` form of the same request succeeded. Scheme, host, path and
+  query must still match exactly, and the tolerance covers `localhost` alone, not `*.localhost`.
+- **The consent page warns when a client's redirect URIs are all loopback addresses** — the
+  application runs on the operator's own device, and any local program could have claimed that
+  port. Recommended by the MCP authorization spec.
 - **The AS metadata now advertises `client_id_metadata_document_supported`** (SPEC §1.2), driven
   by whether a CIMD resolver is configured. §1.3 has declared CIMD the primary
   client-identification mechanism since F-005c, but the metadata never announced it — and
