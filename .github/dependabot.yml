@@ -7,6 +7,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Without `allow`, Dependabot only tracks dependencies declared explicitly
+    # in go.mod. Two vulnerable indirect modules went unnoticed that way
+    # (F-014), so cover them too — grouped into a single PR, because one PR per
+    # transitive module would bury the direct ones under the limit above.
+    allow:
+      - dependency-type: all
+    groups:
+      go-modules:
+        patterns:
+          - "*"
   - package-ecosystem: docker # bumps the digest-pinned base images
     directory: /
     schedule:

@@ -10,9 +10,9 @@ spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**Four open tasks (F-014–F-017)** in execution order below: vulnerable indirect dependencies,
-the missing CIMD advertisement, `localhost` loopback redirect matching, and the now-due re-check
-against the published final MCP spec. F-numbers are stable IDs; the document order, not the
+**Three open tasks (F-015–F-017)** in execution order below: the missing CIMD advertisement,
+`localhost` loopback redirect matching, and the now-due re-check against the published final MCP
+spec. F-numbers are stable IDs; the document order, not the
 number, is the path.
 
 ---
@@ -53,33 +53,11 @@ number, is the path.
 | F-013 | Fix the CI workflow → **`ci.yml` had a YAML syntax error (the `license-check` `run:` value began with a `"`), which invalidated the whole file → GitHub created 0 jobs on every push since v0.1.0 ("No jobs were run"). Fixed with a block-scalar `run:` + a new pinned `actionlint` job that lints all workflow files so a malformed one fails loudly**; verified the run now creates 4 jobs (build-test/lint/license-check/workflow-lint), all green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012 | **Audit low-severity follow-ups — complete** (a/b/c/d/e done): all 16 actionable F-006b lows fixed across guards → auth flow → login surface → persistence, each with negative regression tests; **v0.1.1 released** (git tag `v0.1.1`, multi-arch `0.1.1`/`0.1` image on GHCR, release workflow green, anonymous pull verified). Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
 | F-012d | Persistence hardening → **DCR cap enforced inside the write transaction (`RegisterClient(…, maxClients)` counts+inserts atomically — bbolt `Update` / GORM `Transaction`; sentinel `ErrClientCapReached` → 503, no TOCTOU; handler pre-check dropped); SQLite `SetMaxOpenConns(1)` + `busy_timeout`/WAL/`synchronous=NORMAL`/`foreign_keys=ON`; session cookie signed *and* encrypted via HKDF-derived auth+AES-256 subkeys (`crypto/hkdf`, new `pkg/mcp-proxy/cookie.go`) while fosite keeps the raw `GlobalSecret`** — concurrency cap test (both backends, `-race`: exactly cap succeed) + cookie-opaqueness test; suite + `-race` + golangci-lint clean; README DSN note + SPEC §1.12/§2.2 deltas. Detail in `PROGRESS-ARCHIVE.md`. | 2026-07-09 |
+| F-014 | Bump vulnerable indirect dependencies → **`x/text` 0.41.0 + `grpc` 1.83.1 (+ `x/crypto` 0.55.0), Go toolchain 1.26.5 → **1.26.7** in `go.mod` *and* the digest-pinned builder image** — a dry-run `govulncheck` surfaced **six standard-library advisories** (fixed in 1.26.6, published after the last green CI run) on top of the two module ones, several on the auth boundary (`html/template`, `encoding/asn1`, `net/url`); Dependabot now covers indirect Go modules, grouped into one weekly PR. **0 reachable vulns afterwards** (was 8); suite + `-race` + `gofmt` green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-20 |
 
 ---
 
 ## Open tasks — work top to bottom
-
-### F-014 — Bump vulnerable indirect dependencies
-
-**Problem:** The weekly `vulncheck` workflow has failed on every run since 2026-07-27, mailing a
-failure notice each Monday. Two advisories are reachable from our code, both in indirect
-dependencies: GO-2026-6061 (`google.golang.org/grpc` 1.80.0, fixed 1.82.1) and GO-2026-5970 — an
-infinite loop on invalid input — (`golang.org/x/text` 0.37.0, fixed 0.39.0).
-
-**Idea:** Bump both modules past their fixed versions, confirm `govulncheck` reports zero
-reachable vulnerabilities, and close the gap that let them go stale — Dependabot does not raise
-PRs for indirect Go modules, so nothing flagged them.
-
-**Possible implementation:**
-- `go get golang.org/x/text@latest google.golang.org/grpc@latest && go mod tidy`; both are
-  `// indirect`, so no source change is expected.
-- Reachability for the record: `x/text` via `autocert.HostWhitelist` and `gorm.init`, `grpc` via
-  `fosite → ory/x/otelx → jaeger-idl`. Neither is a path we call deliberately — they arrive with
-  the dependency tree.
-- Re-run `govulncheck ./...`, the full suite with `-race`, and golangci-lint before pushing.
-- Evaluate whether `.github/dependabot.yml` should cover indirect Go modules; weigh the PR noise
-  against the risk of the next silent lag.
-
-**Dependencies:** none.
 
 ### F-015 — Advertise CIMD support in the AS metadata
 
@@ -207,7 +185,7 @@ F-006 Verify against Claude + security review (DONE)
 F-007 Release hygiene (DONE)
 F-012 Audit low-severity follow-ups (from F-006b) (DONE)
 F-013 Fix the CI workflow (ci.yml never runs) (DONE)
-F-014 Bump vulnerable indirect dependencies
+F-014 Bump vulnerable indirect dependencies (DONE)
 F-015 Advertise CIMD support in the AS metadata
 F-016 Port-agnostic loopback matching for localhost redirect URIs
 F-017 Re-verify against the final MCP 2026-07-28 authorization spec

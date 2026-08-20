@@ -5,6 +5,25 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
+## [Unreleased]
+
+### Security
+
+- **Go toolchain raised to 1.26.7** — in `go.mod` and in the digest-pinned builder image alike —
+  clearing six standard-library advisories reachable from our code: `html/template`
+  (GO-2026-6091, login/consent rendering), `crypto/tls` (GO-2026-6090), `net/http`
+  (GO-2026-6089), `net/url` (GO-2026-6218, redirect following on the proxy path),
+  `encoding/asn1` (GO-2026-5972, signing-key parsing), and `x/net/idna` via `net/http`
+  (GO-2026-5026).
+- **Vulnerable indirect modules bumped:** `golang.org/x/text` 0.37.0 → 0.41.0 (GO-2026-5970,
+  infinite loop on invalid input) and `google.golang.org/grpc` 1.80.0 → 1.83.1 (GO-2026-6061);
+  `golang.org/x/crypto` moves 0.52.0 → 0.55.0 in the same step. `govulncheck` reports **zero
+  reachable vulnerabilities** afterwards.
+- **Dependabot now covers indirect Go modules** (`allow: dependency-type: all`), grouped into a
+  single weekly PR. Version updates previously tracked only dependencies declared explicitly in
+  `go.mod` — which is why both module advisories above went unnoticed until the weekly
+  `govulncheck` run started failing on 2026-07-27.
+
 ## [0.1.1] — 2026-07-09
 
 Security-hardening patch: the low-severity follow-ups from the F-006b adversarial audit
