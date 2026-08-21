@@ -58,6 +58,7 @@ number, is the path.
 | F-016 | Port-agnostic loopback matching for `localhost` redirect URIs → **new `pkg/idp/loopback.go`; `handleAuth` stashes the raw `redirect_uri` on the request context and `clientSource.GetClient` clones the client to admit a port variant** — fosite ignores the port for IP literals only, so a client registering `http://localhost/callback` and redirecting to an ephemeral port was rejected (Claude Code's exact shape). Scheme/host/path/query still match exactly; no bridge between `localhost` and `127.0.0.1`; consent now warns when *all* redirect URIs are loopback. 28 new test cases incl. 7 through the real authorize endpoint; the positive test verified non-vacuous by disabling the stash (400, red). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-018 | Build the container image in CI → **new `image-build` job**: buildx `push: false`/`load: true` (amd64), `--version` smoke, then a container start polled until Docker's own `HEALTHCHECK` reports `healthy` (failing loudly with `docker logs` otherwise). Closes the gap where a broken `Dockerfile` or base-image bump surfaced only as a failed *release* — F-014's builder digest had been unexercised. The intake's `docker run IMAGE healthcheck` was corrected: it probes `/healthz` on the local listener and needs a running server. Smoke password generated in-step, never written to the repo. **Verified locally against real Docker** (build + `version ci` + healthy), under amd64 emulation. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-020a | Split `idp.go` → **1072 → 216 lines across eight files** (`authorize`, `client_source`, `consent`, `metadata`, `register`, `session`, `token` + the assembly), each under the 300-line target. Sliced at declaration boundaries with doc comments pulled along; `goimports` trimmed each file's imports. **No test file touched** — suite green unchanged is the proof. The planned `git diff -M` criterion turned out unusable (rename detection needs whole-file similarity) and was replaced by stronger checks: 47/47 identical declarations and 954/954 identical body lines, with the +77 net reconciling to seven new headers minus ten dropped imports. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-020b | Split `idp_test.go` to match → **1684 lines across ten files**, each beside the code it exercises, shared helpers lifted into `helpers_test.go`. Ten rather than the planned nine: `token_test.go` would have hit ~439 lines with `TestPrivateClient`, so the RFC 7009 revocation tests became their own file. `stubResolver` went to the helpers because `loopback_test.go` uses it too. **No production file touched**; verified by test-set equality (34/34 via `go test -list`) and identical bodies (1399/1399 lines) — a lost test would otherwise leave the suite green and unnoticed. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
@@ -111,22 +112,6 @@ clusters they already form, and every target file lands under the 300-line targe
 | `register.go` | DCR request/response types, `validateRegistration`, `handleRegister` | 175 |
 | `metadata.go` | `authorizationServerResponse` + handler, `jwks` | 120 |
 | `session.go` | `NewJWTSession`, `Session` | 95 |
-
-#### F-020b — Split `idp_test.go` to match
-
-**What:** Mirror the cut in the tests (1684 lines, ~44 functions) and lift the shared helpers —
-`setupTestServerWith`, `testAuthFlowWithURL`, `registerTestClient`, `postConsent`, `stubResolver`,
-`newTestKeyManager`, `decodeJWTSegment`, the cookie/redirect helpers — into `helpers_test.go`.
-Roughly nine test files, each under 300 lines.
-
-**Files:** `pkg/idp/idp_test.go` → `helpers_test.go`, `metadata_test.go`, `authorize_test.go`,
-`consent_test.go`, `token_test.go`, `register_test.go`, `client_source_test.go`,
-`session_test.go`, `ratelimit_test.go`.
-
-**Acceptance:**
-- [ ] Identical test count before and after (`go test -list '.*' ./pkg/idp/`), all green under `-race`
-- [ ] No test body changed — only its file location
-- [ ] No file over the 300-line target
 
 #### F-020c — Section comments and final standards pass
 

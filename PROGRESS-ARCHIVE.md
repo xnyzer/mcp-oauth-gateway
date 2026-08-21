@@ -1756,3 +1756,45 @@ move-only substep and destroyed the byte-identical proof above.
 **Files:** `pkg/idp/idp.go` (shrunk); new `authorize.go`, `client_source.go`, `consent.go`,
 `metadata.go`, `register.go`, `session.go`, `token.go`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.
 No behaviour, signature, dependency or config change.
+
+## F-020b — Split `idp_test.go` to match — DONE 2026-08-21
+
+Second substep of F-020. `pkg/idp/idp_test.go` (1684 lines, 48 top-level declarations) was
+distributed over **ten** files, each sitting next to the code it exercises. Test files only — no
+production file was touched.
+
+| File | Lines | | File | Lines |
+|---|---|---|---|---|
+| `authorize_test.go` | 296 | | `session_test.go` | 147 |
+| `helpers_test.go` | 290 | | `register_test.go` | 134 |
+| `token_test.go` | 286 | | `ratelimit_test.go` | 119 |
+| `metadata_test.go` | 184 | | `consent_test.go` | 97 |
+| `revocation_test.go` | 176 | | `client_source_test.go` | 81 |
+
+`loopback_test.go` (187 lines, from F-016) was already separate and stayed.
+
+**Deviation from the plan: ten files instead of nine.** `token_test.go` would have reached ~439
+lines once `TestPrivateClient` (148 lines, a full confidential-client flow) joined the audience,
+introspection and identity tests — over the 300-line target the substep was meant to enforce. The
+revocation tests were split off into `revocation_test.go`; they are self-contained anyway
+(RFC 7009), and `token_test.go` lands at 286.
+
+**Two placement decisions worth recording:**
+- `stubResolver` went to `helpers_test.go`, not `client_source_test.go`, because `loopback_test.go`
+  uses it too. A stub with two consumers belongs with the helpers.
+- `failingRevokeRepo` stayed with `revocation_test.go` — only that one test uses it.
+
+**Verification, using the approach F-020a established rather than git's rename detection:**
+- **Test set identical:** `go test -list '.*'` returns 34 before and 34 after, `diff` on the sorted
+  lists empty. This is the check that matters for a test split — a test function lost in the move
+  would leave the suite green and nobody the wiser.
+- **Bodies identical:** 1399 non-blank lines below the import block before, 1399 after, sorted
+  `diff` empty — no test body changed, only its file.
+- No production file in `git status`; `go test -race ./...` rc=0 across 11 packages with 34
+  top-level tests executed; `gofmt -l` empty; `go vet` clean.
+- Every file under the 300-line target (largest: 296).
+
+**Files:** `pkg/idp/idp_test.go` (removed); new `authorize_test.go`, `client_source_test.go`,
+`consent_test.go`, `helpers_test.go`, `metadata_test.go`, `ratelimit_test.go`, `register_test.go`,
+`revocation_test.go`, `session_test.go`, `token_test.go`; docs `PROGRESS.md`,
+`PROGRESS-ARCHIVE.md`. No production code, dependency or config change.
