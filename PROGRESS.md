@@ -10,8 +10,9 @@ spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**One open task** below: the now-due re-check against the published final MCP spec (F-017), which
-also gates the next release. One idea parked in the backlog (F-019). F-numbers are stable IDs; the document order, not the
+**One open task** below: the now-due re-check against the published final MCP spec (F-017,
+decomposed into four substeps), which also gates the next release — **v0.2.0**, not a patch, because
+F-015, F-016 and F-017b each change behaviour. One idea parked in the backlog (F-019). F-numbers are stable IDs; the document order, not the
 number, is the path.
 
 ---
@@ -102,6 +103,112 @@ good.
 
 **Dependencies:** F-015 (the DCR-deprecation finding is settled there); best done last so the
 re-verification covers the fixed state.
+
+**Substeps (`/prep-step`, 2026-08-21) — Large: ~350 lines across ~16 files, of which ~200 are
+documentation.** The final specification has published and was read end to end against the code.
+The authorization surface needs **no change** — but the re-check turned up four things the intake
+above did not anticipate, and one of them is a security fix:
+
+| # | Finding | Verdict |
+|---|---|---|
+| 1 | `authorization_response_iss_parameter_supported` is now a **MUST** for servers that send `iss` (it was implied before) | Already `true` in `metadata.go` — satisfied |
+| 2 | `scope` in the `WWW-Authenticate` challenge is a new **SHOULD**; `offline_access` **SHOULD NOT** appear in `scopes_supported` | The gateway is scope-less by design (`scopes_supported: []`, no `offline_access`) — a decision to *document*, not to implement |
+| 3 | **`Mcp-Param-{Name}` (SEP-2243)** makes client-set HTTP headers a first-class feature and obliges intermediaries to forward unrecognised ones. That elevates a latent gap: `pkg/proxy/proxy.go` adds each configured `PROXY_HEADERS` entry with `Header.Add` and **no preceding `Del`**, so a client-supplied header of the same name survives and — since `Header.Get` returns the first value — can shadow an injected upstream credential. `HEADER_MAPPING` and `Authorization` are stripped correctly on the two lines above it; the other proxy headers are not. | **Real spoofing path on FR-6 → fix in F-017b** |
+| 4 | The stdio backend's protocol version is whatever `mark3labs/mcp-go` implements. `v0.58.0` is still `2025-11-25`; only `v1.0.0-beta.1` implements `2026-07-28` (`server/discover`, `_meta` protocol version, header validation). | Stay on the stable 0.58 line; record the ceiling as a documented limitation and file the v1.x move separately once it is final |
+
+Confirmed by reading, no change needed: `httputil.ReverseProxy` forwards
+`MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name`/`Mcp-Param-*` untouched — `transparent.go` only
+rewrites `X-Forwarded-*` — and the reserved-namespace guard matches **URL path prefixes**
+(`/.idp/`, `/.auth/`, `/.well-known/`), so the new `server/discover` RPC, which lives in the
+JSON-RPC body, cannot collide with it. Both get a regression test in F-017b so the confirmation
+does not silently expire.
+
+Decisions taken at prep time: **mcp-go 0.58.x** over `v1.0.0-beta.1` (CODING-STANDARDS §7 pins
+stable versions; a pre-release on a public auth boundary is not worth the stdio path's spec
+currency); **`go.uber.org/zap/exp`** for the zap→slog bridge over a hand-written handler (MIT, by
+the zap authors, no new transitive dependencies, and §1 prefers an established pattern);
+**v0.2.0** over v0.1.2 as the release version.
+
+#### F-017a — Migrate `mcp-go` to `log/slog` and unblock Dependabot PR #13
+
+**What:** PR #13 ("Bump the go-modules group with 45 updates") is red on `build-test` and `lint`,
+and not because Dependabot erred: `mcp-go` moved from its own logger interface to `log/slog`
+between 0.50 and 0.58, and the Streamable-HTTP logger option changed type with it. Two call sites
+break — `proxy.go:65` (`*zapLogger` no longer satisfies `*slog.Logger`) and `proxy.go:160`
+(`server.WithLogger` is a `ServerOption`, but `NewStreamableHTTPServer` takes
+`StreamableHTTPOption`). Delete `zapLogger`, build the bridge once as
+`slog.New(zapslog.NewHandler(logger.Core()))`, and switch the server option to
+`server.WithStreamableHTTPLogger`. Then take the remaining 44 updates from the group.
+
+Sequenced first because it touches the same file as F-017b, and because a red Dependabot PR is a
+blind spot on a security-maintained repository.
+
+**Files:** `pkg/backend/proxy.go`, `go.mod`, `go.sum` (+ `pkg/backend/proxy_test.go` if the logger
+is asserted on)
+
+**Acceptance:**
+- [ ] Builds against `mcp-go` 0.58.x; `zapLogger` gone, not left as dead code (§1)
+- [ ] `gofmt -l .` empty, `go vet ./...` clean, `go test -race ./...` green
+- [ ] `govulncheck` reports 0 reachable vulnerabilities
+- [ ] `go.uber.org/zap/exp` pulls in no new transitive dependency; `license-check` green
+- [ ] All five CI jobs green on the dependency update (PR #13 or the equivalent commit)
+
+#### F-017b — Transport conformance: prove header pass-through, harden credential injection
+
+**What:** Two halves. First, pin the confirmations down with tests: the transparent backend hands
+`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and an arbitrary `Mcp-Param-*` through unchanged,
+and a `server/discover` POST reaches the upstream instead of being swallowed by the reserved-prefix
+guard. Second, close finding 3: delete every configured `PROXY_HEADERS` name from the inbound
+request before adding the configured value, exactly as the `HEADER_MAPPING` loop directly above
+already does — so a client cannot shadow an injected upstream credential.
+
+**Files:** `pkg/proxy/proxy.go`, `pkg/backend/transparent_test.go`, `pkg/proxy/proxy_test.go`,
+`SPEC.md` (§1.11.4 currently promises the anti-spoofing strip for `HEADER_MAPPING` only)
+
+**Acceptance:**
+- [ ] Header pass-through test, verified non-vacuous by breaking the forwarding once and seeing it
+      go red
+- [ ] `server/discover` POST is proxied, not 404'd by the reserved-prefix guard
+- [ ] Negative test: a client-supplied `X-Api-Key` does **not** reach the upstream while the
+      configured value does — asserted on the exact value list, not just presence
+- [ ] `SPEC.md` §1.11.4 states the strip for both mechanisms
+- [ ] Suite + `-race` + `golangci-lint` green
+
+#### F-017c — Documentation sweep and conformance record
+
+**What:** Every "release candidate" caveat becomes a statement about the final revision, and the
+standing watch item closes. Then add what the sweep alone would not give: a conformance table in
+`SPEC.md` recording, requirement by requirement, what the gateway satisfies, what belongs to the
+upstream because the proxy is transparent, and what is deliberately not applicable — the scope-less
+design behind finding 2, and the stdio backend's `2025-11-25` ceiling from finding 4. Prose ages
+into a claim nobody can re-check; a table can be walked against the spec next time.
+
+**Files:** `README.md`, `REQUIREMENTS.md` §0, `SPEC.md`, `THREAT-MODEL.md`, `CLAUDE.md`,
+`PROGRESS.md`, `docs/VERIFICATION.md`, `CHANGELOG.md`
+
+**Acceptance:**
+- [ ] No "release candidate"/"RC" left except where it is explicitly historical
+- [ ] The REQUIREMENTS §0 watch item is closed, not merely re-dated
+- [ ] The conformance table covers every MUST and SHOULD of the authorization spec
+- [ ] `CHANGELOG.md` has a v0.2.0 entry with an upgrade note for the F-017b header change
+- [ ] GR-5 clean: no hostnames, IPs or personal details
+
+#### F-017d — Live verification and release
+
+**What:** Run `docs/VERIFICATION.md` end to end against the deployment and tick its final-spec
+checkbox. This is also the step that finally *ships* F-015 and F-016: the live gateway still runs
+0.1.0, so the fix for Claude failing to connect has been merged but not deployed. Then tag and
+release.
+
+**Files:** `docs/VERIFICATION.md` (close-out), evidence in `private/` (gitignored)
+
+**Acceptance:**
+- [ ] Discovery, JWKS and the fail-closed `401` verified live
+- [ ] Claude connects again, and via **CIMD** rather than the DCR fallback (F-015 working in the
+      field, not merely committed — the DCR store should stop growing, which also feeds F-019)
+- [ ] Live negatives denied: no token, tampered token, revoked token
+- [ ] Every runbook row recorded in `private/`
+- [ ] `v0.2.0` tagged, multi-arch GHCR image verified by an anonymous pull, GitHub release published
 
 ---
 
