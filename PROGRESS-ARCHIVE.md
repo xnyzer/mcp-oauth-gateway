@@ -2118,3 +2118,117 @@ unaffected — the document fetches with HTTP 200.
 
 **Verification:** `gofmt -l` empty; `go vet` clean; `go test -race ./...` green across 11 packages;
 `golangci-lint v2.12.2` 0 issues.
+
+## F-017d — Live verification and release — DONE 2026-08-21
+
+Fourth substep of F-017, and the one that justified the whole task: it found a defect that no test
+and no amount of reading would have caught.
+
+**Two releases, not one.** `v0.2.0` shipped F-014/F-015/F-016/F-017a–c. The live verification then
+broke, and `v0.2.1` shipped the fix (F-023) forty minutes later.
+
+**Phase 0 — publish.** Tag `v0.2.0` → `release.yml` → multi-arch GHCR image, verified the way any
+user would get it: logged out of ghcr.io, anonymous pull, `--version` → `v0.2.0`, amd64 + arm64,
+tags `0.2.0` and `0.2` present, `latest` correctly absent, GitHub release published.
+
+**Phase 1–2 — deploy.** A fresh `data/` backup first (the newest on the host was six weeks old and
+predated the 0.1.1 switch), compose image tag bumped, `down && up -d` → healthy in ~8 s. Total
+downtime seconds.
+
+**Phase 3 — server-side, all green.** Discovery, JWKS, `/healthz` 200; **JWKS `kid` unchanged**, so
+signing keys survived and issued tokens stayed valid; PRM self-consistent; `POST /mcp` without a
+token → 401 with the bare `WWW-Authenticate` challenge; garbage bearer → `401 invalid_token`;
+reserved namespaces not proxied. And the one that mattered: **`client_id_metadata_document_supported`
+was absent before the switch and `true` after** — F-015 demonstrated in the field rather than in a
+commit.
+
+**The correction that made this substep honest.** The plan assumed the deployment ran `0.1.0` and
+warned at length about crossing v0.1.1's breaking changes (encrypted session cookie, resident-passkey
+requirement) with the password fallback disabled. The operator said otherwise and the host confirmed
+it: **`0.1.1` was live**, so those changes had shipped weeks earlier and carried no risk at all. The
+cause was drift — `private/mcp-gateway/docker-compose.yml` still pinned `0.1.0` because the 0.1.1
+deployment was never mirrored back. Assumption replaced by an SSH-verified inventory; the local copy
+is now a verbatim mirror and the plan says to re-sync after every deployment.
+
+**Phase 3, client side — where it went wrong, and why that was worth it.** Claude web, iOS and
+passkey login all worked immediately. But the acceptance criterion asked for proof that clients now
+pick **CIMD**, and getting it defeated three approaches in a row:
+
+1. A second connector on the same URL — Claude refuses; it de-duplicates by URL.
+2. Removing and re-adding the connector — **no OAuth flow at all**. MCP traffic arrived, but no
+   `register`, no `token_issued`, no `login_ok`: Claude kept its stored credentials for that URL.
+3. Waiting for `DCR_CLIENT_TTL` — never fires, because the registration is refreshed on every token
+   issuance (SPEC §2.1), so one in active use never expires.
+
+The log did establish the starting point: web and iOS both issued tokens against **one** opaque DCR
+client id, registered before the switch under metadata that never advertised CIMD.
+
+With operator approval, the active DCR record was deleted from the store (second backup first;
+gateway stopped for the bbolt lock; a purpose-built helper printing key names and sizes only, never
+record contents). Inventory **before: 2 client records** — the store *had* been growing, which is
+itself the evidence F-019 wanted — **after: 1**, the older orphan left in place so a new DCR record
+would be unmistakable. Deleting the client does not invalidate live tokens (revocation checks the
+token record), so the access and refresh records went too: **58 refresh-token records** for that one
+client, a rotation history nobody had looked at before.
+
+**Then Claude switched to CIMD and the gateway refused it** —
+`invalid CIMD client ID: unsupported grant_type "urn:ietf:params:oauth:grant-type:jwt-bearer"`.
+That became **F-023** and `v0.2.1`. After deploying it:
+
+```
+20:22:41  login_ok
+20:22:57  token_issued   client_id = https://claude.ai/oauth/mcp-oauth-client-metadata
+```
+
+A URL, so CIMD; **zero `register` events**, so no DCR registration was created; and the operator
+confirmed tool calls against the upstream succeed. F-015, F-023 and F-019's evidence, all settled at
+once.
+
+**The lesson, written into `docs/VERIFICATION.md` rather than left in a chat.** The runbook gained
+"Force a fresh client registration": the three routes that do not work, the one that does, and the
+reason it matters — *a verification that only exercises an already-connected client passes even
+while the gateway is broken for every new one.* That is precisely what happened here, and it is the
+part most likely to be repeated wrongly next time.
+
+**Files:** `docs/VERIFICATION.md` (final-spec checkbox ticked with the §4 walk recorded, plus the
+new section); evidence and the full run log in `private/UPDATE-PLAN-v0.2.0.md` (gitignored). Host
+cleanup: the one-off helper removed, and the v0.1.0-era leftovers (35 MB cross-compiled binary,
+`Dockerfile`, stale compose backup, superseded `0.1.0` image) deleted afterwards at the operator's
+request.
+
+**Left open on purpose:** Dependabot `#9` and `#6` — the latter bumps `action-gh-release`, the step
+that publishes releases, so it was held back until after both tags landed.
+
+## F-017 — Re-verify against the final MCP 2026-07-28 authorization spec — DONE 2026-08-21
+
+Complete (a/b/c/d). The standing watch item, open since F-007e checked the release candidate, is
+closed — and deliberately without a successor: the specification will keep moving, and re-checking
+it is ordinary maintenance rather than a standing exception.
+
+| Substep | Outcome |
+|---|---|
+| **F-017a** | mcp-go 0.50 → 0.58 with the stdio backend migrated to `log/slog`; unblocked a red Dependabot PR that turned out to be a real API migration, not a bot error |
+| **F-017b** | closed a spoofing path on credential injection — a client could shadow a configured `PROXY_HEADERS` value — plus tests pinning the MCP transport-header pass-through |
+| **F-017c** | seven RC caveats became final-spec statements; new `SPEC.md` §4 records conformance requirement by requirement, including one **unmet** MUST |
+| **F-017d** | released `v0.2.0`, deployed, verified live — and surfaced F-023, which required `v0.2.1` |
+
+**The authorization surface needed no change.** All six SEPs remained satisfied, and CIMD-first with
+a DCR fallback still matches a spec that now formally deprecates DCR. Everything this task actually
+fixed lay elsewhere: on the proxy surface (F-017b), in the CIMD resolver (F-023), and in
+documentation that claimed conformance without evidence (F-017c).
+
+**What the task is really worth, in hindsight.** A re-check that had only compared the specification
+against the code would have concluded "conformant, no action" — and been wrong in two places. The
+`PROXY_HEADERS` gap needed reading the code against a *new* spec feature (`Mcp-Param-*`) to become
+visible; the CIMD defect needed a live client pushed through a fresh registration, which took
+deleting production state. Both were invisible to the test suite, and one of them had been sitting
+in the code since F-012a.
+
+**Recorded as unmet rather than glossed over:** `Origin` validation, a MUST since protocol
+2025-03-26 that this gateway never implemented and the F-006b audit missed. It sits in `SPEC.md`
+§4.2 with a ✘, in the CHANGELOG under "Known limitations", and in `THREAT-MODEL.md`, tracked as
+**F-021**.
+
+**Spawned:** F-021 (`Origin`), F-022 (six files past the §2 hard limit), F-023 (done, the CIMD fix),
+F-024 (operator client list with a kill switch — the manual store surgery this task required is the
+argument for it).

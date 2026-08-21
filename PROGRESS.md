@@ -4,16 +4,20 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State: released.** **v0.1.1 is public** — repo public, multi-arch image on GHCR
-(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.1.1`/`0.1`), verified against the **final MCP spec
-2026-07-28** (F-017, conformance table in `SPEC.md` §4). The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
-verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
-low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
-`PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**One open task** below: the now-due re-check against the published final MCP spec (F-017,
-decomposed into four substeps), which also gates the next release — **v0.2.0**, not a patch, because
-F-015, F-016 and F-017b each change behaviour. One idea parked in the backlog (F-019). F-numbers are stable IDs; the document order, not the
-number, is the path.
+**State: released and live.** **v0.2.1 is public** — repo public, multi-arch image on GHCR
+(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.2.1`/`0.2`), verified against the **final MCP spec
+2026-07-28** (F-017; conformance recorded requirement by requirement in `SPEC.md` §4). Feature-
+complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
+Claude connects via **CIMD**, no longer via the deprecated DCR fallback. Every roadmap task
+F-001–F-018, F-020, F-023 is done — rationale archived in `PROGRESS-ARCHIVE.md`.
+
+**No open tasks.** The execution list below is empty for the first time; four ideas sit in the
+backlog and each needs `/prep-step` before it can be built. Two are worth knowing about:
+**F-021** is the one **unmet MUST** the spec re-check found (`Origin` validation, recorded in
+`SPEC.md` §4.2), and **F-019** can now be decided — F-017d showed the DCR store stops growing once
+clients use CIMD.
+
+F-numbers are stable IDs; the document order, not the number, is the path.
 
 ---
 
@@ -65,90 +69,15 @@ number, is the path.
 | F-017b | Transport conformance → **closed a real spoofing path on the credential injection**: `PROXY_HEADERS` entries were attached with `Header.Add` and, unlike the `HEADER_MAPPING` loop two lines above, no inbound copy was deleted first — so a client-supplied header of the same name landed *in front of* the injected one, where an upstream reading `Header.Get` finds it instead of the credential (FR-6/SR-7). Always reachable in principle; MCP 2026-07-28 made it routine by mirroring tool parameters into client-set `Mcp-Param-*` headers (SEP-2243). Fix is one line that *replaces* the `Authorization` special case, so the function got shorter. Three tests: header pass-through (incl. Base64 sentinel), `server/discover` not swallowed by the path-prefix guard, and the negative asserted on the **full value slice** — `Header.Get` would have passed while the attacker's copy sat behind. Both **verified non-vacuous** (reverting → `["attacker-supplied", "upstream-secret"]`). `transparent.go` needed no change. Tests went to a new `transport_test.go`, not the 1035-line `proxy_test.go` (§2 hard limit — split reported as open). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-017c | Documentation sweep and conformance record → **seven live "release candidate" caveats became final-spec statements** and the standing watch item was **closed rather than re-dated** (no successor: a watch item that renews itself forever is a reminder nobody reads). New **`SPEC.md` §4**: 16 authorization rows covering every server-side MUST/SHOULD, 10 transport rows each attributed to **gateway** or **upstream** — the attribution is the point, since "the upstream owns it" only holds while the gateway provably forwards enough for it to comply — plus §4.3 for the two deliberate gaps (scope-less design, stdio at 2025-11-25). **§4.2 carries a ✘**: `Origin` is an unmet MUST, recorded with its mitigation and F-021 rather than omitted. Self-auditing the table against the spec caught **two missing normative rows** the draft had — the criterion would otherwise have been ticked while false. CHANGELOG v0.2.0 with upgrade note for the F-017b header change. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-023 | CIMD documents rejected over a foreign grant type → **the defect v0.2.0 made reachable**. Claude's published document declares `jwt-bearer` beside `authorization_code` and `refresh_token`; the resolver validated the whole list against its supported set and rejected the **entire client** (`invalid_client`, connector dead). A CIMD document is published once and shown to *every* AS, so it names the union of the client's abilities — refusing it for that makes CIMD unusable. Now **narrowed** to the supported subset (fail-closed; nothing-supported still rejected); **DCR stays strict**, since a registration request addresses one server. Hidden until F-015 made clients actually choose CIMD. Regression test reproduces the live error message verbatim; two tests that encoded the old behaviour were deliberately changed. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-017d | Live verification and release → **released `v0.2.0`, deployed, verified live — and the verification broke, which is what made it worth running.** Server side all green, incl. the F-015 proof: `client_id_metadata_document_supported` was **absent before** the switch and `true` after. Client side defeated three approaches (second connector refused; remove+re-add reuses stored credentials and produces *no* OAuth flow; `DCR_CLIENT_TTL` never fires because it is refreshed on every token issuance), so the DCR record was deleted from the store — 2 records before, F-019's evidence that it *had* been growing. Claude then switched to CIMD and the gateway refused it → **F-023 → v0.2.1**, after which `token_issued` carried a **URL** client_id and **zero** `register` events. Corrected a wrong premise en route: the host ran **0.1.1**, not 0.1.0 — the local compose copy had drifted for six weeks. Runbook gained "Force a fresh client registration", because a verification that only exercises an already-connected client passes while the gateway is broken for every new one. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-017 | **Re-verify against the final MCP 2026-07-28 spec — complete** (a/b/c/d): watch item closed, deliberately without a successor. The authorization surface needed **no change** — all six SEPs still satisfied — so everything this task fixed lay elsewhere: a credential-injection spoofing path (F-017b), a CIMD resolver defect that made CIMD unusable with real clients (F-023), and documentation claiming conformance without evidence (F-017c, now `SPEC.md` §4). A paper re-check would have concluded "conformant, no action" and been wrong twice. One MUST recorded as **unmet** rather than glossed over: `Origin` validation (F-021). Released **v0.2.0** and **v0.2.1**, both live-verified. Spawned F-021, F-022, F-023, F-024. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
 ## Open tasks — work top to bottom
 
-### F-017 — Re-verify against the final MCP 2026-07-28 authorization spec
-
-**Problem:** The standing watch item is due: v0.1.x was verified against the 2026-07-28 release
-candidate, and the final specification has since published. `README.md`, `REQUIREMENTS.md` §0,
-`SPEC.md`, `THREAT-MODEL.md`, `PROGRESS.md` and `docs/VERIFICATION.md` all still name the RC as the
-reference point.
-
-**Idea:** Re-check the gateway against the published final spec, then replace every RC caveat in
-the living documentation with a statement about the final revision, and close the watch item for
-good.
-
-**Possible implementation:**
-- Authorization surface: changes are small and largely already satisfied — RFC 9207 `iss` stays a
-  SHOULD, `application_type` applies to DCR clients, client credentials are issuer-bound (a
-  client-side obligation), and DCR is now formally deprecated in favour of CIMD, which F-015
-  addresses.
-- Transport surface is where the revision is large: no `initialize`/`notifications/initialized`
-  handshake, no `Mcp-Session-Id`, mandatory `Mcp-Method`/`Mcp-Name` headers on Streamable HTTP
-  POSTs, a new `server/discover` RPC, no SSE resumability. The gateway proxies transparently, so
-  this lands on the upstream — but confirm the transparent backend forwards the new headers
-  untouched (`httputil.ReverseProxy`, no allow-list, so a confirmation rather than a change) and
-  that the reserved-namespace guard does not trip over `server/discover`.
-- `pkg/backend/proxy.go` (stdio upstreams) still performs an `initialize` handshake via
-  `mark3labs/mcp-go`. Check what the pinned version supports and whether the stdio path must follow
-  the revision; Dependabot PRs for that module are open.
-- Re-run `docs/VERIFICATION.md` end to end against a live deployment and tick its final-spec
-  checkbox.
-- Documentation sweep: every "release candidate" caveat becomes a final-spec statement.
-- Release gate: once F-014 to F-017 are done, cut the patch release — v0.1.2, or v0.2.0 if the
-  re-check forces behaviour changes.
-- History, so it is not lost with this section: the RC check (F-007e, 2026-07-08) and the interim
-  re-check on 2026-07-09 both found the six authorization SEPs (SEP-2468 `iss`/RFC 9207, SEP-837
-  DCR `application_type`, SEP-2352 issuer-bound credentials, SEP-2207 OIDC refresh tokens,
-  SEP-2350 step-up scope accumulation, SEP-2351 `.well-known` suffix) satisfied and unamended.
-
-**Dependencies:** F-015 (the DCR-deprecation finding is settled there); best done last so the
-re-verification covers the fixed state.
-
-**Substeps (`/prep-step`, 2026-08-21) — Large: ~350 lines across ~16 files, of which ~200 are
-documentation.** The final specification has published and was read end to end against the code.
-The authorization surface needs **no change** — but the re-check turned up four things the intake
-above did not anticipate, and one of them is a security fix:
-
-| # | Finding | Verdict |
-|---|---|---|
-| 1 | `authorization_response_iss_parameter_supported` is now a **MUST** for servers that send `iss` (it was implied before) | Already `true` in `metadata.go` — satisfied |
-| 2 | `scope` in the `WWW-Authenticate` challenge is a new **SHOULD**; `offline_access` **SHOULD NOT** appear in `scopes_supported` | The gateway is scope-less by design (`scopes_supported: []`, no `offline_access`) — a decision to *document*, not to implement |
-| 3 | **`Mcp-Param-{Name}` (SEP-2243)** makes client-set HTTP headers a first-class feature and obliges intermediaries to forward unrecognised ones. That elevates a latent gap: `pkg/proxy/proxy.go` adds each configured `PROXY_HEADERS` entry with `Header.Add` and **no preceding `Del`**, so a client-supplied header of the same name survives and — since `Header.Get` returns the first value — can shadow an injected upstream credential. `HEADER_MAPPING` and `Authorization` are stripped correctly on the two lines above it; the other proxy headers are not. | **Real spoofing path on FR-6 → fix in F-017b** |
-| 4 | The stdio backend's protocol version is whatever `mark3labs/mcp-go` implements. `v0.58.0` is still `2025-11-25`; only `v1.0.0-beta.1` implements `2026-07-28` (`server/discover`, `_meta` protocol version, header validation). | Stay on the stable 0.58 line; record the ceiling as a documented limitation and file the v1.x move separately once it is final |
-
-Confirmed by reading, no change needed: `httputil.ReverseProxy` forwards
-`MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name`/`Mcp-Param-*` untouched — `transparent.go` only
-rewrites `X-Forwarded-*` — and the reserved-namespace guard matches **URL path prefixes**
-(`/.idp/`, `/.auth/`, `/.well-known/`), so the new `server/discover` RPC, which lives in the
-JSON-RPC body, cannot collide with it. Both get a regression test in F-017b so the confirmation
-does not silently expire.
-
-Decisions taken at prep time: **mcp-go 0.58.x** over `v1.0.0-beta.1` (CODING-STANDARDS §7 pins
-stable versions; a pre-release on a public auth boundary is not worth the stdio path's spec
-currency); **`go.uber.org/zap/exp`** for the zap→slog bridge over a hand-written handler (MIT, by
-the zap authors, no new transitive dependencies, and §1 prefers an established pattern);
-**v0.2.0** over v0.1.2 as the release version.
-
-#### F-017d — Live verification and release
-
-**What:** Run `docs/VERIFICATION.md` end to end against the deployment and tick its final-spec
-checkbox. This is also the step that finally *ships* F-015 and F-016: the live gateway still runs
-0.1.0, so the fix for Claude failing to connect has been merged but not deployed. Then tag and
-release.
-
-**Files:** `docs/VERIFICATION.md` (close-out), evidence in `private/` (gitignored)
-
-**Acceptance:**
-- [ ] Discovery, JWKS and the fail-closed `401` verified live
-- [ ] Claude connects again, and via **CIMD** rather than the DCR fallback (F-015 working in the
-      field, not merely committed — the DCR store should stop growing, which also feeds F-019)
-- [ ] Live negatives denied: no token, tampered token, revoked token
-- [ ] Every runbook row recorded in `private/`
-- [ ] `v0.2.0` tagged, multi-arch GHCR image verified by an anonymous pull, GitHub release published
+_Empty._ Everything intaked so far is either done or still in the backlog below. Pick a backlog
+entry, run `/prep-step` on it, and it moves up here.
 
 ---
 
@@ -344,7 +273,7 @@ F-013 Fix the CI workflow (ci.yml never runs) (DONE)
 F-014 Bump vulnerable indirect dependencies (DONE)
 F-015 Advertise CIMD support in the AS metadata (DONE)
 F-016 Port-agnostic loopback matching for localhost redirect URIs (DONE)
-F-017 Re-verify against the final MCP 2026-07-28 authorization spec
+F-017 Re-verify against the final MCP 2026-07-28 authorization spec (DONE)
 F-018 Build the container image in CI (DONE)
 F-019 Evaluate whether DCR can be switched off (backlog)
 F-020 Split pkg/idp/idp.go along its seams (DONE)

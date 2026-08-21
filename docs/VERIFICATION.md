@@ -125,6 +125,27 @@ Record each row pass/fail with evidence in `private/`.
 ## 6. Close-out
 
 - [ ] All rows recorded in `private/`.
-- [ ] Re-verify against the **final MCP authorization spec 2026-07-28**: walk `SPEC.md` §4 and
+- [x] Re-verify against the **final MCP authorization spec 2026-07-28**: walk `SPEC.md` §4 and
   confirm each row still holds. The watch item that used to live here closed with F-017; keeping
   the row means the table gets re-walked on every deployment rather than trusted indefinitely.
+  *Done 2026-08-21 for v0.2.0/v0.2.1 — every §4.1 and §4.2 row held except the one already
+  recorded as unmet (`Origin`, F-021).*
+
+### Force a fresh client registration (learned in F-017d)
+
+Verifying that clients pick CIMD needs a **new** registration, and an already-connected client
+will not produce one. None of the obvious routes work:
+
+- Claude refuses a second connector for a URL it already has.
+- Removing and re-adding the connector reuses the stored credentials — the gateway sees no
+  authorization request at all.
+- Waiting for `DCR_CLIENT_TTL` never fires: the registration is refreshed on every token issuance
+  (SPEC §2.1), so one in active use never expires.
+
+What does work is deleting the client's server-side record, which forces re-registration on the
+next token refresh. Take a data-dir backup first, stop the gateway (bbolt holds an exclusive
+lock), remove the `client-<id>` record, and restart. Deleting the `access_token-*` and
+`refresh_token-*` records as well makes it immediate instead of waiting out `ACCESS_TOKEN_TTL`.
+
+This matters because a verification that only exercises an **already-connected** client passes
+even when the gateway is broken for every new one — which is exactly what F-023 turned out to be.
