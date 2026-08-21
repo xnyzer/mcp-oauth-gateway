@@ -73,3 +73,50 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -shellcheck=
+
+  image-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      # Build only, never push. This job exists so a broken Dockerfile or a
+      # bumped base image fails on the pull request instead of at the next
+      # release tag (F-014 shipped a builder digest nothing had exercised).
+      # linux/amd64 alone: release.yml still builds both architectures, and
+      # the breakage caught here is not architecture-specific.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          build-args: |
+            VERSION=ci
+          tags: mcp-oauth-gateway:ci
+      - name: binary runs in the runtime image
+        run: docker run --rm mcp-oauth-gateway:ci --version
+      # Waiting for the image's own HEALTHCHECK covers more than invoking the
+      # healthcheck subcommand directly could: it probes /healthz on the local
+      # listener, so it only means anything while the server is actually up.
+      - name: container becomes healthy
+        run: |
+          set -euo pipefail
+          # Generated here rather than written into the workflow. The gateway
+          # refuses to start without an auth backend, and a literal would leave
+          # a credential-shaped string in a public repository forever.
+          docker run -d --name smoke \
+            -e NO_AUTO_TLS=true \
+            -e PASSWORD="$(openssl rand -hex 16)" \
+            mcp-oauth-gateway:ci http://127.0.0.1:9 >/dev/null
+          health=unknown
+          for _ in $(seq 1 30); do
+            health="$(docker inspect --format '{{.State.Health.Status}}' smoke)"
+            case "$health" in
+              healthy) echo "container reported healthy"; exit 0 ;;
+              unhealthy) break ;;
+            esac
+            sleep 2
+          done
+          echo "::error::container never became healthy (last status: $health)"
+          docker logs smoke
+          exit 1

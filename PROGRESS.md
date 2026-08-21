@@ -10,10 +10,9 @@ spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**Three open tasks** in execution order below: building the container image in CI (F-018), the
-now-due re-check against the published final MCP spec (F-017), which also gates the next release,
-and splitting the oversized `pkg/idp/idp.go` afterwards (F-020). One idea parked in the backlog
-(F-019). F-numbers are stable IDs; the document order, not the
+**Two open tasks** in execution order below: the now-due re-check against the published final MCP
+spec (F-017), which also gates the next release, and splitting the oversized `pkg/idp/idp.go`
+afterwards (F-020). One idea parked in the backlog (F-019). F-numbers are stable IDs; the document order, not the
 number, is the path.
 
 ---
@@ -57,39 +56,11 @@ number, is the path.
 | F-014 | Bump vulnerable indirect dependencies → **`x/text` 0.41.0 + `grpc` 1.83.1 (+ `x/crypto` 0.55.0), Go toolchain 1.26.5 → **1.26.7** in `go.mod` *and* the digest-pinned builder image** — a dry-run `govulncheck` surfaced **six standard-library advisories** (fixed in 1.26.6, published after the last green CI run) on top of the two module ones, several on the auth boundary (`html/template`, `encoding/asn1`, `net/url`); Dependabot now covers indirect Go modules, grouped into one weekly PR. **0 reachable vulns afterwards** (was 8); suite + `-race` + `gofmt` green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-20 |
 | F-015 | Advertise CIMD support in the AS metadata → **`client_id_metadata_document_supported` added to SPEC §1.2 and emitted from `authorizationServerResponse`**, driven by whether a CIMD resolver is configured so metadata and behaviour cannot drift. §1.3 had declared CIMD primary since F-005c while §1.2 never announced it — and clients pick CIMD only when the metadata says so *and* offers `none` auth, so every client silently fell back to deprecated DCR (and toward `DCR_MAX_CLIENTS`). Consent needed no change: it shows `GetClient().GetID()`, which for CIMD is the document URL. New `TestASMetadataAdvertisesCIMD` (with/without resolver + OIDC mirror); suite + `-race` + `gofmt` green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-016 | Port-agnostic loopback matching for `localhost` redirect URIs → **new `pkg/idp/loopback.go`; `handleAuth` stashes the raw `redirect_uri` on the request context and `clientSource.GetClient` clones the client to admit a port variant** — fosite ignores the port for IP literals only, so a client registering `http://localhost/callback` and redirecting to an ephemeral port was rejected (Claude Code's exact shape). Scheme/host/path/query still match exactly; no bridge between `localhost` and `127.0.0.1`; consent now warns when *all* redirect URIs are loopback. 28 new test cases incl. 7 through the real authorize endpoint; the positive test verified non-vacuous by disabling the stash (400, red). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-018 | Build the container image in CI → **new `image-build` job**: buildx `push: false`/`load: true` (amd64), `--version` smoke, then a container start polled until Docker's own `HEALTHCHECK` reports `healthy` (failing loudly with `docker logs` otherwise). Closes the gap where a broken `Dockerfile` or base-image bump surfaced only as a failed *release* — F-014's builder digest had been unexercised. The intake's `docker run IMAGE healthcheck` was corrected: it probes `/healthz` on the local listener and needs a running server. Smoke password generated in-step, never written to the repo. **Verified locally against real Docker** (build + `version ci` + healthy), under amd64 emulation. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
 ## Open tasks — work top to bottom
-
-### F-018 — Build the container image in CI
-
-**Problem:** `ci.yml` runs four jobs — `build-test`, `lint`, `license-check`, `workflow-lint` —
-and none of them builds the container image. Only `release.yml` does, on a SemVer tag push. A
-broken `Dockerfile` change therefore surfaces as a failed *release* rather than a failed push.
-F-014 made this concrete: the freshly pinned builder digest is unverified until the next tag, and
-the open Dependabot PR bumping the distroless runtime digest is equally untested.
-
-**Idea:** Add a CI job that builds the image with buildx (no push) and smoke-tests the result, so
-base-image and `Dockerfile` changes are exercised on every push instead of at release time.
-
-**Possible implementation:**
-- New `image-build` job in `.github/workflows/ci.yml`: `docker/setup-buildx-action`, then
-  `docker/build-push-action` with `push: false` and `load: true` so the image reaches the
-  runner's daemon.
-- **linux/amd64 only.** `release.yml` keeps building both architectures; arm64 here would mean
-  QEMU emulation for a gate whose purpose is catching `Dockerfile` and base-image breakage, which
-  is architecture-independent in practice.
-- Smoke via artefacts F-007b/M9 already provides: `docker run --rm IMAGE --version` (Cobra root,
-  `pkg/version` injected by ldflags) and `docker run --rm IMAGE healthcheck` (the subcommand
-  behind the image's `HEALTHCHECK`). Together they prove the builder produced a working binary
-  *and* that the non-root distroless runtime can execute it.
-- Pin the actions by major version like the existing jobs and keep the `permissions:
-  contents: read` posture — this job must never push.
-- Deliberately **not** a full container start against a dummy upstream: the assembled-gateway
-  e2e harness (F-006a) already covers that flow without a container.
-
-**Dependencies:** none.
 
 ### F-017 — Re-verify against the final MCP 2026-07-28 authorization spec
 
@@ -217,7 +188,7 @@ F-014 Bump vulnerable indirect dependencies (DONE)
 F-015 Advertise CIMD support in the AS metadata (DONE)
 F-016 Port-agnostic loopback matching for localhost redirect URIs (DONE)
 F-017 Re-verify against the final MCP 2026-07-28 authorization spec
-F-018 Build the container image in CI
+F-018 Build the container image in CI (DONE)
 F-019 Evaluate whether DCR can be switched off (backlog)
 F-020 Split pkg/idp/idp.go along its seams
 -->
