@@ -21,10 +21,15 @@
   Authorization Server Metadata** (or OIDC Discovery).
 - No maintained, self-hosted, no-third-party, lightweight gateway covers this gap today — hence
   this project (build-vs-fork decision: see PROGRESS F-001).
-- **Watch item (resolved 2026-07-08):** verified against the **2026-07-28 release candidate**
-  (locked 2026-05-21) — all six authorization-hardening SEPs satisfied, CIMD-first + DCR
-  fallback unchanged; see `CHANGELOG.md` v0.1.0. Re-check once the final spec publishes on
-  2026-07-28.
+- **Watch item — closed 2026-08-21 (F-017).** The **final 2026-07-28 specification** has
+  published and the gateway was re-checked against it end to end. The authorization surface
+  needed no change: all six SEPs remain satisfied and CIMD-first + DCR-fallback stands, now
+  that F-015 advertises CIMD. The re-check did surface one real defect on the proxy surface
+  (fixed in F-017b) and one unimplemented transport requirement (`Origin` validation, tracked
+  as F-021). Requirement-by-requirement conformance is recorded in **`SPEC.md` §4**, so the
+  next revision can be walked against a table instead of re-derived from prose. There is no
+  successor watch item: the spec will keep moving, and re-checking it is ordinary maintenance
+  rather than a standing exception.
 
 ## 1. Scope
 **In scope:** a gateway process that terminates MCP-spec OAuth toward the client and forwards

@@ -20,9 +20,9 @@ intended to later become a module of the memstead suite. Full context: `README.m
 GHCR (`ghcr.io/xnyzer/mcp-oauth-gateway`). The gateway (hard fork of `sigbit/mcp-auth-proxy`,
 Go + Ory Fosite) is feature-complete against `SPEC.md`, security-audited (F-006b, all
 crit/high/med findings fixed), live-verified against Claude web + iOS (F-006c) and verified
-against the MCP **2026-07-28 spec RC** (F-007e). All roadmap tasks **F-001–F-011 are done**;
-rationale in `PROGRESS-ARCHIVE.md`. Open: the **F-012 backlog** (audit low-severity
-follow-ups) and the watch item to re-check the final MCP spec after 2026-07-28.
+against the **final MCP spec 2026-07-28** (F-017; conformance table in `SPEC.md` §4). The
+standing spec watch item is **closed**. Rationale for finished work is in
+`PROGRESS-ARCHIVE.md`.
 
 Read in order: `README.md`, `REQUIREMENTS.md`, `SPEC.md`, `THREAT-MODEL.md`, `PROGRESS.md`
 (+ `PROGRESS-ARCHIVE.md` for past decisions). **To continue: open `PROGRESS.md`** — new work

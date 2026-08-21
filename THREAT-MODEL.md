@@ -36,10 +36,15 @@
   connect via live CIMD, and passkey enrol+login works in Safari (desktop) + iOS (iCloud
   Keychain). Residual integration risk remains for untested clients and future client/spec
   changes — re-verify on each.
-- Spec is fast-moving (DCR vs CIMD; client behaviors). v0.1.x is verified against the MCP
-  **2026-07-28 authorization spec release candidate** (all six authorization SEPs satisfied,
-  F-007e); the **final spec (due 2026-07-28) has not published yet** — a re-check against it is a
-  standing open item (`PROGRESS.md`).
+- Spec is fast-moving (DCR vs CIMD; client behaviors). Verified against the **final MCP
+  authorization spec 2026-07-28** (F-017), with per-requirement conformance recorded in
+  `SPEC.md` §4. Two results belong here rather than in a release note: the re-check found a
+  **spoofing path on the credential injection** — a client could shadow a configured
+  `PROXY_HEADERS` value, fixed in F-017b — and one transport requirement the gateway **does not
+  satisfy**: `Origin` is never validated (MUST since protocol 2025-03-26, missed by the F-006b
+  audit). The latter is mitigated rather than closed: `/mcp` is bearer-protected and `/.auth/*`
+  carries CSRF tokens plus `SameSite=Lax` (F-012c), so a **loopback deployment** is the exposed
+  case. Tracked as F-021.
 - A self-written gateway owns auth-server security; the mandatory pre-release **security review**
   was completed (F-006b: 0 crit / 1 high / 9 med / 19 low — all fixed across F-006b/F-007/F-012)
   and vetted-library use (SR-1, Ory Fosite) is non-negotiable. The review was an **internal**

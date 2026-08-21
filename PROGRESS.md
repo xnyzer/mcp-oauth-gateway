@@ -5,8 +5,8 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
 **State: released.** **v0.1.1 is public** — repo public, multi-arch image on GHCR
-(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.1.1`/`0.1`), verified against the MCP **2026-07-28
-spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
+(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.1.1`/`0.1`), verified against the **final MCP spec
+2026-07-28** (F-017, conformance table in `SPEC.md` §4). The gateway is feature-complete against `SPEC.md`, security-audited (F-006b) and live-
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
@@ -63,6 +63,7 @@ number, is the path.
 | F-020 | **Split `pkg/idp/idp.go` along its seams — complete** (a/b/c): two oversized files (1072 + 1684 lines, both past the 500-line hard limit) became twenty, the largest 298, each with one concern. Run as a pure move first and content second, which is what made the verification meaningful — git cannot see a one-into-eight split as a move, so the proof came from invariants: 47/47 declarations, 954/954 and 1399/1399 body lines, 34/34 tests. Sequenced before F-017 so the spec re-check sees the split code. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-017a | Migrate `mcp-go` to `log/slog` and unblock Dependabot PR #13 → **the red dependency PR was a real API migration, not a Dependabot error**: mcp-go dropped its own logger interface for `log/slog` between 0.50 and 0.58, and the Streamable-HTTP logger option changed type too (3 compiler errors, 2 call sites, all in the stdio backend). `zapLogger` deleted; one-line bridge `slog.New(zapslog.NewHandler(logger.Core()))` wraps the *existing* core so stdio output stays in the gateway's stream. Took Dependabot's `go.mod`/`go.sum` verbatim (45 updates) + `go.uber.org/zap/exp` v0.3.0, which adds **no** transitive dependency — all six of its requirements were already in the build. New `TestNewSlogLoggerWritesToZap`, because the two existing tests traverse both call sites but with `zap.NewNop()` and would stay green against a discarding core; verified non-vacuous. **Chose 0.58.x over v1.0.0-beta.1** (§7 pins stable versions), so the stdio path speaks 2025-11-25 until v1.x is final — documented in F-017c. All five CI jobs replicated locally, incl. `image-build`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-017b | Transport conformance → **closed a real spoofing path on the credential injection**: `PROXY_HEADERS` entries were attached with `Header.Add` and, unlike the `HEADER_MAPPING` loop two lines above, no inbound copy was deleted first — so a client-supplied header of the same name landed *in front of* the injected one, where an upstream reading `Header.Get` finds it instead of the credential (FR-6/SR-7). Always reachable in principle; MCP 2026-07-28 made it routine by mirroring tool parameters into client-set `Mcp-Param-*` headers (SEP-2243). Fix is one line that *replaces* the `Authorization` special case, so the function got shorter. Three tests: header pass-through (incl. Base64 sentinel), `server/discover` not swallowed by the path-prefix guard, and the negative asserted on the **full value slice** — `Header.Get` would have passed while the attacker's copy sat behind. Both **verified non-vacuous** (reverting → `["attacker-supplied", "upstream-secret"]`). `transparent.go` needed no change. Tests went to a new `transport_test.go`, not the 1035-line `proxy_test.go` (§2 hard limit — split reported as open). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-017c | Documentation sweep and conformance record → **seven live "release candidate" caveats became final-spec statements** and the standing watch item was **closed rather than re-dated** (no successor: a watch item that renews itself forever is a reminder nobody reads). New **`SPEC.md` §4**: 16 authorization rows covering every server-side MUST/SHOULD, 10 transport rows each attributed to **gateway** or **upstream** — the attribution is the point, since "the upstream owns it" only holds while the gateway provably forwards enough for it to comply — plus §4.3 for the two deliberate gaps (scope-less design, stdio at 2025-11-25). **§4.2 carries a ✘**: `Origin` is an unmet MUST, recorded with its mitigation and F-021 rather than omitted. Self-auditing the table against the spec caught **two missing normative rows** the draft had — the criterion would otherwise have been ticked while false. CHANGELOG v0.2.0 with upgrade note for the F-017b header change. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
@@ -130,25 +131,6 @@ stable versions; a pre-release on a public auth boundary is not worth the stdio 
 currency); **`go.uber.org/zap/exp`** for the zap→slog bridge over a hand-written handler (MIT, by
 the zap authors, no new transitive dependencies, and §1 prefers an established pattern);
 **v0.2.0** over v0.1.2 as the release version.
-
-#### F-017c — Documentation sweep and conformance record
-
-**What:** Every "release candidate" caveat becomes a statement about the final revision, and the
-standing watch item closes. Then add what the sweep alone would not give: a conformance table in
-`SPEC.md` recording, requirement by requirement, what the gateway satisfies, what belongs to the
-upstream because the proxy is transparent, and what is deliberately not applicable — the scope-less
-design behind finding 2, and the stdio backend's `2025-11-25` ceiling from finding 4. Prose ages
-into a claim nobody can re-check; a table can be walked against the spec next time.
-
-**Files:** `README.md`, `REQUIREMENTS.md` §0, `SPEC.md`, `THREAT-MODEL.md`, `CLAUDE.md`,
-`PROGRESS.md`, `docs/VERIFICATION.md`, `CHANGELOG.md`
-
-**Acceptance:**
-- [ ] No "release candidate"/"RC" left except where it is explicitly historical
-- [ ] The REQUIREMENTS §0 watch item is closed, not merely re-dated
-- [ ] The conformance table covers every MUST and SHOULD of the authorization spec
-- [ ] `CHANGELOG.md` has a v0.2.0 entry with an upgrade note for the F-017b header change
-- [ ] GR-5 clean: no hostnames, IPs or personal details
 
 #### F-017d — Live verification and release
 

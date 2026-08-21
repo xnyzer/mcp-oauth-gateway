@@ -1994,3 +1994,65 @@ endpoint or signature change.
 `golangci-lint v2.12.2` 0 issues; gitleaks no leaks. **Behaviour change worth an upgrade note:** a
 deployment that (unwisely) relied on clients supplying a header also listed in `PROXY_HEADERS` will
 see that client value dropped from now on.
+
+## F-017c — Documentation sweep and conformance record — DONE 2026-08-21
+
+Third substep of F-017. The sweep itself was mechanical; the part worth keeping is what replaced
+the prose.
+
+**Seven live "release candidate" caveats became statements about the final revision** — `README.md`
+(status blurb), `REQUIREMENTS.md` §0 (the watch item), the `SPEC.md` header, `THREAT-MODEL.md`,
+`CLAUDE.md`, the `PROGRESS.md` state line, and the `docs/VERIFICATION.md` close-out. What remains
+is either inside F-017's own task text (archived with this entry) or explicitly historical, in the
+v0.1.0 CHANGELOG entry.
+
+**The watch item was closed, not re-dated.** REQUIREMENTS §0 now records that the final spec
+published, that the authorization surface needed no change, and — deliberately — that there is **no
+successor watch item**: the specification will keep moving, and re-checking it is ordinary
+maintenance rather than a standing exception. A watch item that renews itself forever is a reminder
+nobody reads.
+
+**New `SPEC.md` §4 — the conformance record.** Three tables replacing the claim "we are conformant"
+with something a reader can walk:
+
+- **§4.1 Authorization**, 16 requirement rows. Every server-side MUST and SHOULD of the
+  authorization spec, each with its status and the section that implements it. Client-side
+  obligations are omitted with the reason stated: the gateway is an AS and a resource server,
+  never an MCP client.
+- **§4.2 Streamable HTTP**, 10 rows, each attributed to **gateway** or **upstream**. The
+  attribution is the point: "the upstream owns it" is only an answer while the gateway provably
+  forwards enough for the upstream to comply — which F-017b's tests now assert.
+- **§4.3 Recorded limitations**, the two deliberate gaps: the scope-less design behind the two
+  "not applicable" rows, and the stdio backend's 2025-11-25 ceiling from F-017a.
+
+**§4.2 carries a ✘.** `Origin` validation is a MUST the gateway does not satisfy — unchanged since
+protocol 2025-03-26 and missed by the F-006b audit. The table records it as unmet with its
+mitigation (bearer-protected `/mcp`, CSRF plus `SameSite=Lax` on `/.auth/*`, loopback the exposed
+case) and points at F-021, rather than quietly omitting the row. The same limitation appears in
+`CHANGELOG.md` under "Known limitations" and in `THREAT-MODEL.md`, so a reader meets it wherever
+they look.
+
+**Two normative rows were missing on the first pass** and were caught by self-auditing §4.1 against
+the specification instead of trusting the draft: the error-status table (401/403/400, MUST) and
+scope-hierarchy handling (MUST). Without them the acceptance criterion "covers every MUST and
+SHOULD" would have been ticked while being false — the exact failure mode a conformance table is
+supposed to prevent.
+
+**`CHANGELOG.md` v0.2.0**, with Added / Security / Changed / Known limitations / Upgrade notes. The
+upgrade note names the F-017b behaviour change: a deployment relying on *clients* supplying a header
+also listed in `PROXY_HEADERS` now sees that value dropped. Intended setups get stricter and are
+otherwise unaffected. Recorded as **minor, not patch**, because F-015, F-016 and F-017b each change
+behaviour rather than only repairing a defect.
+
+**Deliberate decision to revisit in F-017d:** `## [Unreleased]` was renamed to `## [0.2.0] —
+2026-08-21` here rather than at tag time, so the acceptance criterion could be met. If the tag slips
+past that date, F-017d must correct it.
+
+**Verification:** all relative links in the changed files resolve; every `SPEC.md` section
+referenced from §4 exists; the §4 tables are column-consistent (5 and 6); gitleaks clean; GR-5 scan
+found no paths, IPs, e-mail addresses or hostnames. No Go file was touched, so the suite was not
+re-run — `git status` showing no `.go` entry is the evidence.
+
+**Files:** `README.md`, `REQUIREMENTS.md`, `SPEC.md` (+62, new §4), `THREAT-MODEL.md`, `CLAUDE.md`,
+`PROGRESS.md`, `docs/VERIFICATION.md`, `CHANGELOG.md`; plus `PROGRESS-ARCHIVE.md`. No code, config
+or behaviour change.

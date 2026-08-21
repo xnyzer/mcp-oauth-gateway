@@ -5,7 +5,11 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
-## [Unreleased]
+## [0.2.0] — 2026-08-21
+
+Closes the standing MCP-spec watch item and ships the fixes for two real connection problems.
+Minor rather than patch: F-015, F-016 and the `PROXY_HEADERS` change below each alter behaviour
+rather than only repairing a defect.
 
 ### Added
 
@@ -29,6 +33,14 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
 
 ### Security
 
+- **Client-supplied copies of configured `PROXY_HEADERS` are now dropped before the gateway
+  injects its own value.** Previously each configured header was appended without deleting an
+  inbound copy first — and because appended values keep their order, a client sending the same
+  header name landed *in front of* the injected one, where an upstream reading the first value
+  would find the client's instead of the configured upstream credential. Only `Authorization`
+  was special-cased. Always reachable in principle; the 2026-07-28 transport makes it routine by
+  mirroring tool parameters into client-set `Mcp-Param-*` headers, so the gap moved from
+  theoretical to something ordinary traffic walks past. `HEADER_MAPPING` was never affected.
 - **Go toolchain raised to 1.26.7** — in `go.mod` and in the digest-pinned builder image alike —
   clearing six standard-library advisories reachable from our code: `html/template`
   (GO-2026-6091, login/consent rendering), `crypto/tls` (GO-2026-6090), `net/http`
@@ -43,6 +55,35 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   single weekly PR. Version updates previously tracked only dependencies declared explicitly in
   `go.mod` — which is why both module advisories above went unnoticed until the weekly
   `govulncheck` run started failing on 2026-07-27.
+
+### Changed
+
+- **Verified against the final MCP authorization spec 2026-07-28**, closing the watch item that
+  had stood since the release candidate. The authorization surface needed no change — all six
+  authorization SEPs remain satisfied and CIMD-first with a DCR fallback still matches the spec,
+  which now formally deprecates DCR. Conformance is recorded requirement by requirement in
+  **`SPEC.md` §4**, including what belongs to the upstream and what does not apply.
+- **`mark3labs/mcp-go` 0.50 → 0.58**, which required migrating the stdio backend's logging to
+  `log/slog` (the library dropped its own logger interface). Adds `go.uber.org/zap/exp` for the
+  bridge; it pulls in no new transitive dependency.
+
+### Known limitations
+
+- **`Origin` is not validated.** The Streamable HTTP transport has required this since protocol
+  2025-03-26 and the gateway never implemented it. Mitigated but not closed: `/mcp` is
+  bearer-protected and the operator surface carries CSRF tokens plus `SameSite=Lax`, so a
+  **loopback deployment** is the exposed case. See `SPEC.md` §4.2.
+- **The stdio backend speaks protocol 2025-11-25**, because `mcp-go`'s stable line does; only its
+  v1.0.0 pre-release implements 2026-07-28. The transparent backend, the documented primary mode,
+  is unaffected.
+
+### Upgrade notes
+
+- **Check `PROXY_HEADERS` before upgrading.** If any deployment relies on *clients* supplying a
+  header whose name is also listed in `PROXY_HEADERS`, that client value is now dropped rather
+  than forwarded alongside the configured one. Intended setups — where the gateway injects an
+  upstream credential the client never sees — are unaffected and get stricter.
+- **No schema or config migration.** No env var changed name, meaning or default.
 
 ## [0.1.1] — 2026-07-09
 

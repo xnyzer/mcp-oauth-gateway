@@ -125,5 +125,6 @@ Record each row pass/fail with evidence in `private/`.
 ## 6. Close-out
 
 - [ ] All rows recorded in `private/`.
-- [ ] Re-verify against the MCP authorization spec **2026-07-28 RC** if released — otherwise this
-  stays on the F-007 release gate (REQUIREMENTS §0).
+- [ ] Re-verify against the **final MCP authorization spec 2026-07-28**: walk `SPEC.md` §4 and
+  confirm each row still holds. The watch item that used to live here closed with F-017; keeping
+  the row means the table gets re-walked on every deployment rather than trusted indefinitely.

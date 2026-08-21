@@ -3,8 +3,8 @@
 > **Status: draft (F-004).** Contract-level companion to `REQUIREMENTS.md` (intent-level source
 > of truth). This document turns the FR/GR/SR requirements into precise, RFC-conformant
 > contracts that F-005 implements and F-006 verifies. Normative keywords (**MUST**, **SHOULD**,
-> **MAY**) per RFC 2119. Baseline: MCP authorization spec **2025-11-25**; **re-verify against
-> the 2026-07-28 release candidate before any release** (watch item, see REQUIREMENTS §0).
+> **MAY**) per RFC 2119. Baseline: the **final MCP authorization spec 2026-07-28**, verified
+> requirement by requirement in **§4** (F-017).
 >
 > Each section notes the **Delta** between the fork's current behaviour and the target
 > contract, so F-005 can be implemented and reviewed section by section.
@@ -627,3 +627,70 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
   fires per accepted revocation request (RFC 7009 hides token existence, so the event does
   too).
 
+
+---
+
+## 4. MCP 2026-07-28 conformance (F-017)
+
+> Recorded requirement by requirement so the **next** revision can be walked against a table
+> instead of re-derived from prose. Client-side obligations are omitted: this gateway is an
+> authorization server and a resource server, never an MCP client.
+
+### 4.1 Authorization
+
+| Requirement | Level | Status |
+|---|---|---|
+| AS implements OAuth 2.1 for confidential **and** public clients | MUST | ✔ Ory Fosite; PKCE/S256 enforced for every client since F-012b |
+| AS supports Client ID Metadata Documents | SHOULD | ✔ `pkg/cimd` (§1.3), advertised as `client_id_metadata_document_supported` since F-015 |
+| DCR kept only for backwards compatibility | MAY | ✔ optional, disableable via `DCR_ENABLED` (§1.4); F-019 asks whether it should default to off |
+| Resource server implements PRM (RFC 9728) | MUST | ✔ §1.1 |
+| AS provides RFC 8414 **or** OIDC Discovery | MUST | ✔ both (§1.2) |
+| `iss` in the authorization response (RFC 9207) | SHOULD | ✔ F-005a |
+| An AS that emits `iss` advertises `authorization_response_iss_parameter_supported` | MUST | ✔ `true` (§1.2) — conditional on emitting `iss`, which this AS does |
+| Access tokens validated per OAuth 2.1 §5.2 | MUST | ✔ §1.11.1 |
+| Audience validated per RFC 8707 §2 | MUST | ✔ `aud` bound to the granted resource (§1.7), checked on every proxied request |
+| Invalid or expired token → HTTP 401 | MUST | ✔ §1.11.2, fail-closed (SR-3) |
+| Only tokens valid for the server's own resources accepted; no others transited | MUST | ✔ `iss` and `aud` both pinned to `EXTERNAL_URL`; the client's bearer is not forwarded unless `PROXY_FORWARD_AUTHORIZATION=true` |
+| Appropriate HTTP status codes for authorization errors (401 / 403 / 400) | MUST | ✔ 401 per §1.11.2; 400 on a malformed authorization request (Fosite); the 403 case is scope-only here and cannot arise (§4.3) |
+| Scope hierarchies accounted for when judging a token sufficient | MUST | **Not applicable by design** (§4.3) — no scopes exist to form a hierarchy |
+| `offline_access` absent from PRM `scopes_supported` | SHOULD NOT | ✔ absent (§4.3) |
+| `scope` in the `WWW-Authenticate` challenge | SHOULD | **Not applicable by design** (§4.3) |
+| 403 + `insufficient_scope` on runtime scope errors | SHOULD | **Not applicable by design** (§4.3) |
+
+### 4.2 Streamable HTTP transport
+
+The gateway proxies transparently and never parses a JSON-RPC body, so most transport
+requirements land on the upstream. These rows say which is which — the distinction is the point,
+because "the upstream owns it" is only an answer while the gateway provably forwards enough for
+the upstream to comply.
+
+| Requirement | Level | Owner | Status |
+|---|---|---|---|
+| Intermediaries forward unrecognised `Mcp-Param-{Name}` headers and otherwise ignore them | MUST | **gateway** | ✔ F-017b — `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` reach the upstream unchanged and exactly once, asserted by test |
+| A client must not be able to shadow an injected upstream credential | SR-7 | **gateway** | ✔ F-017b, §1.11.4 |
+| `Origin` validated; 403 when present and invalid | MUST | **gateway** | ✘ **not implemented — F-021.** Unchanged since protocol 2025-03-26 and missed by the F-006b audit. Mitigated, not satisfied: `/mcp` is bearer-protected and `/.auth/*` carries per-session CSRF tokens plus `SameSite=Lax` (F-012c), so a **loopback deployment** is the exposed case |
+| Authentication on all connections | SHOULD | **gateway** | ✔ the gateway's entire purpose |
+| Server implements `server/discover` | MUST | upstream | n/a — a JSON-RPC method, not a path. The reserved-namespace guard matches URL path prefixes only and cannot swallow it (asserted by test, F-017b) |
+| Header values validated against the body (`HeaderMismatch`, `-32020`) | MUST | upstream | n/a — the gateway does not parse bodies |
+| GET/DELETE on the MCP endpoint → 405 | SHOULD | upstream | n/a; with `HTTP_STREAMING_ONLY=true` the gateway answers GET-SSE with 405 itself (§1.11.3) |
+| `Mcp-Session-Id` ignored, no session minted or echoed | — | upstream | n/a — the gateway never minted one |
+| `Last-Event-ID` ignored, streams not resumable | — | upstream | n/a |
+| `X-Accel-Buffering: no` on SSE responses | SHOULD | upstream | passed through; the gateway adds no buffering of its own (`FlushInterval: -1`, §1.11.3) |
+
+### 4.3 Recorded limitations
+
+**The gateway is scope-less by design.** It issues no scopes, `scopes_supported` is `[]`, and no
+operation it guards is gated on one. The `scope` challenge and the `insufficient_scope` flow
+therefore have nothing to express: a challenge naming required scopes would name none, and every
+valid token is already sufficient for everything the gateway itself decides. Authorization *inside*
+the upstream stays the upstream's business — that is the defence-in-depth split of SR-7. Should
+per-operation authorization ever be wanted here, the two "not applicable" rows in §4.1 become work
+rather than notes.
+
+**The stdio backend speaks protocol 2025-11-25.** A `PROXY_TARGET` given as a command (§3.1) drives
+the upstream through `mark3labs/mcp-go`, whose stable line still declares
+`LATEST_PROTOCOL_VERSION = "2025-11-25"`; only the v1.0.0 pre-release implements 2026-07-28. F-017a
+deliberately took the stable line, because CODING-STANDARDS §7 pins stable versions and this is a
+public auth boundary. So that path offers neither `server/discover` nor `_meta`-carried protocol
+versions yet. **The transparent backend — the documented primary mode — is unaffected**, because it
+forwards bytes and holds no protocol opinion.
