@@ -263,8 +263,62 @@ the v0.2.0 release, and it wants a live-verified deployment to land against).
 
 ---
 
+### F-022 — Bring the remaining oversized files under the §2 limits
+
+**Status:** BACKLOG
+
+**Problem:** CODING-STANDARDS §2 sets a 300-line target and a **500-line hard limit**. F-020 brought
+`pkg/idp` under it, but nothing ever surveyed the rest of the tree: **six files are still past the
+hard limit**, the largest at 1035 lines, and twelve more sit above the 300-line target. F-017b ran
+straight into this — its new tests could not go into `pkg/proxy/proxy_test.go` without pushing a
+1035-line file to 1180, so they went into a new file and the underlying violation stayed untouched.
+
+| File | Lines | Kind |
+|---|---|---|
+| `pkg/proxy/proxy_test.go` | 1035 | tests |
+| `pkg/mcp-proxy/main.go` | 934 | production — assembly and config wiring |
+| `main_test.go` | 776 | tests |
+| `pkg/repository/sql.go` | 694 | production — SQL persistence |
+| `main.go` | 565 | production — CLI surface |
+| `pkg/auth/auth.go` | 534 | production — password/session/WebAuthn glue |
+
+Same origin as F-020's two files: they came over with the F-008 fork and grew through F-005 and
+everything after it. Size is not cosmetic in this repo — these are the files a reviewer has to hold
+in their head to reason about the auth boundary.
+
+**Idea:** Repeat the F-020 method. Cut each file along the seams its declarations already form, as a
+**pure move** with no behaviour change, so the existing tests are the proof rather than something
+that also changed.
+
+**Possible implementation:**
+- Sequence by value rather than by size: `pkg/mcp-proxy/main.go` (934) is the gateway's assembly and
+  config wiring — the file most often opened to answer "what does this deployment actually do" — and
+  is worth more than the larger test file.
+- `main.go` and `main_test.go` are one CLI surface and want a single cut.
+- `pkg/repository/sql.go` and `pkg/auth/auth.go` each carry several concerns already (persistence per
+  entity; password, session and WebAuthn glue).
+- **Carry F-020's verification lesson over:** `git diff -M` cannot see a one-into-many split as a
+  move, because rename detection works on whole-file similarity. The proof has to come from
+  invariants instead — identical declaration sets, identical body-line counts, identical test sets
+  via `go test -list`. Run the move first and any content change strictly second, or those
+  invariants stop proving anything.
+- The twelve files above the 300-line target are **out of scope** unless a cut makes them fall out
+  naturally; §2 only asks to "check whether it can be split" at 300, and the hard limit is the
+  actual violation.
+
+**Still to analyse:** whether this is one F-number with a substep per file, or several — six files
+is a good deal more than F-020's single package. Also open: whether `handleRegister` (103 lines,
+against the 50-line hard limit and the ~80-line orchestration exception in §3), which F-020
+explicitly recorded as a non-goal, belongs here or stays its own task; splitting it restructures the
+DCR endpoint rather than relocating a file, which is a different kind of change.
+
+**Dependencies:** none — but like F-020 it must not land between F-017's verification and the v0.2.0
+tag, or the release would ship code the verification never saw.
+
+---
+
 <!-- FEATURE-INDEX
-next-feature: F-022
+next-feature: F-023
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -286,4 +340,5 @@ F-018 Build the container image in CI (DONE)
 F-019 Evaluate whether DCR can be switched off (backlog)
 F-020 Split pkg/idp/idp.go along its seams (DONE)
 F-021 Validate the Origin header (DNS rebinding, SR-9) (BACKLOG)
+F-022 Bring the remaining oversized files under the §2 limits (BACKLOG)
 -->
