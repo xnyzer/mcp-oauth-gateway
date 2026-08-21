@@ -155,8 +155,17 @@ store (§1.4).
 rebinding cannot bypass them) and integrated as the fosite client source, effective at the
 authorize and token endpoints alike. An absent `token_endpoint_auth_method` is treated as
 `none` (decision: common in CIMD documents; explicit non-`none` values are rejected).
-Declared `grant_types`/`response_types` are validated against the §1.2 sets, exactly like
-DCR registrations (F-012a).
+Declared `grant_types`/`response_types` are **narrowed** to the §1.2 sets rather than rejected
+for naming something outside them: a CIMD document is published once and presented to every
+authorization server, so it declares the union of the client's abilities — Claude's names
+`urn:ietf:params:oauth:grant-type:jwt-bearer` beside `authorization_code` and `refresh_token`.
+A document that leaves *no* supported grant or response type is still rejected, since no flow
+remains to run. Narrowing is fail-closed: the resolved client only ever ends up with a subset of
+what the document asked for, and the endpoints refuse an unsupported flow if one is attempted
+anyway. **DCR stays strict** (§1.4, F-012a) — a registration request is addressed to this server
+alone, so declaring something it does not support is a client error there.
+**Done (F-023)**; before it, one unsupported grant type rejected the whole client, which made
+CIMD unusable with real clients as soon as F-015 caused them to choose it.
 
 ### 1.4 Dynamic Client Registration — `POST /.idp/register` (deprecated fallback)
 

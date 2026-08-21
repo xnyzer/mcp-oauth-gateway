@@ -110,6 +110,24 @@ geo/IP block that drops this range makes the Claude connector fail **silently** 
 flow completes in your browser, but Claude's backend can never reach the MCP endpoint. Allow
 that range inbound to your public URL.
 
+### CIMD note for datacenter deployments (also a silent failure)
+
+To identify a client by CIMD, the gateway fetches that client's metadata document **outbound**
+from your host. Claude's document
+(`https://claude.ai/oauth/mcp-oauth-client-metadata`) is reported to answer server-side fetches
+from **datacenter IP ranges** with a Cloudflare challenge (HTTP 403) instead of the document
+([anthropics/claude-ai-mcp#650](https://github.com/anthropics/claude-ai-mcp/issues/650)). Nothing
+a server-side OAuth implementation can work around — passing the check requires running
+JavaScript.
+
+The symptom is an error page reading `invalid_client … The requested OAuth 2.0 Client does not
+exist.` after you click connect. Check your gateway's log: a line `CIMD resolution failed` names
+the actual cause. If it is the fetch, set **`CIMD_ENABLED=false`** and restart — the gateway then
+stops advertising CIMD, clients fall back to Dynamic Client Registration, and the connector works
+again. That is a workaround, not a destination: the MCP spec deprecates DCR.
+
+Home and office connections are typically unaffected; this bites VPS and cloud hosts.
+
 ## Connect Claude
 
 1. In Claude (web → *Settings → Connectors*, or the mobile apps), add a **custom connector**
@@ -203,7 +221,7 @@ after the first login.
 | `AUTH_CODE_TTL` | `10m` | Authorization-code lifetime (30s–1h). |
 | `REFRESH_TOKEN_TTL` | `720h` | Refresh-token lifetime (1h–8760h); `0` disables the refresh grant. |
 | `CLOCK_SKEW` | `30s` | Token time-claim validation leeway (0–5m). |
-| `CIMD_ENABLED` | `true` | Accept CIMD client IDs (HTTPS URLs). |
+| `CIMD_ENABLED` | `true` | Accept CIMD client IDs (HTTPS URLs). Setting `false` also removes it from the AS metadata, so clients fall back to DCR — the escape hatch when the metadata document cannot be fetched (see the [CIMD note](#cimd-note-for-datacenter-deployments-also-a-silent-failure)). |
 | `CIMD_FETCH_TIMEOUT` / `CIMD_MAX_SIZE` / `CIMD_CACHE_TTL` | `5s` / `65536` / `1h` | CIMD resolution limits. |
 | `DCR_ENABLED` | `true` | Serve the deprecated RFC 7591 registration endpoint. |
 | `DCR_CLIENT_TTL` / `DCR_MAX_CLIENTS` | `720h` / `100` | DCR registration expiry / cap. |

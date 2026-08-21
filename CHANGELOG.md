@@ -5,6 +5,37 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
+## [0.2.1] — 2026-08-21
+
+Hotfix for a defect that v0.2.0 made reachable: with CIMD finally advertised, real clients chose
+it — and the gateway then refused them.
+
+### Fixed
+
+- **CIMD client documents are no longer rejected for declaring a grant type this server does not
+  offer.** A Client ID Metadata Document is published once and presented to *every* authorization
+  server, so it names the union of the client's abilities: Claude's lists
+  `urn:ietf:params:oauth:grant-type:jwt-bearer` beside `authorization_code` and `refresh_token`.
+  The gateway validated that list against its own supported set and rejected the whole client
+  (`invalid CIMD client ID: unsupported grant_type …`), so the authorization request failed with
+  `invalid_client` and the connector could not complete. Declared `grant_types` and
+  `response_types` are now **narrowed** to what this server supports; a document leaving nothing
+  supported is still rejected. Narrowing is fail-closed — a client only ever ends up with a subset
+  of what it asked for. **DCR stays strict**, because a registration request is addressed to this
+  server alone.
+
+  The gap was latent until v0.2.0: before F-015 the metadata never advertised CIMD, so clients
+  used the deprecated DCR path and never exercised this code with a real document.
+
+### Known limitations
+
+- **Fetching a CIMD document can fail from datacenter IPs.** `https://claude.ai/oauth/mcp-oauth-client-metadata`
+  is reported to answer server-side fetches from datacenter ranges with a Cloudflare challenge
+  (HTTP 403) rather than the document
+  ([anthropics/claude-ai-mcp#650](https://github.com/anthropics/claude-ai-mcp/issues/650)). Nothing
+  a server-side OAuth implementation can solve. Deployments affected by it can set
+  `CIMD_ENABLED=false` to fall back to DCR.
+
 ## [0.2.0] — 2026-08-21
 
 Closes the standing MCP-spec watch item and ships the fixes for two real connection problems.

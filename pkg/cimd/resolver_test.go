@@ -90,13 +90,12 @@ func TestResolverDocumentValidation(t *testing.T) {
 		{name: "confidential auth method", mutate: func(_ string, doc *Client) { doc.TokenEndpointAuthMethod = "client_secret_basic" }},
 		{name: "http redirect for non-loopback", mutate: func(_ string, doc *Client) { doc.RedirectURIs = []string{"http://app.example.com/cb"} }},
 		{name: "javascript redirect scheme", mutate: func(_ string, doc *Client) { doc.RedirectURIs = []string{"javascript:alert(1)"} }},
-		// The §1.2 whitelist applies to CIMD documents like it does to DCR
-		// registrations — attacker-declared flows must not reach the client.
-		{name: "unsupported grant_type implicit", mutate: func(_ string, doc *Client) { doc.GrantTypes = []string{"implicit"} }},
-		{name: "unsupported grant_type client_credentials", mutate: func(_ string, doc *Client) {
-			doc.GrantTypes = []string{"authorization_code", "client_credentials"}
-		}},
-		{name: "unsupported response_type token", mutate: func(_ string, doc *Client) { doc.ResponseTypes = []string{"token"} }},
+		// A document that leaves *nothing* this server supports is still
+		// rejected: there is no flow left to run. Documents that merely also
+		// name something unsupported are narrowed instead — see
+		// TestResolverNarrowsUnsupportedFlows.
+		{name: "no supported grant_type", mutate: func(_ string, doc *Client) { doc.GrantTypes = []string{"implicit"} }},
+		{name: "no supported response_type", mutate: func(_ string, doc *Client) { doc.ResponseTypes = []string{"token"} }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -207,4 +206,62 @@ func TestResolverCacheBounded(t *testing.T) {
 			cacheEntry{expiresAt: r.now().Add(time.Hour)})
 	}
 	require.LessOrEqual(t, len(r.cache), maxCacheEntries, "cache must stay bounded")
+}
+
+// TestResolverNarrowsUnsupportedFlows covers the case that broke the live
+// deployment: Claude's published document declares
+// urn:ietf:params:oauth:grant-type:jwt-bearer next to authorization_code and
+// refresh_token, and the gateway rejected the whole client over it with
+// "invalid CIMD client ID: unsupported grant_type". A CIMD document is
+// published once and shown to every authorization server, so it names the
+// union of the client's abilities; refusing it for naming a grant this server
+// does not offer makes CIMD unusable with real clients.
+//
+// Narrowing must stay fail-closed — the resolved client may only ever end up
+// with a subset of what the document asked for.
+func TestResolverNarrowsUnsupportedFlows(t *testing.T) {
+	cases := []struct {
+		name              string
+		grantTypes        []string
+		responseTypes     []string
+		wantGrantTypes    []string
+		wantResponseTypes []string
+	}{
+		{
+			name:              "claude's real document",
+			grantTypes:        []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
+			responseTypes:     []string{"code"},
+			wantGrantTypes:    []string{"authorization_code", "refresh_token"},
+			wantResponseTypes: []string{"code"},
+		},
+		{
+			name:              "client_credentials dropped, order preserved",
+			grantTypes:        []string{"client_credentials", "authorization_code"},
+			responseTypes:     []string{"code"},
+			wantGrantTypes:    []string{"authorization_code"},
+			wantResponseTypes: []string{"code"},
+		},
+		{
+			name:              "implicit response type dropped",
+			grantTypes:        []string{"authorization_code"},
+			responseTypes:     []string{"token", "code"},
+			wantGrantTypes:    []string{"authorization_code"},
+			wantResponseTypes: []string{"code"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _ := serveDocument(t, func(_ string, doc *Client) {
+				doc.GrantTypes = tt.grantTypes
+				doc.ResponseTypes = tt.responseTypes
+			})
+			resolver := newTestResolver(t, server, Config{})
+
+			client, err := resolver.Resolve(t.Context(), server.URL)
+			require.NoError(t, err, "the client must resolve, not be rejected")
+			assert.Equal(t, tt.wantGrantTypes, client.GrantTypes)
+			assert.Equal(t, tt.wantResponseTypes, client.ResponseTypes)
+		})
+	}
 }

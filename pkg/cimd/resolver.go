@@ -242,20 +242,44 @@ func (r *Resolver) validateDocument(clientID string, client *Client) error {
 	if len(client.GrantTypes) == 0 {
 		client.GrantTypes = []string{"authorization_code"}
 	}
-	for _, grantType := range client.GrantTypes {
-		if !IsSupportedGrantType(grantType) {
-			return fmt.Errorf("%w: unsupported grant_type %q", ErrInvalidClientID, grantType)
-		}
-	}
 	if len(client.ResponseTypes) == 0 {
 		client.ResponseTypes = []string{"code"}
 	}
-	for _, responseType := range client.ResponseTypes {
-		if !IsSupportedResponseType(responseType) {
-			return fmt.Errorf("%w: unsupported response_type %q", ErrInvalidClientID, responseType)
-		}
+	// Narrow to what this server offers instead of rejecting the client.
+	//
+	// A CIMD document is published once and presented to *every* authorization
+	// server, so it necessarily declares the union of what the client can do —
+	// Claude's, for instance, lists `urn:ietf:params:oauth:grant-type:jwt-bearer`
+	// next to authorization_code and refresh_token. Refusing the client because
+	// that union names a grant this server does not offer makes CIMD unusable
+	// with any real client, which is exactly what happened in the field once
+	// F-015 made clients pick CIMD at all.
+	//
+	// Narrowing is strictly fail-closed: the client ends up with a subset of
+	// what it asked for, never more, and fosite refuses an unsupported grant or
+	// response type at the endpoints if one is ever attempted. DCR stays strict
+	// (pkg/idp) — a registration request is addressed to this server alone, so
+	// declaring something it does not support is a client error there.
+	client.GrantTypes = intersect(client.GrantTypes, IsSupportedGrantType)
+	if len(client.GrantTypes) == 0 {
+		return fmt.Errorf("%w: no supported grant_type", ErrInvalidClientID)
+	}
+	client.ResponseTypes = intersect(client.ResponseTypes, IsSupportedResponseType)
+	if len(client.ResponseTypes) == 0 {
+		return fmt.Errorf("%w: no supported response_type", ErrInvalidClientID)
 	}
 	return nil
+}
+
+// intersect keeps the values this server supports, preserving their order.
+func intersect(values []string, isSupported func(string) bool) []string {
+	kept := make([]string, 0, len(values))
+	for _, value := range values {
+		if isSupported(value) {
+			kept = append(kept, value)
+		}
+	}
+	return kept
 }
 
 // supportedGrantTypes / supportedResponseTypes are the SPEC §1.2 metadata
