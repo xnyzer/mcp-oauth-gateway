@@ -1705,3 +1705,54 @@ rather than preventing a break.
 
 **Files:** `.github/workflows/ci.yml`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No product-code
 change, no new dependencies, no new config.
+
+## F-020a — Split `idp.go` — DONE 2026-08-21
+
+First substep of F-020. `pkg/idp/idp.go` went from **1072 to 216 lines**, distributed over eight
+files that follow the clusters the declarations already formed. Code only — no test file was
+touched, which is what makes the green suite mean anything.
+
+| File | Contents | Lines |
+|---|---|---|
+| `idp.go` | `IDPRouter`, `Config`, `NewIDPRouter`, `customCompose`, `withRateLimit`, endpoint constants, `SetupRoutes` | 216 |
+| `register.go` | DCR request/response types, `validateRegistration`, `handleRegister` | 182 |
+| `consent.go` | `consentTemplate`/`consentTemplateData`, both consent handlers | 165 |
+| `authorize.go` | `handleAuth`, `issRedirectWriter`, `errInvalidTarget`, `validateResource`, `ar_id` session helpers | 165 |
+| `metadata.go` | `authorizationServerResponse` + handler, `jwks` | 120 |
+| `token.go` | `handleToken`, `handleIntrospect`, `handleRevoke` | 108 |
+| `client_source.go` | `CIMDResolver`, `clientSource`, the redirect-URI context stash, `GetClient`, `lookupClient` | 97 |
+| `session.go` | `NewJWTSession`, `Session` | 96 |
+
+`loopback.go` (111 lines, from F-016) was already separate and stayed as it is. Every file is now
+under the 300-line target, so the 500-line hard limit is comfortably met.
+
+**How it was done:** a script sliced the file at declaration boundaries, walking backwards over
+each declaration's doc comment so no comment was orphaned, then `goimports` reduced each new
+file's copy of the original import block to what it actually uses.
+
+**One acceptance criterion could not be met, and it was a bad criterion.** The plan asked for
+`git diff -M` to report moves rather than rewrites. Git cannot do that here: rename and copy
+detection works on whole-file similarity, and a file that splits into eight while the source
+survives fits no such pair. Even `--find-copies-harder` reports seven plain `create mode` entries.
+Two stronger checks replaced it:
+
+- **Declaration sets are byte-identical:** 47 top-level declarations before, 47 after, `diff` on
+  the sorted lists empty — nothing lost, nothing duplicated.
+- **Body content is byte-identical:** 954 non-blank lines below the import block before, 954
+  after, sorted `diff` empty — not one character of content changed, only its file.
+- The net **+77** lines reconcile exactly: **+87** for seven new package/import headers, **−10**
+  because `goimports` dropped imports that `idp.go` no longer uses.
+
+**Verification:** no `_test.go` in `git status`; `go test -race ./...` rc=0 across 11 packages with
+the tests unchanged; `gofmt -l` empty; `go vet` clean. Import grouping still follows §4 (stdlib,
+blank line, then third-party and local alphabetically) — `goimports` preserved the repo's style.
+
+**Left for F-020c, deliberately not fixed here:** ten exported identifiers carry no doc comment
+(`IDPRouter`, `NewIDPRouter`, `SetupRoutes`, `GetClient`, `WriteHeader`, `NewJWTSession`,
+`Session`, `GetJWTClaims`, `GetJWTHeader`, `Clone`), a §11 violation. Verified as **pre-existing**:
+the same ten were undocumented before the split. Adding them here would have added content to a
+move-only substep and destroyed the byte-identical proof above.
+
+**Files:** `pkg/idp/idp.go` (shrunk); new `authorize.go`, `client_source.go`, `consent.go`,
+`metadata.go`, `register.go`, `session.go`, `token.go`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.
+No behaviour, signature, dependency or config change.
