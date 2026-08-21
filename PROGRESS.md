@@ -219,8 +219,52 @@ A decision task — "keep it as it is" is a valid outcome.
 
 ---
 
+### F-021 — Validate the `Origin` header (DNS rebinding, SR-9)
+
+**Status:** BACKLOG
+
+**Problem:** The Streamable HTTP transport has required servers to validate `Origin` and answer
+`403 Forbidden` when a present value is invalid since protocol version **2025-03-26** — this is not
+new in 2026-07-28, it was simply never noticed, including by the F-006b audit. The gateway reads
+`Origin` nowhere. It also leaves half of **SR-9** ("Tight CORS/headers") unfulfilled: SPEC §0
+implements only the `Cache-Control: no-store` part, and nothing tracks the other half as open.
+
+**Idea:** Validate `Origin` **only when the client actually sends it**, against the origin derived
+from `EXTERNAL_URL`, and answer 403 otherwise — plus an env option to switch the check off, so an
+operator whose deployment it breaks can rescue it instead of having to downgrade.
+
+**Possible implementation:**
+- **Act on a present header only.** Server-side MCP clients send no `Origin` at all: Claude connects
+  from Anthropic's cloud, not from the user's browser, so the common deployment is untouched by
+  design rather than by luck. A *missing* `Origin` must stay allowed — treating absence as a
+  violation would reject every real client and turn a hardening measure into an outage.
+- Natural allow-list: the origin of `EXTERNAL_URL`. The gateway emits no CORS headers at all, so no
+  legitimate cross-origin browser client works today anyway — a strict default costs nothing that
+  currently functions.
+- **Off-switch via env, defaulting to enabled** (SR-3 stays fail-closed; disabling is an explicit
+  operator decision, and the disabled state belongs in the startup log so it cannot be forgotten).
+- Severity is **defence-in-depth, not an open hole** — the entry should not be read as urgent.
+  `/mcp` is bearer-protected, so a rebinding attacker without a token already gets 401; `/.auth/*`
+  is the browser surface where rebinding would actually bite, and it has carried per-session CSRF
+  tokens and `SameSite=Lax` since F-012c. The case this genuinely improves is a **loopback
+  deployment**, the classic rebinding target — and F-016 showed those are real here.
+- **Sequenced after the release on purpose.** This is exactly the class of change that silently
+  broke the Claude connector twice (F-015, F-016). Landing it once v0.2.0 is released *and* live-
+  verified gives a known-good state to measure against, instead of two variables at once.
+
+**Still to analyse:** whether the env option should be a boolean off-switch or an
+`ALLOWED_ORIGINS` list that widens the accepted set. A list is the more useful shape if
+browser-based MCP clients ever matter; an off-switch is the simpler rescue. Also open: whether the
+check belongs on every route or only on `/mcp` and `/.auth/*` — the `.well-known` documents are
+public by definition and a 403 there would be surprising.
+
+**Dependencies:** F-017 (F-017c records the gap in its conformance table; this entry must not delay
+the v0.2.0 release, and it wants a live-verified deployment to land against).
+
+---
+
 <!-- FEATURE-INDEX
-next-feature: F-021
+next-feature: F-022
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -241,4 +285,5 @@ F-017 Re-verify against the final MCP 2026-07-28 authorization spec
 F-018 Build the container image in CI (DONE)
 F-019 Evaluate whether DCR can be switched off (backlog)
 F-020 Split pkg/idp/idp.go along its seams (DONE)
+F-021 Validate the Origin header (DNS rebinding, SR-9) (BACKLOG)
 -->
