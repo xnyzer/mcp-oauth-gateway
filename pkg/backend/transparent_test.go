@@ -324,3 +324,57 @@ func TestTransparentBackendRun(t *testing.T) {
 		t.Error("Test timed out")
 	}
 }
+
+// TestTransparentBackendForwardsMCPTransportHeaders records what MCP
+// 2026-07-28 requires of an intermediary. The revision moved routing
+// information out of the JSON-RPC body and into headers — MCP-Protocol-Version,
+// Mcp-Method, Mcp-Name — and obliges servers that do not recognise an
+// Mcp-Param-{Name} header to forward it and otherwise ignore it. Servers then
+// reject a request whose headers disagree with its body (HeaderMismatch,
+// -32020), so a proxy that dropped or rewrote one of these would not degrade
+// gracefully: it would make every affected call fail at the upstream.
+//
+// httputil.ReverseProxy forwards them today because it clones the inbound
+// request and this backend only rewrites X-Forwarded-*. That is a property of
+// the current implementation rather than a guarantee, which is why it is
+// asserted here.
+func TestTransparentBackendForwardsMCPTransportHeaders(t *testing.T) {
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		c.JSON(http.StatusOK, c.Request.Header)
+	})
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+	u, err := url.Parse(ts.URL)
+	require.NoError(t, err)
+
+	be, err := NewTransparentBackend(zap.NewNop(), u, []string{})
+	require.NoError(t, err)
+	handler, err := be.Run(context.Background())
+	require.NoError(t, err)
+
+	sent := map[string]string{
+		"Mcp-Protocol-Version": "2026-07-28",
+		"Mcp-Method":           "tools/call",
+		"Mcp-Name":             "get_weather",
+		"Mcp-Param-Region":     "us-west1",
+		// The spec's Base64 sentinel for values that are not header-safe.
+		// It carries '=' and '?', so it also proves nothing re-encodes the
+		// value on the way through.
+		"Mcp-Param-Greeting": "=?base64?SGVsbG8sIOS4lueVjA==?=",
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call"}`))
+	for name, value := range sent {
+		req.Header.Set(name, value)
+	}
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var received http.Header
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &received))
+	for name, value := range sent {
+		require.Equal(t, []string{value}, received.Values(name), "header %s must arrive unchanged and exactly once", name)
+	}
+}

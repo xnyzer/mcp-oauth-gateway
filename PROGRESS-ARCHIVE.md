@@ -1925,3 +1925,72 @@ branch — worth confirming after the push rather than assuming.
 **Files:** `pkg/backend/proxy.go`, `pkg/backend/proxy_test.go`, `go.mod`, `go.sum`; docs
 `PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No behaviour, config, endpoint or signature change on the
 authorization surface.
+
+## F-017b — Transport conformance: prove header pass-through, harden credential injection — DONE 2026-08-21
+
+Second substep of F-017. Two halves: pin the pass-through confirmations down with tests, and close
+the one real defect the final-spec re-check turned up.
+
+**The defect (finding 3 of the re-check).** `pkg/proxy/proxy.go` attached each configured
+`PROXY_HEADERS` entry with `Header.Add` and, unlike the `HEADER_MAPPING` loop two lines above it,
+never deleted an inbound copy first. Appended values keep their order, so a client sending the same
+header name landed **in front of** the injected one — and an upstream reading `Header.Get`, which
+returns the first value, would read the client's instead of the configured upstream credential
+(FR-6, SR-7). Only `Authorization` was special-cased.
+
+The fix is one line, `c.Request.Header.Del(key)` before the add. It replaces the
+`strings.EqualFold(key, "Authorization")` branch rather than joining it, because the generic delete
+subsumes that case entirely — so closing the gap made the function **shorter**, not longer.
+
+**Why this surfaced now, when the code is unchanged since the fork.** The gap was always reachable
+in principle — HTTP clients have always been able to set arbitrary headers. What changed is that
+MCP 2026-07-28 makes client-set headers *routine*: SEP-2243 mirrors annotated tool parameters into
+`Mcp-Param-{Name}` headers and obliges intermediaries to forward the ones they do not recognise.
+A latent gap became one that normal, spec-conformant traffic walks past.
+
+**Tests, and why they assert what they do:**
+
+| Test | File | Guards |
+|---|---|---|
+| `TestProxyRouter_ProxyHeadersStripClientHeaders` | `pkg/proxy/transport_test.go` | four cases: single-value shadowing, multi-value replacement, `Authorization` via `PROXY_HEADERS`, and **unconfigured headers passing through untouched** |
+| `TestProxyRouter_ProxiesServerDiscover` | `pkg/proxy/transport_test.go` | the new `server/discover` RPC reaches the upstream with body and `Mcp-Method` intact |
+| `TestTransparentBackendForwardsMCPTransportHeaders` | `pkg/backend/transparent_test.go` | `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-*` arrive unchanged and exactly once, Base64-sentinel value included |
+
+The security assertions compare the **full value slice**, never `Header.Get`. `Get` returns the
+first value and would have reported `"upstream-secret"` just the same while the attacker's copy sat
+behind it — it cannot tell a fixed gateway from a broken one. The fourth case exists so the strip
+stays limited to configured names: an over-broad delete would eat the very transport headers the
+gateway is required to forward.
+
+**Both verified non-vacuous**, which is what makes them worth having:
+- Reverting the fix turned the security test red with `actual: ["attacker-supplied",
+  "upstream-secret"]` — the client's value first, exactly the ordering the vulnerability depends on.
+- Deleting `Mcp-Method` inside the transparent backend's `Rewrite` turned the pass-through test red
+  with `actual: []string(nil)`.
+
+**No production change in `pkg/backend/transparent.go`.** Nothing was broken there: `ReverseProxy`
+clones the inbound request and this backend rewrites only `X-Forwarded-*`. That is a property of
+the current implementation rather than a guarantee, so the test records it — the confirmation the
+intake asked for, in a form that cannot silently expire.
+
+**`server/discover` cannot collide with the reserved-namespace guard**, confirmed by reading and now
+by test: the guard matches URL *path* prefixes (`/.idp/`, `/.auth/`, `/.well-known/`) while
+`server/discover` is a JSON-RPC method in the request *body*. The test exists against a future guard
+rewritten in terms of method names.
+
+**Deviation from the plan, found during review.** The plan put the new tests in
+`pkg/proxy/proxy_test.go`. That file was already **1035 lines**, twice the 500-line hard limit in
+CODING-STANDARDS §2, and the addition would have pushed it to 1180 — making a pre-existing violation
+worse. The tests went into a new `pkg/proxy/transport_test.go` (163 lines) instead, and
+`proxy_test.go` is left **byte-identical to HEAD**. Splitting the 1035-line file is real work of the
+F-020 kind and is **reported as open**, not silently carried: it needs its own F-number.
+
+**Files:** `pkg/proxy/proxy.go` (one line + comment), new `pkg/proxy/transport_test.go`,
+`pkg/backend/transparent_test.go` (+54), `SPEC.md` (§1.11.4 now states the strip for both
+mechanisms, plus an F-017b delta line); docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No config,
+endpoint or signature change.
+
+**Verification:** `gofmt -l` empty; `go vet` clean; `go test -race ./...` green across 11 packages;
+`golangci-lint v2.12.2` 0 issues; gitleaks no leaks. **Behaviour change worth an upgrade note:** a
+deployment that (unwisely) relied on clients supplying a header also listed in `PROXY_HEADERS` will
+see that client value dropped from now on.

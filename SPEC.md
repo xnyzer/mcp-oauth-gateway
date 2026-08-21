@@ -341,7 +341,11 @@ FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
 4. **Credential injection (FR-6):** configured upstream credential attached
    (`Authorization: Bearer <PROXY_BEARER_TOKEN>` / custom headers / none). The client's
    token is **not** forwarded unless `PROXY_FORWARD_AUTHORIZATION=true`. The upstream
-   credential MUST never appear in responses or logs (SR-8).
+   credential MUST never appear in responses or logs (SR-8). Every configured
+   `PROXY_HEADERS` name is stripped from the inbound request before the configured value
+   is attached — the same anti-spoofing rule as §1.11.5. Without it a client could send
+   the same header name and, because appended values keep their order, sit in front of the
+   injected one where an upstream reading only the first value would find it.
 5. **Identity headers:** configured `HEADER_MAPPING` maps token claims (base
    `HEADER_MAPPING_BASE`, default `/userinfo`) to request headers; inbound copies of those
    headers are stripped first (anti-spoofing).
@@ -353,7 +357,9 @@ against the full JWKS key set selected by `kid` (RS256/ES256, unknown `kid` or a
 → 401) is **done (F-005d)**. Token validation additionally requires `exp` to be present, and
 request-body buffering for upstream 307/308 replay is capped at 4 MiB — a larger body streams
 through unbuffered and a redirect for it passes to the client instead of being followed
-(F-012a, hardening the §1.11.3 no-buffering rule).
+(F-012a, hardening the §1.11.3 no-buffering rule). The §1.11.4 `PROXY_HEADERS` strip is
+**done (F-017b)**; it closed a gap that MCP 2026-07-28 made reachable in normal operation by
+mirroring tool parameters into client-set `Mcp-Param-*` headers.
 
 ### 1.12 User authentication & consent — `/.auth/*`
 

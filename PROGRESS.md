@@ -62,6 +62,7 @@ number, is the path.
 | F-020c | Section comments and final standards pass → **ten doc comments** on the exported identifiers that had none (§11), written to explain why rather than restate the signature, plus **ten section rules** in the three files that still group several concerns (`authorize.go`, `idp.go`, `helpers_test.go`). The expectation that section comments would be redundant proved wrong: `authorize.go` bundles four concerns in 165 lines, and §2 is about structure, not length. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-020 | **Split `pkg/idp/idp.go` along its seams — complete** (a/b/c): two oversized files (1072 + 1684 lines, both past the 500-line hard limit) became twenty, the largest 298, each with one concern. Run as a pure move first and content second, which is what made the verification meaningful — git cannot see a one-into-eight split as a move, so the proof came from invariants: 47/47 declarations, 954/954 and 1399/1399 body lines, 34/34 tests. Sequenced before F-017 so the spec re-check sees the split code. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-017a | Migrate `mcp-go` to `log/slog` and unblock Dependabot PR #13 → **the red dependency PR was a real API migration, not a Dependabot error**: mcp-go dropped its own logger interface for `log/slog` between 0.50 and 0.58, and the Streamable-HTTP logger option changed type too (3 compiler errors, 2 call sites, all in the stdio backend). `zapLogger` deleted; one-line bridge `slog.New(zapslog.NewHandler(logger.Core()))` wraps the *existing* core so stdio output stays in the gateway's stream. Took Dependabot's `go.mod`/`go.sum` verbatim (45 updates) + `go.uber.org/zap/exp` v0.3.0, which adds **no** transitive dependency — all six of its requirements were already in the build. New `TestNewSlogLoggerWritesToZap`, because the two existing tests traverse both call sites but with `zap.NewNop()` and would stay green against a discarding core; verified non-vacuous. **Chose 0.58.x over v1.0.0-beta.1** (§7 pins stable versions), so the stdio path speaks 2025-11-25 until v1.x is final — documented in F-017c. All five CI jobs replicated locally, incl. `image-build`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-017b | Transport conformance → **closed a real spoofing path on the credential injection**: `PROXY_HEADERS` entries were attached with `Header.Add` and, unlike the `HEADER_MAPPING` loop two lines above, no inbound copy was deleted first — so a client-supplied header of the same name landed *in front of* the injected one, where an upstream reading `Header.Get` finds it instead of the credential (FR-6/SR-7). Always reachable in principle; MCP 2026-07-28 made it routine by mirroring tool parameters into client-set `Mcp-Param-*` headers (SEP-2243). Fix is one line that *replaces* the `Authorization` special case, so the function got shorter. Three tests: header pass-through (incl. Base64 sentinel), `server/discover` not swallowed by the path-prefix guard, and the negative asserted on the **full value slice** — `Header.Get` would have passed while the attacker's copy sat behind. Both **verified non-vacuous** (reverting → `["attacker-supplied", "upstream-secret"]`). `transparent.go` needed no change. Tests went to a new `transport_test.go`, not the 1035-line `proxy_test.go` (§2 hard limit — split reported as open). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
@@ -129,27 +130,6 @@ stable versions; a pre-release on a public auth boundary is not worth the stdio 
 currency); **`go.uber.org/zap/exp`** for the zap→slog bridge over a hand-written handler (MIT, by
 the zap authors, no new transitive dependencies, and §1 prefers an established pattern);
 **v0.2.0** over v0.1.2 as the release version.
-
-#### F-017b — Transport conformance: prove header pass-through, harden credential injection
-
-**What:** Two halves. First, pin the confirmations down with tests: the transparent backend hands
-`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and an arbitrary `Mcp-Param-*` through unchanged,
-and a `server/discover` POST reaches the upstream instead of being swallowed by the reserved-prefix
-guard. Second, close finding 3: delete every configured `PROXY_HEADERS` name from the inbound
-request before adding the configured value, exactly as the `HEADER_MAPPING` loop directly above
-already does — so a client cannot shadow an injected upstream credential.
-
-**Files:** `pkg/proxy/proxy.go`, `pkg/backend/transparent_test.go`, `pkg/proxy/proxy_test.go`,
-`SPEC.md` (§1.11.4 currently promises the anti-spoofing strip for `HEADER_MAPPING` only)
-
-**Acceptance:**
-- [ ] Header pass-through test, verified non-vacuous by breaking the forwarding once and seeing it
-      go red
-- [ ] `server/discover` POST is proxied, not 404'd by the reserved-prefix guard
-- [ ] Negative test: a client-supplied `X-Api-Key` does **not** reach the upstream while the
-      configured value does — asserted on the exact value list, not just presence
-- [ ] `SPEC.md` §1.11.4 states the strip for both mechanisms
-- [ ] Suite + `-race` + `golangci-lint` green
 
 #### F-017c — Documentation sweep and conformance record
 

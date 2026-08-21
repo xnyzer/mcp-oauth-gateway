@@ -179,9 +179,15 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 		c.Request.Header.Del(headerName)
 	}
 	for key, values := range p.cfg.ProxyHeaders {
-		if strings.EqualFold(key, "Authorization") {
-			c.Request.Header.Del("Authorization")
-		}
+		// Drop any inbound copy before injecting, exactly as the header
+		// mapping above does. The client controls its own request headers —
+		// the MCP 2026-07-28 transport even mirrors tool parameters into
+		// Mcp-Param-* headers and obliges intermediaries to forward what they
+		// do not recognise — so Add alone would leave the client's value
+		// ahead of the configured one, and an upstream reading Header.Get
+		// would see the client's instead of the injected credential (FR-6,
+		// SR-7). Del also covers the Authorization case.
+		c.Request.Header.Del(key)
 		for _, value := range values {
 			c.Request.Header.Add(key, value)
 		}
