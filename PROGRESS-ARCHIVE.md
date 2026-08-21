@@ -1858,3 +1858,70 @@ verification pass see the split code rather than the pre-split code.
 **Still open, deliberately:** `handleRegister` is 103 lines, over the 50-line hard limit and over
 the ~80-line orchestration exception. Splitting it restructures the DCR endpoint instead of
 relocating a file, so it never belonged in a move task and still needs its own F-number.
+
+## F-017a — Migrate `mcp-go` to `log/slog` and unblock Dependabot PR #13 — DONE 2026-08-21
+
+First substep of F-017. Dependabot PR #13 ("Bump the go-modules group with 45 updates") was red on
+`build-test` and `lint`, and the cause was not a Dependabot error but a real API migration:
+`mark3labs/mcp-go` dropped its own `Infof`/`Errorf` logger interface in favour of `log/slog`
+between 0.50 and 0.58, and the Streamable-HTTP logger option changed **type** as well as parameter.
+Three compiler errors across two call sites, all in `pkg/backend/proxy.go` — the stdio backend is
+the only place the gateway drives mcp-go as a library.
+
+**What was done:**
+
+| Before | After |
+|---|---|
+| `transport.WithCommandLogger(&zapLogger{p.logger})` | `transport.WithCommandLogger(newSlogLogger(p.logger))` |
+| `server.WithLogger(&zapLogger{logger})` (a `ServerOption`, rejected by `NewStreamableHTTPServer`) | `server.WithStreamableHTTPLogger(newSlogLogger(logger))` (a `StreamableHTTPOption`) |
+| `zapLogger` adapter type + two methods | deleted — dead code (§1) |
+
+The bridge is a single line over a vetted library: `slog.New(zapslog.NewHandler(logger.Core()))`.
+Wrapping the **existing** core matters — it keeps the stdio backend's output in the same structured
+stream as the rest of the gateway instead of opening a second sink.
+
+**Dependencies:** `go.mod`/`go.sum` were taken from the Dependabot branch verbatim rather than
+re-derived, so the local state matches what CI would have tested. Direct bumps:
+`mcp-go` 0.50.0 → **0.58.0**, `testify` 1.11.1 → 1.12.1, `bbolt` 1.4.3 → 1.5.0, `gorm` 1.31.1 →
+1.31.2, plus 41 indirect. Added `go.uber.org/zap/exp` **v0.3.0** (MIT, by the zap authors).
+`go mod tidy` is a no-op afterwards.
+
+**Decision: `go.uber.org/zap/exp` over a hand-written `slog.Handler`.** CODING-STANDARDS §1 prefers
+an established pattern over an invented one, and the cost argument that would normally favour
+hand-rolling does not apply here: every module `zap/exp` requires (`zap`, `multierr`, `testify`,
+`go-spew`, `go-difflib`, `yaml.v3`) is **already in the build at an equal or higher version**, so it
+adds no transitive dependency at all. A hand-written handler would have meant owning
+`Handle`/`WithAttrs`/`WithGroup` semantics for no gain.
+
+**Decision: mcp-go 0.58.x over v1.0.0-beta.1.** v1.0.0-beta.1 already implements protocol
+**2026-07-28** (`server/discover`, `_meta` protocol version, header validation) while 0.58.0 is
+still `LATEST_PROTOCOL_VERSION = "2025-11-25"`. Taking the beta would have made the stdio path
+spec-current, but CODING-STANDARDS §7 pins stable versions and this is a public auth boundary.
+**Consequence, to be documented in F-017c:** the stdio backend speaks 2025-11-25 until mcp-go v1.x
+is final. The transparent backend — the documented primary mode — is unaffected, because it
+proxies transparently and holds no protocol opinion.
+
+**Tests:** one added, `TestNewSlogLoggerWritesToZap`. The existing `TestSetupProxy` and
+`TestProxyBackendRun` do traverse both migrated call sites (the latter against a real subprocess),
+but both pass `zap.NewNop()` — a green run there proves type compatibility and nothing more, and
+would stay green if the bridge were wired to a discarding core. The new test asserts through
+`zaptest/observer` that the record, its level and its slog attributes actually reach the zap core.
+**Verified non-vacuous:** repointing the bridge at `zapcore.NewNopCore()` turned it red
+(`expected: 1, actual: 0`), and restoring it turned it green again.
+
+**Verification:** `gofmt -l` empty; `go vet` clean; `go test -race ./...` green across 11 packages,
+0 FAIL; `govulncheck` **0 reachable** (one module-level finding remains, `GO-2026-5932`
+`x/crypto/openpgp` — unmaintained, not called, pre-existing); `go-licenses v2.0.1 check
+--disallowed_types=forbidden,restricted` rc=0; `golangci-lint v2.12.2` **0 issues**;
+`actionlint v1.7.12` rc=0; gitleaks over the working tree: no leaks. All **five** CI jobs were
+replicated locally rather than deferred to CI — including `image-build`, which built the amd64
+image, ran `--version`, and polled the container's own `HEALTHCHECK` to `healthy` (the F-018 job,
+exercised here against a 45-module bump for exactly the reason it was written).
+
+**PR #13 stays open and red on GitHub.** What landed here is the "equivalent commit" the acceptance
+criterion allows; Dependabot normally closes the PR itself once the versions reach the default
+branch — worth confirming after the push rather than assuming.
+
+**Files:** `pkg/backend/proxy.go`, `pkg/backend/proxy_test.go`, `go.mod`, `go.sum`; docs
+`PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No behaviour, config, endpoint or signature change on the
+authorization surface.

@@ -61,6 +61,7 @@ number, is the path.
 | F-020b | Split `idp_test.go` to match → **1684 lines across ten files**, each beside the code it exercises, shared helpers lifted into `helpers_test.go`. Ten rather than the planned nine: `token_test.go` would have hit ~439 lines with `TestPrivateClient`, so the RFC 7009 revocation tests became their own file. `stubResolver` went to the helpers because `loopback_test.go` uses it too. **No production file touched**; verified by test-set equality (34/34 via `go test -list`) and identical bodies (1399/1399 lines) — a lost test would otherwise leave the suite green and unnoticed. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-020c | Section comments and final standards pass → **ten doc comments** on the exported identifiers that had none (§11), written to explain why rather than restate the signature, plus **ten section rules** in the three files that still group several concerns (`authorize.go`, `idp.go`, `helpers_test.go`). The expectation that section comments would be redundant proved wrong: `authorize.go` bundles four concerns in 165 lines, and §2 is about structure, not length. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-020 | **Split `pkg/idp/idp.go` along its seams — complete** (a/b/c): two oversized files (1072 + 1684 lines, both past the 500-line hard limit) became twenty, the largest 298, each with one concern. Run as a pure move first and content second, which is what made the verification meaningful — git cannot see a one-into-eight split as a move, so the proof came from invariants: 47/47 declarations, 954/954 and 1399/1399 body lines, 34/34 tests. Sequenced before F-017 so the spec re-check sees the split code. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-017a | Migrate `mcp-go` to `log/slog` and unblock Dependabot PR #13 → **the red dependency PR was a real API migration, not a Dependabot error**: mcp-go dropped its own logger interface for `log/slog` between 0.50 and 0.58, and the Streamable-HTTP logger option changed type too (3 compiler errors, 2 call sites, all in the stdio backend). `zapLogger` deleted; one-line bridge `slog.New(zapslog.NewHandler(logger.Core()))` wraps the *existing* core so stdio output stays in the gateway's stream. Took Dependabot's `go.mod`/`go.sum` verbatim (45 updates) + `go.uber.org/zap/exp` v0.3.0, which adds **no** transitive dependency — all six of its requirements were already in the build. New `TestNewSlogLoggerWritesToZap`, because the two existing tests traverse both call sites but with `zap.NewNop()` and would stay green against a discarding core; verified non-vacuous. **Chose 0.58.x over v1.0.0-beta.1** (§7 pins stable versions), so the stdio path speaks 2025-11-25 until v1.x is final — documented in F-017c. All five CI jobs replicated locally, incl. `image-build`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
@@ -128,30 +129,6 @@ stable versions; a pre-release on a public auth boundary is not worth the stdio 
 currency); **`go.uber.org/zap/exp`** for the zap→slog bridge over a hand-written handler (MIT, by
 the zap authors, no new transitive dependencies, and §1 prefers an established pattern);
 **v0.2.0** over v0.1.2 as the release version.
-
-#### F-017a — Migrate `mcp-go` to `log/slog` and unblock Dependabot PR #13
-
-**What:** PR #13 ("Bump the go-modules group with 45 updates") is red on `build-test` and `lint`,
-and not because Dependabot erred: `mcp-go` moved from its own logger interface to `log/slog`
-between 0.50 and 0.58, and the Streamable-HTTP logger option changed type with it. Two call sites
-break — `proxy.go:65` (`*zapLogger` no longer satisfies `*slog.Logger`) and `proxy.go:160`
-(`server.WithLogger` is a `ServerOption`, but `NewStreamableHTTPServer` takes
-`StreamableHTTPOption`). Delete `zapLogger`, build the bridge once as
-`slog.New(zapslog.NewHandler(logger.Core()))`, and switch the server option to
-`server.WithStreamableHTTPLogger`. Then take the remaining 44 updates from the group.
-
-Sequenced first because it touches the same file as F-017b, and because a red Dependabot PR is a
-blind spot on a security-maintained repository.
-
-**Files:** `pkg/backend/proxy.go`, `go.mod`, `go.sum` (+ `pkg/backend/proxy_test.go` if the logger
-is asserted on)
-
-**Acceptance:**
-- [ ] Builds against `mcp-go` 0.58.x; `zapLogger` gone, not left as dead code (§1)
-- [ ] `gofmt -l .` empty, `go vet ./...` clean, `go test -race ./...` green
-- [ ] `govulncheck` reports 0 reachable vulnerabilities
-- [ ] `go.uber.org/zap/exp` pulls in no new transitive dependency; `license-check` green
-- [ ] All five CI jobs green on the dependency update (PR #13 or the equivalent commit)
 
 #### F-017b — Transport conformance: prove header pass-through, harden credential injection
 

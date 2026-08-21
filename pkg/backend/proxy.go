@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/version"
 	"go.uber.org/zap"
+	"go.uber.org/zap/exp/zapslog"
 )
 
 var MCPClientInitTimeout = 1 * time.Minute
@@ -62,7 +64,7 @@ func (p *ProxyBackend) Run(ctx context.Context) (http.Handler, error) {
 	var handler http.Handler
 	go func() {
 		tr := transport.NewIO(stdout, stdin, os.Stderr)
-		transport.WithCommandLogger(&zapLogger{p.logger})(tr)
+		transport.WithCommandLogger(newSlogLogger(p.logger))(tr)
 		_client, _handler, err := setupProxy(ctx, p.logger, tr)
 		if err != nil {
 			p.errCh <- err
@@ -157,19 +159,15 @@ func setupProxy(ctx context.Context, logger *zap.Logger, tr transport.Bidirectio
 		s,
 		server.WithEndpointPath("/mcp"),
 		server.WithStateLess(true),
-		server.WithLogger(&zapLogger{logger}),
+		server.WithStreamableHTTPLogger(newSlogLogger(logger)),
 	)
 	return c, ss, nil
 }
 
-type zapLogger struct {
-	logger *zap.Logger
-}
-
-func (l *zapLogger) Infof(format string, v ...any) {
-	l.logger.Info(fmt.Sprintf(format, v...))
-}
-
-func (l *zapLogger) Errorf(format string, v ...any) {
-	l.logger.Error(fmt.Sprintf(format, v...))
+// newSlogLogger bridges the gateway's zap logger to the *slog.Logger that
+// mcp-go now requires, having dropped its own logger interface. Wrapping the
+// existing core rather than building a second logger keeps the stdio
+// backend's output in the same structured stream as the rest of the gateway.
+func newSlogLogger(logger *zap.Logger) *slog.Logger {
+	return slog.New(zapslog.NewHandler(logger.Core()))
 }
