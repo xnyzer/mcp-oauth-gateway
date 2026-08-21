@@ -280,8 +280,54 @@ tag, or the release would ship code the verification never saw.
 
 ---
 
+### F-024 — Operator view of connected clients, with a kill switch
+
+**Status:** BACKLOG
+
+**Problem:** The operator cannot see which clients hold access, and cannot take it away. If a
+device or a session is compromised, the only remedy today is stopping the gateway and editing the
+bbolt store by hand — which is literally what F-017d had to do, with a purpose-built tool, to
+delete one client record. `/.idp/revoke` does not help: it is RFC 7009 and **client-authenticated**,
+so it lets a client drop its *own* token, never the operator drop someone else's.
+
+**Idea:** Extend `/.auth/settings` with a list of clients and their active authorizations, with
+timestamps, plus a per-entry action that deletes the client's registration and every token issued
+to it. Access dies at once; a CIMD client can only return through a fresh authorization, which
+needs the operator's passkey.
+
+**Possible implementation:**
+- The real work is **enumeration**, which the repository layer does not have — there is no `List`
+  or `All` on either backend. It has to be added for client records and token records, for bbolt
+  (cursor over the `client-` / `access_token-` / `refresh_token-` prefixes) and for SQL.
+- The UI slot already exists: `/.auth/settings` runs behind `RequireAuth` + `RequireCSRF`, and the
+  "delete passkey" POST is a working template for a destructive per-row action.
+- **Granularity is per client and per grant, never per device.** A token record carries
+  `RequestedAt`, `Client`, scopes and `RotatedAt` — no IP, no user agent. In the field Claude web
+  and iOS shared a single client id, so "log out my old phone" is not expressible. The UI should
+  say what it actually shows instead of implying device identity.
+- **CIMD and DCR revoke differently.** A DCR client has a stored registration to delete; a CIMD
+  client has none, because it is re-resolved from its URL on every use. Revoking it means
+  destroying its tokens, after which it may re-authorize — the right property for a compromised
+  device, since re-authorization requires the passkey, but the UI must not suggest a permanent
+  ban. A denylist was weighed at intake and deliberately left out of scope.
+- Revoking must cover **access and refresh tokens together**: a refresh token left behind mints a
+  new access token immediately. F-017d found **58** refresh-token records for one client, so
+  enumeration has to cope with rotation history rather than assuming a single row per client.
+- Emit an auth event (SR-8) when the operator revokes, so a kill is visible in the log next to the
+  existing `revoked` event.
+
+**Still to analyse:** whether entries can be made recognisable at all — client IP appears in the
+auth-event log but is not stored with the token, so showing it would mean reading logs from the UI,
+which is a different kind of coupling. Also whether the same screen should carry a "revoke
+everything" action for the panic case.
+
+**Dependencies:** none. Would retire the manual store-editing procedure that F-017d had to write
+into `docs/VERIFICATION.md`.
+
+---
+
 <!-- FEATURE-INDEX
-next-feature: F-024
+next-feature: F-025
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -305,4 +351,5 @@ F-020 Split pkg/idp/idp.go along its seams (DONE)
 F-021 Validate the Origin header (DNS rebinding, SR-9) (BACKLOG)
 F-022 Bring the remaining oversized files under the §2 limits (BACKLOG)
 F-023 CIMD documents rejected over a foreign grant type (DONE)
+F-024 Operator view of connected clients, with a kill switch (BACKLOG)
 -->
