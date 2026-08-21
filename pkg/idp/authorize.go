@@ -14,6 +14,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// -- RFC 8707 resource validation -------------------------------------
+
 // errInvalidTarget is the RFC 8707 error for resource values the gateway
 // does not serve.
 var errInvalidTarget = &fosite.RFC6749Error{
@@ -37,11 +39,18 @@ func (a *IDPRouter) validateResource(resources []string) error {
 // issRedirectWriter appends the RFC 9207 `iss` parameter to redirect
 // responses written by fosite's WriteAuthorizeError, which has no built-in
 // RFC 9207 support in v0.49. Non-redirect responses pass through untouched.
+// -- RFC 9207 iss on redirects ----------------------------------------
+
 type issRedirectWriter struct {
 	http.ResponseWriter
 	issuer string
 }
 
+// WriteHeader appends the RFC 9207 `iss` parameter to a redirect fosite is
+// about to send, unless it already carries one. Error redirects go out through
+// fosite's own writer, which knows nothing about `iss`; without this wrapper a
+// client could not tell which authorization server rejected it — the mix-up
+// defence the parameter exists for (SPEC §1.5).
 func (w *issRedirectWriter) WriteHeader(statusCode int) {
 	if statusCode >= 300 && statusCode < 400 {
 		if location := w.Header().Get("Location"); location != "" {
@@ -63,6 +72,8 @@ func (w *issRedirectWriter) WriteHeader(statusCode int) {
 func (a *IDPRouter) writeAuthorizeError(ctx context.Context, w http.ResponseWriter, ar fosite.AuthorizeRequester, err error) {
 	a.provider.WriteAuthorizeError(ctx, &issRedirectWriter{ResponseWriter: w, issuer: a.externalURL}, ar, err)
 }
+
+// -- Authorize endpoint -----------------------------------------------
 
 func (a *IDPRouter) handleAuth(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -116,6 +127,8 @@ func (a *IDPRouter) handleAuth(c *gin.Context) {
 	}
 	c.Redirect(302, strings.ReplaceAll(AuthorizationReturnEndpoint, ":ar_id", ar.GetID()))
 }
+
+// -- Authorize-request session binding --------------------------------
 
 func authorizeRequestIDs(session sessions.Session) []string {
 	value, ok := session.Get(sessionKeyAuthorizeRequestIDs).(string)

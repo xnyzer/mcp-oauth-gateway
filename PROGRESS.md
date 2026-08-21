@@ -10,9 +10,8 @@ spec RC**. The gateway is feature-complete against `SPEC.md`, security-audited (
 verified against Claude web + iOS (F-006c). All roadmap tasks F-001–F-011 and **F-012** (audit
 low-severity follow-ups, substeps a–e → v0.1.1) are done — rationale archived in
 `PROGRESS-ARCHIVE.md`. All roadmap tasks through **F-013** (CI `ci.yml` repair) are done.
-**Two open tasks** in execution order below: splitting the oversized `pkg/idp/idp.go` (F-020,
-decomposed into three substeps), then the now-due re-check against the published final MCP spec
-(F-017), which also gates the next release. One idea parked in the backlog (F-019). F-numbers are stable IDs; the document order, not the
+**One open task** below: the now-due re-check against the published final MCP spec (F-017), which
+also gates the next release. One idea parked in the backlog (F-019). F-numbers are stable IDs; the document order, not the
 number, is the path.
 
 ---
@@ -59,77 +58,12 @@ number, is the path.
 | F-018 | Build the container image in CI → **new `image-build` job**: buildx `push: false`/`load: true` (amd64), `--version` smoke, then a container start polled until Docker's own `HEALTHCHECK` reports `healthy` (failing loudly with `docker logs` otherwise). Closes the gap where a broken `Dockerfile` or base-image bump surfaced only as a failed *release* — F-014's builder digest had been unexercised. The intake's `docker run IMAGE healthcheck` was corrected: it probes `/healthz` on the local listener and needs a running server. Smoke password generated in-step, never written to the repo. **Verified locally against real Docker** (build + `version ci` + healthy), under amd64 emulation. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-020a | Split `idp.go` → **1072 → 216 lines across eight files** (`authorize`, `client_source`, `consent`, `metadata`, `register`, `session`, `token` + the assembly), each under the 300-line target. Sliced at declaration boundaries with doc comments pulled along; `goimports` trimmed each file's imports. **No test file touched** — suite green unchanged is the proof. The planned `git diff -M` criterion turned out unusable (rename detection needs whole-file similarity) and was replaced by stronger checks: 47/47 identical declarations and 954/954 identical body lines, with the +77 net reconciling to seven new headers minus ten dropped imports. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-020b | Split `idp_test.go` to match → **1684 lines across ten files**, each beside the code it exercises, shared helpers lifted into `helpers_test.go`. Ten rather than the planned nine: `token_test.go` would have hit ~439 lines with `TestPrivateClient`, so the RFC 7009 revocation tests became their own file. `stubResolver` went to the helpers because `loopback_test.go` uses it too. **No production file touched**; verified by test-set equality (34/34 via `go test -list`) and identical bodies (1399/1399 lines) — a lost test would otherwise leave the suite green and unnoticed. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-020c | Section comments and final standards pass → **ten doc comments** on the exported identifiers that had none (§11), written to explain why rather than restate the signature, plus **ten section rules** in the three files that still group several concerns (`authorize.go`, `idp.go`, `helpers_test.go`). The expectation that section comments would be redundant proved wrong: `authorize.go` bundles four concerns in 165 lines, and §2 is about structure, not length. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-020 | **Split `pkg/idp/idp.go` along its seams — complete** (a/b/c): two oversized files (1072 + 1684 lines, both past the 500-line hard limit) became twenty, the largest 298, each with one concern. Run as a pure move first and content second, which is what made the verification meaningful — git cannot see a one-into-eight split as a move, so the proof came from invariants: 47/47 declarations, 954/954 and 1399/1399 body lines, 34/34 tests. Sequenced before F-017 so the spec re-check sees the split code. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 
 ---
 
 ## Open tasks — work top to bottom
-
-### F-020 — Split `pkg/idp/idp.go` along its seams
-
-**Problem:** `pkg/idp/idp.go` is **1073 lines** against the 500-line hard limit in
-`CODING-STANDARDS.md` §2, and it carries no section comments, so the documented exception for
-"clearly delimited modules" does not apply. `pkg/idp/idp_test.go` is **1684 lines** for the same
-reason. The file predates the limit (it came over with the F-008 fork and grew through F-005a–e);
-F-016 found it during review and moved its own helpers out rather than adding to it. Size is not
-cosmetic here: this is the OAuth authorization surface, the file a reviewer must hold in their head
-to reason about token issuance, consent and DCR at once.
-
-**Idea:** Split it along the seams it already has — the declarations cluster cleanly by endpoint —
-without changing a single behaviour. A pure move: same package, same identifiers, no signature
-changes, so the diff is reviewable as "lines relocated" and the existing tests are the proof.
-
-**Possible implementation:**
-- Candidate cut, following the current order of declarations:
-  - `idp.go` — `IDPRouter`, `Config`, `NewIDPRouter`, `customCompose`, `withRateLimit`, the
-    endpoint constants and route registration (the assembly, ~250 lines).
-  - `client_source.go` — `clientSource`, `CIMDResolver`, the redirect-URI context stash
-    (joins `loopback.go`, which F-016 already carved out).
-  - `authorize.go` — `handleAuth`, `issRedirectWriter`, `errInvalidTarget`, the authorize-request
-    ID helpers.
-  - `consent.go` — `consentTemplate`, `consentTemplateData`, both consent handlers.
-  - `token.go` — token, introspection and revocation handlers.
-  - `register.go` — DCR: `registrationRequest`/`registrationResponse`, `validateRegistration`,
-    `handleRegister`, `supportedAuthMethods`.
-  - `metadata.go` — `authorizationServerResponse`, its handler, `jwks`.
-  - `session.go` — `NewJWTSession`, `Session`.
-- Split `idp_test.go` to match, so each test file sits next to the code it exercises.
-- Add the ASCII section comments §2 asks for wherever a file still groups more than one concern.
-- Acceptance: `go test -race ./...` green with **no test changed** beyond its file location, and
-  `git diff --find-copies-harder` showing moves rather than rewrites.
-
-**Substeps (`/prep-step`, 2026-08-21) — Large: ~2757 lines relocated across 17 files, net new
-~100 (import headers, section comments). No behaviour, signature or file outside `pkg/idp/`
-changes.** Both files were mapped declaration by declaration first; the cut below follows the
-clusters they already form, and every target file lands under the 300-line target:
-
-| File | Contents | ~Lines |
-|---|---|---|
-| `idp.go` | `IDPRouter`, `Config`, `NewIDPRouter`, `customCompose`, `withRateLimit`, endpoint constants, `SetupRoutes` | 215 |
-| `client_source.go` | `CIMDResolver`, `clientSource`, the redirect-URI context stash, `GetClient`, `lookupClient` | 95 |
-| `authorize.go` | `handleAuth`, `issRedirectWriter`, `errInvalidTarget`, `validateResource`, the `ar_id` session helpers | 155 |
-| `consent.go` | `consentTemplate`/`consentTemplateData`, both consent handlers | 158 |
-| `token.go` | `handleToken`, `handleIntrospect`, `handleRevoke` | 105 |
-| `register.go` | DCR request/response types, `validateRegistration`, `handleRegister` | 175 |
-| `metadata.go` | `authorizationServerResponse` + handler, `jwks` | 120 |
-| `session.go` | `NewJWTSession`, `Session` | 95 |
-
-#### F-020c — Section comments and final standards pass
-
-**What:** Add the ASCII section rules §2 asks for wherever a file still groups more than one
-concern, then re-check the whole package against `CODING-STANDARDS.md`.
-
-**Acceptance:**
-- [ ] Every file in `pkg/idp/` under the 300-line target, or carrying section comments
-- [ ] Full suite + `-race` + `gofmt` + `vet` green
-
-**Explicit non-goal:** `handleRegister` is **103 lines**, over the 50-line hard limit and over the
-~80-line orchestration exception. Splitting it changes the DCR endpoint's structure, not a file's
-location, so it does not belong in a move-only task — it needs its own F-number.
-
-**Dependencies:** none. Sequencing decided 2026-08-21: F-020 runs **before** F-017, so the spec
-re-check and its verification pass see the split code. The earlier note said "not before the
-release"; the real constraint is narrower — the split must not land *between* F-017's verification
-and the tag, which running it first satisfies.
 
 ### F-017 — Re-verify against the final MCP 2026-07-28 authorization spec
 
@@ -222,5 +156,5 @@ F-016 Port-agnostic loopback matching for localhost redirect URIs (DONE)
 F-017 Re-verify against the final MCP 2026-07-28 authorization spec
 F-018 Build the container image in CI (DONE)
 F-019 Evaluate whether DCR can be switched off (backlog)
-F-020 Split pkg/idp/idp.go along its seams
+F-020 Split pkg/idp/idp.go along its seams (DONE)
 -->

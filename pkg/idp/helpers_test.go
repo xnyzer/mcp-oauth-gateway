@@ -29,6 +29,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// -- Test server setup ------------------------------------------------
+
 func setupTestServer(t *testing.T) (*httptest.Server, repository.Repository, string) {
 	return setupTestServerWith(t, nil)
 }
@@ -124,6 +126,8 @@ func setupTestServerWith(t *testing.T, mutate func(*Config)) (*httptest.Server, 
 // Every client now requires PKCE (EnforcePKCE, SPEC §1.5 / F-012b), so the
 // confidential-client flows carry it too: testAuthFlowWithURL appends the
 // challenge and the token exchanges send the verifier.
+// -- PKCE and flow drivers --------------------------------------------
+
 const testPKCEVerifier = "pkce-verifier-pkce-verifier-pkce-verifier-01"
 
 func testPKCEChallenge() string {
@@ -243,6 +247,8 @@ func testAuthFlowWithURL(t *testing.T, serverURL, authURL string) *url.URL {
 }
 
 // mustGetResp / requireRedirectLocation are tiny helpers for the CSRF test.
+// -- Small assertion helpers ------------------------------------------
+
 func mustGetResp(t *testing.T, client *http.Client, rawURL string) *http.Response {
 	t.Helper()
 	resp, err := client.Get(rawURL)
@@ -268,6 +274,8 @@ func mustCookieJar(t *testing.T) http.CookieJar {
 
 // stubResolver satisfies CIMDResolver without network access; the real HTTP
 // resolution (SSRF guards, limits, caching) is tested in pkg/cimd.
+// -- Stubs and decoding -----------------------------------------------
+
 type stubResolver struct {
 	doc *cimd.Client
 }

@@ -1798,3 +1798,63 @@ revocation tests were split off into `revocation_test.go`; they are self-contain
 `consent_test.go`, `helpers_test.go`, `metadata_test.go`, `ratelimit_test.go`, `register_test.go`,
 `revocation_test.go`, `session_test.go`, `token_test.go`; docs `PROGRESS.md`,
 `PROGRESS-ARCHIVE.md`. No production code, dependency or config change.
+
+## F-020c — Section comments and final standards pass — DONE 2026-08-21
+
+Third and final substep of F-020, and the one that put content back after two move-only steps.
+
+**Ten doc comments** on the exported identifiers that had none — `IDPRouter`, `NewIDPRouter`,
+`SetupRoutes`, `GetClient`, `WriteHeader`, `NewJWTSession`, `Session`, `GetJWTClaims`,
+`GetJWTHeader`, `Clone` (§11). They were written to explain *why* something exists rather than
+restate the signature. `Clone` now records that fosite clones sessions between the authorize and
+token steps, so a shallow copy would let two requests share one claims map — the route by which one
+client's identity ends up in another's token. `NewJWTSession` records that the `jti` is generated
+there and not at signing time, because revocation is keyed on it (SPEC §1.9). `WriteHeader` records
+that fosite's own error writer knows nothing about RFC 9207, so without the wrapper a client could
+not tell which authorization server rejected it.
+
+**Ten section rules** in the three files that still group more than one concern:
+`authorize.go` (RFC 8707 resource validation · RFC 9207 `iss` on redirects · authorize endpoint ·
+authorize-request session binding), `idp.go` (router/config/construction · endpoints and route
+registration), and `helpers_test.go` (test server setup · PKCE and flow drivers · small assertion
+helpers · stubs and decoding). The other seventeen files hold exactly one concern each after
+F-020a/b and need none.
+
+**Deviation from the expectation stated when the substep was queued:** the section comments looked
+likely to be redundant, since every file already sits under the 300-line target. Reading the files
+showed the opposite — `authorize.go` bundles four clearly separate concerns in 165 lines. The §2
+rule is about structure, not length, and applying it by line count would have missed the point.
+
+**Verification:** zero undocumented exported identifiers remain (checked by the same scan that
+found the ten); `gofmt -l` empty; `go vet` clean; `go test -race ./...` rc=0 across 11 packages;
+the test set is still the identical 34 from before the whole refactor.
+
+**Noted for later, no action needed:** `helpers_test.go` now sits at 298 lines. It satisfies the
+criterion — and carries section comments either way — but the next helper added there will cross
+the target and call for a further split.
+
+**Files:** `pkg/idp/idp.go`, `authorize.go`, `client_source.go`, `session.go`, `helpers_test.go`;
+docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No behaviour, signature, dependency or config change.
+
+## F-020 — Split `pkg/idp/idp.go` along its seams — DONE 2026-08-21
+
+Complete (a/b/c). `pkg/idp/` went from two oversized files — `idp.go` at 1072 lines and
+`idp_test.go` at 1684, both far past the 500-line hard limit — to twenty files, the largest 298.
+Every file now holds one concern, sits under the 300-line target, and carries section rules where
+it still groups several.
+
+The refactor was run as a **pure move first, content second**: F-020a and F-020b relocated code and
+tests without changing a character of either, and only F-020c added the doc and section comments.
+That order is what made the verification meaningful. Because git cannot recognise a one-into-eight
+split as a move — rename detection needs whole-file similarity — the proof came from invariants
+instead: identical declaration sets (47/47), identical body lines (954/954 for the code, 1399/1399
+for the tests), and an identical test set (34/34 via `go test -list`), the last of which is the one
+that matters for a test split, since a test lost in a move leaves the suite green and the loss
+invisible.
+
+**Sequencing:** run before F-017 by the operator's decision, so the spec re-check and its
+verification pass see the split code rather than the pre-split code.
+
+**Still open, deliberately:** `handleRegister` is 103 lines, over the 50-line hard limit and over
+the ~80-line orchestration exception. Splitting it restructures the DCR endpoint instead of
+relocating a file, so it never belonged in a move task and still needs its own F-number.

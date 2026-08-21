@@ -43,6 +43,11 @@ func requestedRedirectURI(ctx context.Context) string {
 	return raw
 }
 
+// GetClient resolves the client fosite asks for, from either identification
+// mechanism: a CIMD document behind an https:// client ID, or a stored DCR
+// registration (SPEC §1.3). Fosite calls this for every authorize, token,
+// introspection and revocation request, so it is the single choke point where
+// a client's registered redirect URIs are decided.
 func (s *clientSource) GetClient(ctx context.Context, id string) (fosite.Client, error) {
 	client, err := s.lookupClient(ctx, id)
 	if err != nil {

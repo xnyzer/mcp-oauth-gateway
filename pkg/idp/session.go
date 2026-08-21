@@ -8,6 +8,10 @@ import (
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/utils"
 )
 
+// NewJWTSession creates the session fosite carries through a flow and turns
+// into the access token's claims. The `jti` is generated here rather than at
+// signing time, because revocation is keyed on it (SPEC §1.9): a token that
+// reached a client must be identifiable for the rest of its lifetime.
 func NewJWTSession(iss string, subject string, clientID string, userInfo map[string]any) (*Session, error) {
 	jti, err := utils.GenerateJTI()
 	if err != nil {
@@ -42,20 +46,29 @@ func NewJWTSession(iss string, subject string, clientID string, userInfo map[str
 	}, nil
 }
 
+// Session extends fosite's default session with the JWT claims and headers
+// this gateway issues, so the same object serves fosite's bookkeeping and the
+// token's payload (SPEC §1.7).
 type Session struct {
 	*fosite.DefaultSession
 	JWTClaims *jwt.JWTClaims
 	JWTHeader *jwt.Headers
 }
 
+// GetJWTClaims satisfies fosite's JWT session interface.
 func (s *Session) GetJWTClaims() jwt.JWTClaimsContainer {
 	return s.JWTClaims
 }
 
+// GetJWTHeader satisfies fosite's JWT session interface. The `kid` is added by
+// the signer at signing time, not here (SPEC §2.3.3).
 func (s *Session) GetJWTHeader() *jwt.Headers {
 	return s.JWTHeader
 }
 
+// Clone deep-copies the session. Fosite clones sessions between the authorize
+// and token steps, and a shallow copy would let two requests share one claims
+// map — which is how one client's identity ends up in another's token.
 func (s *Session) Clone() fosite.Session {
 	if s == nil {
 		return nil

@@ -16,6 +16,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// -- Router, config and construction ----------------------------------
+
+// IDPRouter is the OAuth 2.1 authorization server this gateway puts in front
+// of an MCP upstream: discovery, authorize, token, introspection, revocation
+// and the deprecated DCR endpoint (SPEC §1). It owns the fosite provider and
+// the signing keys, so every token this gateway issues passes through it.
 type IDPRouter struct {
 	repo                repository.Repository
 	keys                *keys.Manager
@@ -80,6 +86,9 @@ const (
 	defaultAuthCodeTTL    = 10 * time.Minute
 )
 
+// NewIDPRouter assembles the authorization server from cfg and fails rather
+// than starting half-configured — an auth boundary that boots with a silently
+// missing piece is worse than one that refuses to boot (SPEC §3.1).
 func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 	hasher := &fosite.BCrypt{
 		Config: &fosite.Config{
@@ -185,6 +194,8 @@ func customCompose(config *fosite.Config, storage any, keyManager *keys.Manager,
 	)
 }
 
+// -- Endpoints and route registration ---------------------------------
+
 const (
 	AuthorizationEndpoint            = "/.idp/auth"
 	AuthorizationReturnEndpoint      = "/.idp/auth/:ar_id"
@@ -198,6 +209,10 @@ const (
 	sessionKeyAuthorizeRequestIDs    = "idp_authorize_request_ids"
 )
 
+// SetupRoutes registers every endpoint the authorization server serves. Two
+// registrations are conditional: /.idp/register only while the deprecated DCR
+// fallback is enabled, and the OIDC discovery mirror only when configured — a
+// disabled endpoint must 404, never reach the upstream (SPEC §1.4/§1.2).
 func (a *IDPRouter) SetupRoutes(router gin.IRouter) {
 	router.GET(AuthorizationEndpoint, withRateLimit(a.authorizeRateLimit, a.handleAuth)...)
 	router.GET(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturnForm)
