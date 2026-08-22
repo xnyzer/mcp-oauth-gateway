@@ -11,10 +11,11 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. Every roadmap task
 F-001–F-021 and F-023 is done — rationale archived in `PROGRESS-ARCHIVE.md`.
 
-**No open tasks.** `SPEC.md` §4 records **no unmet requirement** since F-021, and F-019 settled the
-last open decision (DCR stays enabled by default). Two ideas remain in the backlog — **F-022**
-(six files past the §2 hard limit) and **F-024** (an operator client list with a kill switch) —
-each needing `/prep-step` first. Released as **v0.3.0** (F-021's
+**One task planned.** `SPEC.md` §4 records **no unmet requirement** since F-021, and F-019 settled
+the last open decision (DCR stays enabled by default). **F-024** (an operator client list with a
+kill switch) is decomposed and ready to build. Two ideas wait in the backlog — **F-022** (six files
+past the §2 hard limit) and **F-025** (naming a connection at consent time, which also closes an
+identity requirement §1.5 has carried unmet since it was written). Released as **v0.3.0** (F-021's
 `Origin` validation changes runtime behaviour, so it is a minor bump, not a patch).
 
 F-numbers are stable IDs; the document order, not the number, is the path.
@@ -78,8 +79,132 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 
 ## Open tasks — work top to bottom
 
-_Empty._ Everything intaked so far is either done or still in the backlog below. Pick a backlog
-entry, run `/prep-step` on it, and it moves up here.
+### F-024 — Operator view of connected clients, with a kill switch
+
+**Status:** PLANNED
+
+**Problem:** The operator cannot see which clients hold access, and cannot take it away. If a
+device or a session is compromised, the only remedy today is stopping the gateway and editing the
+bbolt store by hand — which is literally what F-017d had to do, with a purpose-built tool, to
+delete one client record. `/.idp/revoke` does not help: it is RFC 7009 and **client-authenticated**,
+so it lets a client drop its *own* token, never the operator drop someone else's.
+
+**Idea:** Extend `/.auth/settings` with a list of clients and their active authorizations, with
+timestamps, plus a per-entry action that deletes the client's registration and every token issued
+to it. Access dies at once; a CIMD client can only return through a fresh authorization, which
+needs the operator's passkey.
+
+**Possible implementation:**
+- The real work is **enumeration**, which the repository layer does not have — there is no `List`
+  or `All` on either backend. It has to be added for client records and token records, for bbolt
+  (cursor over the `client-` / `access_token-` / `refresh_token-` prefixes) and for SQL.
+- The UI slot already exists: `/.auth/settings` runs behind `RequireAuth` + `RequireCSRF`, and the
+  "delete passkey" POST is a working template for a destructive per-row action.
+- **Granularity is per client and per grant, never per device.** A token record carries
+  `RequestedAt`, `Client`, scopes and `RotatedAt` — no IP, no user agent. In the field Claude web
+  and iOS shared a single client id, so "log out my old phone" is not expressible. The UI should
+  say what it actually shows instead of implying device identity.
+- **CIMD and DCR revoke differently.** A DCR client has a stored registration to delete; a CIMD
+  client has none, because it is re-resolved from its URL on every use. Revoking it means
+  destroying its tokens, after which it may re-authorize — the right property for a compromised
+  device, since re-authorization requires the passkey, but the UI must not suggest a permanent
+  ban. A denylist was weighed at intake and deliberately left out of scope.
+- Revoking must cover **access and refresh tokens together**: a refresh token left behind mints a
+  new access token immediately. F-017d found **58** refresh-token records for one client, so
+  enumeration has to cope with rotation history rather than assuming a single row per client.
+- Emit an auth event (SR-8) when the operator revokes, so a kill is visible in the log next to the
+  existing `revoked` event.
+
+**Dependencies:** none. Would retire the manual store-editing procedure that F-017d had to write
+into `docs/VERIFICATION.md`.
+
+**Substeps (`/prep-step`, 2026-08-22) — Large: ~950 lines across ~11 files, of which ~380 are
+tests.** Reading the code moved three things the intake could not have known, and each one changes
+the design rather than merely detailing it:
+
+| # | Finding | Consequence |
+|---|---|---|
+| 1 | Since v0.3.0 Claude connects via **CIMD**, and a CIMD client has **no stored record at all** — `clientSource.lookupClient` re-resolves it from its URL on every lookup. An enumeration over `client-*` would therefore list precisely the clients the operator cares about **least**. | The list is built from **token records** grouped by `Request.Client.ID`; stored DCR registrations join as a second source, so a registration without tokens still shows. |
+| 2 | Recognisability needs **no new field**. A CIMD client's `client_id` *is* its URL (`https://claude.ai/oauth/mcp-oauth-client-metadata`, the one F-023 recorded live), and a DCR registration stores its `redirect_uris`, whose host names the client just as well. | Identity in the list = `client_id` + redirect-URI hosts. No client-supplied free text enters the operator UI here; the naming idea became **F-025** instead. |
+| 3 | "Last active" falls out of `RequestedAt`/`RotatedAt` on the token records. | The `last_used_at` that `SPEC.md` §2.1 lists for the DCR client entity, and that was never implemented, is not needed for this task. |
+
+Decisions taken at prep time: **the panic button is in** (operator-approved) — a "revoke
+everything" action with a confirmation step, cheap once enumeration exists and the thing the title
+promises. **No schema change**: SQL filtering decodes the request blobs in Go and deletes over the
+existing indexed `request_id`, so `SchemaVersion` stays 1 and a downgrade stays possible. **All new
+code lands in new files** — `kvs.go` (470) and `sql.go` (694) and `auth.go` (534) are already at or
+past the §2 limits that F-022 exists to fix, and this task must not make that worse.
+
+#### F-024a — Enumerate and revoke in the repository layer
+
+**What:** The layer has no enumeration on either backend; this substep adds it, and the kill that
+goes with it, with no UI attached. New `InventoryStorage` on the `Repository` interface:
+`ListClientGrants` aggregates token records per `client_id` (origin CIMD or DCR, grant count,
+access/refresh counts, first and last activity, scopes, redirect hosts, registration expiry), and
+`RevokeClient` / `RevokeGrant` delete. The kill must sweep **all five** record kinds —
+`access_token-`, `refresh_token-`, `authorize_code-`, `pkce_request-`, `authorize_request-` — plus
+the DCR registration where one exists, each in a single transaction; a refresh token left behind
+mints a new access token immediately. bbolt reuses the existing `deleteMatching` cursor helper; SQL
+collects primary keys in one scan and deletes over the indexed `request_id`.
+
+**Files:** `pkg/repository/interface.go`; new `pkg/repository/inventory.go`, `kvs_inventory.go`,
+`sql_inventory.go`, `inventory_test.go`
+
+**Acceptance:**
+- [ ] Both backends satisfy the same contract, exercised through the existing `testRepos` helper
+- [ ] A CIMD client with tokens but **no** client record appears in the listing (finding 1 — the
+      case the obvious implementation gets wrong)
+- [ ] Rotation history aggregates instead of duplicating: 58 refresh records for one client yield
+      one row, not 58
+- [ ] Negative test: revoking one client leaves another client's records untouched, asserted per
+      record kind
+- [ ] Revocation is atomic per backend — a failure mid-sweep leaves no half-revoked grant
+- [ ] `SchemaVersion` unchanged; a store written before this change reads without migration
+- [ ] `gofmt -l .` empty, `go vet ./...` clean, `go test -race ./...` green
+
+#### F-024b — The settings surface and its wiring
+
+**What:** The list and the kill switch in `/.auth/settings`, behind the existing `RequireAuth` +
+`RequireCSRF` + `requireOwnUser` gates, following the "delete passkey" POST as the working template
+for a destructive per-row action. One row per client, expandable to its authorizations; actions
+"revoke this authorization", "revoke this client", and the panic "revoke everything" behind a
+confirmation. The view struct is a projection — `models.Client` carries the hashed client secret
+and none of it reaches the template. Every revoke emits `authevent.Revoked` with client id and
+grant count (SR-8). The wording must say what the entry actually is: per client and per grant,
+never per device, and a revoked CIMD client may re-authorize rather than being banned.
+
+**Files:** new `pkg/auth/clients.go`, `pkg/auth/clients_test.go`; `pkg/auth/auth.go` (config field
++ routes), `pkg/auth/templates/settings.html`, `pkg/mcp-proxy/main.go` (one line)
+
+**Acceptance:**
+- [ ] Negative tests, mandatory on this surface (§9): missing/wrong CSRF token, an OIDC-provider
+      session, and an unknown client id — the last redirects without revealing whether it existed
+- [ ] No secret reaches the page — asserted on the rendered body, not on the view struct
+- [ ] An enumeration error renders an error, never an empty list that reads as "nothing granted"
+      (fail-closed, §6)
+- [ ] The section follows the settings page's existing visibility rule rather than adding a second
+      one
+- [ ] Suite + `-race` + `golangci-lint` green
+
+#### F-024c — Verify against the running binary, then document
+
+**What:** A green suite does **not** prove this works: `e2e_harness_test.go` builds its own gin
+router, so middleware and route registration in `pkg/mcp-proxy/main.go` go unexercised. Verify
+against the deployed binary the way F-021 was verified — the list shows the real connected client,
+a revoke makes `/mcp` answer 401 immediately (SPEC §2.4 record-presence, not after
+`ACCESS_TOKEN_TTL`), and re-authorization via passkey works. Then the documentation, including the
+one deletion that is the point of the whole task: the manual bbolt procedure F-017d had to write
+into `docs/VERIFICATION.md` is replaced by the button.
+
+**Files:** `SPEC.md` (§1.12 endpoint table, §2.1), `README.md`, `CHANGELOG.md`,
+`docs/VERIFICATION.md`, `PROGRESS.md`, `PROGRESS-ARCHIVE.md`
+
+**Acceptance:**
+- [ ] Verified against the running binary, not the harness — with the observed evidence recorded
+- [ ] Revoke is immediate: `/mcp` answers 401 on the next request, no TTL wait
+- [ ] Re-authorization after a revoke succeeds and requires the passkey
+- [ ] The F-017d manual store-editing procedure is **removed**, not merely annotated
+- [ ] GR-5 clean: no hostnames, IPs or personal details in the living documentation
 
 ---
 
@@ -139,54 +264,49 @@ tag, or the release would ship code the verification never saw.
 
 ---
 
-### F-024 — Operator view of connected clients, with a kill switch
+### F-025 — Name a connection at consent time, and show the client's own name
 
 **Status:** BACKLOG
 
-**Problem:** The operator cannot see which clients hold access, and cannot take it away. If a
-device or a session is compromised, the only remedy today is stopping the gateway and editing the
-bbolt store by hand — which is literally what F-017d had to do, with a purpose-built tool, to
-delete one client record. `/.idp/revoke` does not help: it is RFC 7009 and **client-authenticated**,
-so it lets a client drop its *own* token, never the operator drop someone else's.
+**Problem:** The consent page shows the bare `client_id` and nothing else to recognise a client by —
+for a DCR client that is a random string. `SPEC.md` §1.5 has asked for more since it was written:
+"Consent MUST show the client identity (CIMD `client_name` + the client_id URL, or DCR `client_name`
++ ID)". Both mechanisms already **parse** `client_name` — `registrationRequest` in
+`pkg/idp/register.go`, `cimd.Client` in `pkg/cimd/resolver.go` — and both throw it away: DCR echoes
+it back in the registration response and never stores it, CIMD never reads it. So the one field that
+would make a client recognisable is collected and discarded, on the page whose entire purpose is
+recognition. This is an **unmet §1.5 requirement**, not only a convenience gap; it sits outside the
+§4 conformance table, which covers the MCP spec rather than the gateway's own contracts.
 
-**Idea:** Extend `/.auth/settings` with a list of clients and their active authorizations, with
-timestamps, plus a per-entry action that deletes the client's registration and every token issued
-to it. Access dies at once; a CIMD client can only return through a fresh authorization, which
-needs the operator's passkey.
+**Idea:** Show the client's claimed `client_name` on the consent page beside the client_id, and let
+the operator type their own label for the connection in the same step, prefilled with that claim.
+The label is stored per client_id and becomes the name F-024's list shows — so the operator names a
+connection once, while they are already looking at it, rather than deciphering it later.
 
 **Possible implementation:**
-- The real work is **enumeration**, which the repository layer does not have — there is no `List`
-  or `All` on either backend. It has to be added for client records and token records, for bbolt
-  (cursor over the `client-` / `access_token-` / `refresh_token-` prefixes) and for SQL.
-- The UI slot already exists: `/.auth/settings` runs behind `RequireAuth` + `RequireCSRF`, and the
-  "delete passkey" POST is a working template for a destructive per-row action.
-- **Granularity is per client and per grant, never per device.** A token record carries
-  `RequestedAt`, `Client`, scopes and `RotatedAt` — no IP, no user agent. In the field Claude web
-  and iOS shared a single client id, so "log out my old phone" is not expressible. The UI should
-  say what it actually shows instead of implying device identity.
-- **CIMD and DCR revoke differently.** A DCR client has a stored registration to delete; a CIMD
-  client has none, because it is re-resolved from its URL on every use. Revoking it means
-  destroying its tokens, after which it may re-authorize — the right property for a compromised
-  device, since re-authorization requires the passkey, but the UI must not suggest a permanent
-  ban. A denylist was weighed at intake and deliberately left out of scope.
-- Revoking must cover **access and refresh tokens together**: a refresh token left behind mints a
-  new access token immediately. F-017d found **58** refresh-token records for one client, so
-  enumeration has to cope with rotation history rather than assuming a single row per client.
-- Emit an auth event (SR-8) when the operator revokes, so a kill is visible in the log next to the
-  existing `revoked` event.
+- Consent page (`pkg/idp/consent.go`) gains the claimed name and an optional "Name for this
+  connection" field; the approval POST persists the label.
+- A CIMD client has no stored client record at all, so the label needs its own small entity keyed by
+  client_id. Persisting `client_name` on `models.Client` for DCR and a separate label for CIMD would
+  split one concept over two mechanisms — worth deciding explicitly at prep time.
+- **The consent page is the anti-phishing surface**, which makes client-supplied display text a
+  security question rather than a formatting one: a name claiming "claude.ai (verified)" must not be
+  able to pose as the gateway's own wording. Presentation has to separate the claim from the
+  verified identity, and the value needs a length cap plus control-character stripping on top of
+  `html/template`'s escaping (§1.12: no reflection of unvalidated input).
+- No new endpoint, no new config, no new dependency.
 
-**Still to analyse:** whether entries can be made recognisable at all — client IP appears in the
-auth-event log but is not stored with the token, so showing it would mean reading logs from the UI,
-which is a different kind of coupling. Also whether the same screen should carry a "revoke
-everything" action for the panic case.
+**Still to analyse:** whether a label survives a revoke in F-024 — re-authorizing the same client
+would otherwise silently lose its name — and whether the settings list should allow renaming later,
+rather than consent time being the only chance.
 
-**Dependencies:** none. Would retire the manual store-editing procedure that F-017d had to write
-into `docs/VERIFICATION.md`.
+**Dependencies:** none technically. The payoff shows in F-024's list, so it is best done after it;
+the §1.5 identity requirement closes either way.
 
 ---
 
 <!-- FEATURE-INDEX
-next-feature: F-025
+next-feature: F-026
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -210,5 +330,6 @@ F-020 Split pkg/idp/idp.go along its seams (DONE)
 F-021 Validate the Origin header (DNS rebinding, SR-9) (DONE)
 F-022 Bring the remaining oversized files under the §2 limits (BACKLOG)
 F-023 CIMD documents rejected over a foreign grant type (DONE)
-F-024 Operator view of connected clients, with a kill switch (BACKLOG)
+F-024 Operator view of connected clients, with a kill switch (PLANNED)
+F-025 Name a connection at consent time, and show the client's own name (BACKLOG)
 -->
