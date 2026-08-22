@@ -74,6 +74,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-017 | **Re-verify against the final MCP 2026-07-28 spec — complete** (a/b/c/d): watch item closed, deliberately without a successor. The authorization surface needed **no change** — all six SEPs still satisfied — so everything this task fixed lay elsewhere: a credential-injection spoofing path (F-017b), a CIMD resolver defect that made CIMD unusable with real clients (F-023), and documentation claiming conformance without evidence (F-017c, now `SPEC.md` §4). A paper re-check would have concluded "conformant, no action" and been wrong twice. One MUST recorded as **unmet** rather than glossed over: `Origin` validation (F-021). Released **v0.2.0** and **v0.2.1**, both live-verified. Spawned F-021, F-022, F-023, F-024. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-021 | Validate the `Origin` header (DNS rebinding, SR-9) → **closes the one unmet MUST** the F-017 re-check found; `SPEC.md` §4.2 now reads ✔. A foreign or `null` Origin gets `403`; an **absent** header passes, deliberately — server-side MCP clients send none, so rejecting absence would take the gateway offline for every real client. Comparison on scheme+host+port, host lower-cased, default ports elided. `ORIGIN_CHECK_ENABLED=false` is the rescue, logged at startup. **The fail-closed test caught a real bug:** an expected origin normalizing to `""` would have matched `Origin: null` and turned the guard into a wildcard while its comment claimed otherwise. Also found: IPv6 bracket handling, and that **the e2e suite does not prove the wiring** (it builds its own router) — verified against the running binary instead. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
 | F-019 | Evaluate whether DCR can be switched off → **decision: `DCR_ENABLED` stays `true`**, no code. F-017d supplied the evidence asked for (Claude picks CIMD, the store stops growing) — but that shows *Claude* needs no DCR, not that no client does. The decisive argument arrived after the entry was written: **F-023 made DCR the documented escape hatch** when a CIMD document cannot be fetched (#650), so a `false` default would *break* that advice — flipping only `CIMD_ENABLED=false` hits the both-disabled fail-fast and the gateway refuses to start. The original motivation was gone anyway: the store grew *because* clients were forced onto DCR, which F-015 fixed. Delivered as guidance rather than a bare verdict — a README section on when an operator *should* disable it, the re-decision beside F-003 in REQUIREMENTS §6, and `SPEC.md` §4.1 updated because it still posed the question this task answered. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
+| F-024a | Enumerate and revoke in the repository layer → **the layer had no enumeration at all**, which is why F-017d needed a purpose-built bbolt tool to delete one record. New `InventoryStorage` (`ListClientGrants`, `RevokeClient`, `RevokeGrant`, `RevokeAll`) on both backends, fed by **one** shared aggregator so the two listings cannot drift. Built from **token records, not client records**: a CIMD client has no stored registration, so enumerating `client-*` would miss exactly the clients that matter. A revoke sweeps all five record kinds plus the registration in **one transaction**; an unreadable record **fails loudly** instead of being skipped, unlike the sweeper — skipping would report a kill that did not happen. `RevokeAll` spares the operator's account and passkeys. No schema change. 30 subtests, **non-vacuity proven by two mutations**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
 
 ---
 
@@ -130,37 +131,10 @@ the design rather than merely detailing it:
 
 Decisions taken at prep time: **the panic button is in** (operator-approved) — a "revoke
 everything" action with a confirmation step, cheap once enumeration exists and the thing the title
-promises. **No schema change**: SQL filtering decodes the request blobs in Go and deletes over the
-existing indexed `request_id`, so `SchemaVersion` stays 1 and a downgrade stays possible. **All new
+promises. **No schema change**: SQL filtering decodes the request blobs in Go rather than gaining an
+indexed `client_id` column, so `SchemaVersion` stays 1 and a downgrade stays possible. **All new
 code lands in new files** — `kvs.go` (470) and `sql.go` (694) and `auth.go` (534) are already at or
 past the §2 limits that F-022 exists to fix, and this task must not make that worse.
-
-#### F-024a — Enumerate and revoke in the repository layer
-
-**What:** The layer has no enumeration on either backend; this substep adds it, and the kill that
-goes with it, with no UI attached. New `InventoryStorage` on the `Repository` interface:
-`ListClientGrants` aggregates token records per `client_id` (origin CIMD or DCR, grant count,
-access/refresh counts, first and last activity, scopes, redirect hosts, registration expiry), and
-`RevokeClient` / `RevokeGrant` delete. The kill must sweep **all five** record kinds —
-`access_token-`, `refresh_token-`, `authorize_code-`, `pkce_request-`, `authorize_request-` — plus
-the DCR registration where one exists, each in a single transaction; a refresh token left behind
-mints a new access token immediately. bbolt reuses the existing `deleteMatching` cursor helper; SQL
-collects primary keys in one scan and deletes over the indexed `request_id`.
-
-**Files:** `pkg/repository/interface.go`; new `pkg/repository/inventory.go`, `kvs_inventory.go`,
-`sql_inventory.go`, `inventory_test.go`
-
-**Acceptance:**
-- [ ] Both backends satisfy the same contract, exercised through the existing `testRepos` helper
-- [ ] A CIMD client with tokens but **no** client record appears in the listing (finding 1 — the
-      case the obvious implementation gets wrong)
-- [ ] Rotation history aggregates instead of duplicating: 58 refresh records for one client yield
-      one row, not 58
-- [ ] Negative test: revoking one client leaves another client's records untouched, asserted per
-      record kind
-- [ ] Revocation is atomic per backend — a failure mid-sweep leaves no half-revoked grant
-- [ ] `SchemaVersion` unchanged; a store written before this change reads without migration
-- [ ] `gofmt -l .` empty, `go vet ./...` clean, `go test -race ./...` green
 
 #### F-024b — The settings surface and its wiring
 

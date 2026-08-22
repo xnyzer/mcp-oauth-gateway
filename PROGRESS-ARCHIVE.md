@@ -2361,3 +2361,93 @@ trade goes the other way, which is what the README section is for.
 
 **Verification:** only `.md` files touched; `DCR_ENABLED` unchanged in `main.go` and `.env.example`;
 all relative links and every README anchor resolve; gitleaks clean.
+
+## F-024a — Enumerate and revoke in the repository layer — DONE 2026-08-22
+
+First substep of F-024. The repository layer had **no enumeration at all** — no `List`, no `All`, on
+either backend — which is why deleting a single client record in F-017d needed a purpose-built bbolt
+tool. It now has `InventoryStorage`, implemented for bbolt and SQLite, with no UI attached.
+
+### What was done
+
+| Method | Purpose |
+|---|---|
+| `ListClientGrants` | One row per client: origin, registration state and expiry, redirect URIs, scope union, per-grant breakdown, access/refresh record counts, first and last activity — newest activity first |
+| `RevokeClient` | Every record of one client, registration included |
+| `RevokeGrant` | One authorization, client and registration untouched |
+| `RevokeAll` | The panic button, in one transaction |
+
+**The listing is built from token records, not client records.** That is the finding the whole task
+turns on and it survived contact with the code: since v0.3.0 Claude connects via CIMD, and a CIMD
+client has **no stored registration** — `clientSource.lookupClient` re-resolves it from its URL on
+every lookup. Enumerating `client-*` would have listed precisely the clients the operator cares
+about least. Rows are therefore grouped from `access_token-*` / `refresh_token-*` by the client
+snapshot each record carries, with stored registrations joined as a second source so a registration
+without tokens still shows. `TestListClientGrantsFindsCIMDClientWithoutRegistration` is the guard.
+
+**One aggregator, two backends.** `inventory.go` holds the grouping logic and both backends feed it:
+bbolt walks key prefixes, SQL decodes request blobs. The two listings cannot drift apart, because
+there is only one of them.
+
+**Recognisability needed no new field**, as the prep predicted: a CIMD client's ID is its URL, and
+every token record carries a client snapshot with the redirect URIs, so a DCR client with a random
+ID is still identifiable. A stored registration outranks the snapshot — it is the live record.
+
+### Decisions and deviations from the plan
+
+- **`RevokeAll` added** — a fourth method where the plan named three. The approved panic button
+  looped over `RevokeClient` would be N transactions, and a failure in the middle would leave
+  clients with access while the UI reported a kill. One transaction per backend instead.
+- **bbolt does not reuse `deleteMatching`**, which the plan assumed it would: that helper sweeps one
+  prefix per transaction and returns no count, while the kill needs five prefixes plus the
+  registration in **one**. New `staleRecords` + `revoke`; `deleteMatching` stays untouched for the
+  RFC 7009 path it was written for.
+- **SQL deletes uniformly by primary key**, not over the indexed `request_id` as the plan sketched.
+  `RevokeClient` has to decode the request blobs regardless — no column holds the client — so a
+  second, index-based path for two of the five tables would be a second chance to disagree. The
+  index still serves fosite's own revocation.
+- **An unreadable record is an error, not a skip.** This departs from the sweeper's precedent
+  (`kvs.go`: "undecodable records are reclaimed by the sweeper, not revocation") and does so
+  deliberately: for a kill switch, skipping a record means reporting a revoke that did not happen,
+  and for the listing it means hiding a client that holds access. Both now fail loudly, and the
+  transaction rolls back whole.
+- **No schema change.** `SchemaVersion` stays 1 and a downgrade stays possible; SQL filters in Go
+  rather than gaining an indexed `client_id` column, which is affordable because the tables are
+  bounded by the DCR cap and the token TTLs.
+- **The panic button spares the operator.** `RevokeAll` sweeps clients only — the user record, the
+  passkeys and the schema marker survive. Answering a compromise by locking out the only person who
+  can respond to it would be the wrong reflex, so a test guards it.
+
+### Verification
+
+- **30 subtests green** — 15 tests against both backends through the existing `testRepos` helper.
+- **The green suite was not taken on trust.** Two deliberate mutations: dropping the
+  authorization-code sweep from the revoke turned `TestRevokeClientRemovesEveryRecordKindAndSparesOthers`
+  red on **both** backends, and making an undecodable record a skip instead of an error turned both
+  fail-closed tests red. Restored, green again.
+- Rotation history aggregates: **58 refresh records → one row, one grant** (the number F-017d found
+  in the field).
+- Revoking one client leaves another's records untouched, asserted **per record kind** rather than
+  on tokens alone.
+- `TestInventoryNeedsNoMigration` writes, closes and reopens each store, then lists — proof that a
+  store written before this change needs no migration.
+- `gofmt -l` empty; `go vet` clean; `go test -race ./...` green across 11 packages;
+  `golangci-lint` 2.12.2 **0 issues**; `govulncheck` 0 vulnerabilities. No dependency change
+  (`go.mod`/`go.sum` untouched), so licensing is unaffected.
+
+**Standards work done alongside:** three functions came in over the §3 hard limit of 50 lines (55,
+63 and 45) and were split into named helpers rather than parked under the ~80-line orchestration
+exception; the longest is now 42. The test file crossed the §2 300-line target at 470 and was split
+along its own section rules into `inventory_test.go` (listing, 249) and `inventory_revoke_test.go`
+(revocation, 235) — F-022 should not inherit a fresh violation from the task queued ahead of it. Two
+**pre-existing** §11 gaps in the file being edited were closed at the same time: `Repository` and
+`AuthorizeRequestStorage` had no doc comment.
+
+**Noted for F-022, not fixed here:** the bbolt key prefixes now exist as constants in
+`kvs_inventory.go` while `kvs.go` still builds its keys from the same literals. Consolidating them
+means editing `kvs.go`, which F-022 will split anyway.
+
+**Files:** `pkg/repository/interface.go` (extended); new `pkg/repository/inventory.go`,
+`kvs_inventory.go`, `sql_inventory.go`, `inventory_test.go`, `inventory_revoke_test.go`; docs
+`PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No config, endpoint, dependency or schema change; no UI —
+nothing calls the new methods yet, which is F-024b.

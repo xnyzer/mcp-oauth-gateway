@@ -16,6 +16,9 @@ import (
 // SchemaVersion is the current data-store schema version (SPEC §2.5).
 const SchemaVersion = 1
 
+// Repository is the gateway's whole persistence surface: everything fosite
+// needs to run the flows, plus the gateway's own entities (SPEC §2.1). Both
+// backends — bbolt and SQLite — implement it in full; nothing bypasses it.
 type Repository interface {
 	fosite.Storage
 	oauth2.CoreStorage
@@ -25,7 +28,36 @@ type Repository interface {
 	AuthorizeRequestStorage
 	UserStorage
 	MaintenanceStorage
+	InventoryStorage
 	Close() error
+}
+
+// InventoryStorage lets the operator see which clients hold access and take
+// it away again (SPEC §1.12). It is the only storage interface written for a
+// human rather than for fosite: fosite revokes a grant a client asks about
+// (RFC 7009, client-authenticated), never someone else's.
+type InventoryStorage interface {
+	// ListClientGrants returns one row per client that holds access, newest
+	// activity first. The listing is built from token records rather than
+	// from stored registrations, because a CIMD client has no registration
+	// at all — it is re-resolved from its URL on every use (SPEC §1.3), so
+	// enumerating registrations would miss exactly the clients that matter.
+	// Non-expired registrations join as a second source so a registration
+	// without tokens still shows.
+	ListClientGrants(ctx context.Context) ([]ClientGrants, error)
+	// RevokeClient deletes every record of the client — access and refresh
+	// tokens, authorization codes, PKCE sessions, pending authorize requests
+	// and the DCR registration where one exists — and returns the number of
+	// deleted records. Access and refresh tokens must go together: a refresh
+	// token left behind mints a new access token immediately.
+	RevokeClient(ctx context.Context, clientID string) (int, error)
+	// RevokeGrant deletes one authorization's records, leaving the client's
+	// other authorizations and its registration intact.
+	RevokeGrant(ctx context.Context, requestID string) (int, error)
+	// RevokeAll deletes every client's records in one transaction — the
+	// panic case, where looping over RevokeClient could fail halfway and
+	// leave some clients with access while reporting a kill.
+	RevokeAll(ctx context.Context) (int, error)
 }
 
 // UserStorage persists the gateway's single operator account and their
@@ -79,6 +111,9 @@ type DynamicClientStorage interface {
 	CountClients(ctx context.Context) (int, error)
 }
 
+// AuthorizeRequestStorage parks an authorize request between the redirect to
+// the login/consent page and the operator's approval, keyed by the ar_id the
+// session carries (SPEC §1.5).
 type AuthorizeRequestStorage interface {
 	CreateAuthorizeRequest(ctx context.Context, request fosite.AuthorizeRequester) error
 	GetAuthorizeRequest(ctx context.Context, requestID string) (fosite.AuthorizeRequester, error)
