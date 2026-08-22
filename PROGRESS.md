@@ -9,12 +9,13 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 2026-07-28** (F-017; conformance recorded requirement by requirement in `SPEC.md` §4). Feature-
 complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. Every roadmap task
-F-001–F-018, F-020, F-021 and F-023 is done — rationale archived in `PROGRESS-ARCHIVE.md`.
+F-001–F-021 and F-023 is done — rationale archived in `PROGRESS-ARCHIVE.md`.
 
-**No open tasks.** With F-021 done, `SPEC.md` §4 records **no unmet requirement** — the ✘ the
-spec re-check left behind is closed. Three ideas remain in the backlog, each needing `/prep-step`
-first; of those, **F-019** is decidable now, because F-017d showed the DCR store stops growing once
-clients use CIMD. Everything since v0.2.1 is unreleased.
+**No open tasks.** `SPEC.md` §4 records **no unmet requirement** since F-021, and F-019 settled the
+last open decision (DCR stays enabled by default). Two ideas remain in the backlog — **F-022**
+(six files past the §2 hard limit) and **F-024** (an operator client list with a kill switch) —
+each needing `/prep-step` first. **Everything since the `v0.2.1` tag is unreleased**, and F-021
+changes runtime behaviour, so the next release is due.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
@@ -71,6 +72,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-017d | Live verification and release → **released `v0.2.0`, deployed, verified live — and the verification broke, which is what made it worth running.** Server side all green, incl. the F-015 proof: `client_id_metadata_document_supported` was **absent before** the switch and `true` after. Client side defeated three approaches (second connector refused; remove+re-add reuses stored credentials and produces *no* OAuth flow; `DCR_CLIENT_TTL` never fires because it is refreshed on every token issuance), so the DCR record was deleted from the store — 2 records before, F-019's evidence that it *had* been growing. Claude then switched to CIMD and the gateway refused it → **F-023 → v0.2.1**, after which `token_issued` carried a **URL** client_id and **zero** `register` events. Corrected a wrong premise en route: the host ran **0.1.1**, not 0.1.0 — the local compose copy had drifted for six weeks. Runbook gained "Force a fresh client registration", because a verification that only exercises an already-connected client passes while the gateway is broken for every new one. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-017 | **Re-verify against the final MCP 2026-07-28 spec — complete** (a/b/c/d): watch item closed, deliberately without a successor. The authorization surface needed **no change** — all six SEPs still satisfied — so everything this task fixed lay elsewhere: a credential-injection spoofing path (F-017b), a CIMD resolver defect that made CIMD unusable with real clients (F-023), and documentation claiming conformance without evidence (F-017c, now `SPEC.md` §4). A paper re-check would have concluded "conformant, no action" and been wrong twice. One MUST recorded as **unmet** rather than glossed over: `Origin` validation (F-021). Released **v0.2.0** and **v0.2.1**, both live-verified. Spawned F-021, F-022, F-023, F-024. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-021 | Validate the `Origin` header (DNS rebinding, SR-9) → **closes the one unmet MUST** the F-017 re-check found; `SPEC.md` §4.2 now reads ✔. A foreign or `null` Origin gets `403`; an **absent** header passes, deliberately — server-side MCP clients send none, so rejecting absence would take the gateway offline for every real client. Comparison on scheme+host+port, host lower-cased, default ports elided. `ORIGIN_CHECK_ENABLED=false` is the rescue, logged at startup. **The fail-closed test caught a real bug:** an expected origin normalizing to `""` would have matched `Origin: null` and turned the guard into a wildcard while its comment claimed otherwise. Also found: IPv6 bracket handling, and that **the e2e suite does not prove the wiring** (it builds its own router) — verified against the running binary instead. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
+| F-019 | Evaluate whether DCR can be switched off → **decision: `DCR_ENABLED` stays `true`**, no code. F-017d supplied the evidence asked for (Claude picks CIMD, the store stops growing) — but that shows *Claude* needs no DCR, not that no client does. The decisive argument arrived after the entry was written: **F-023 made DCR the documented escape hatch** when a CIMD document cannot be fetched (#650), so a `false` default would *break* that advice — flipping only `CIMD_ENABLED=false` hits the both-disabled fail-fast and the gateway refuses to start. The original motivation was gone anyway: the store grew *because* clients were forced onto DCR, which F-015 fixed. Delivered as guidance rather than a bare verdict — a README section on when an operator *should* disable it, the re-decision beside F-003 in REQUIREMENTS §6, and `SPEC.md` §4.1 updated because it still posed the question this task answered. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
 
 ---
 
@@ -81,37 +83,7 @@ entry, run `/prep-step` on it, and it moves up here.
 
 ---
 
----
-
 ## Feature ideas (backlog)
-
-### F-019 — Evaluate whether DCR can be switched off
-
-**Problem:** F-003 decided "CIMD-first with DCR as the deprecated fallback" at a time when the AS
-metadata did not advertise CIMD at all — the very gap F-015 closed. With the advertisement in
-place, real clients pick CIMD, and the final MCP 2026-07-28 spec formally deprecates DCR while
-keeping it for authorization servers that cannot do CIMD. Whether *this* gateway still needs it
-is now an open question rather than a settled one.
-
-**Idea:** Re-run the F-003 decision against the post-F-015 reality: which clients would still need
-DCR, what breaks if it is off, and under what conditions `DCR_ENABLED` could default to `false`.
-A decision task — "keep it as it is" is a valid outcome.
-
-**Possible implementation:**
-- Evidence first: confirm from a live deployment that clients actually switched to CIMD after
-  F-015 (the DCR store should stop growing).
-- Inventory what changes when DCR is off: `registration_endpoint` disappears from the AS metadata
-  (already conditional on `dcrEnabled`), `POST /.idp/register` is not routed, and
-  `DCR_CLIENT_TTL`/`DCR_MAX_CLIENTS` become inert. Startup fails fast if neither mechanism is
-  enabled, so the off-switch cannot strand the gateway.
-- Weigh it against the generic-gateway promise: the README targets *any* OAuth-only MCP client,
-  not only Claude. A `false` default trades reach for a smaller attack surface and a smaller store.
-- If the answer is "switch the default", that is its own implementation task with a CHANGELOG
-  upgrade note — this entry produces only the decision.
-
-**Dependencies:** F-015 (live-verified, not merely committed) and F-017.
-
----
 
 ### F-022 — Bring the remaining oversized files under the §2 limits
 
@@ -233,7 +205,7 @@ F-015 Advertise CIMD support in the AS metadata (DONE)
 F-016 Port-agnostic loopback matching for localhost redirect URIs (DONE)
 F-017 Re-verify against the final MCP 2026-07-28 authorization spec (DONE)
 F-018 Build the container image in CI (DONE)
-F-019 Evaluate whether DCR can be switched off (backlog)
+F-019 Evaluate whether DCR can be switched off (DONE)
 F-020 Split pkg/idp/idp.go along its seams (DONE)
 F-021 Validate the Origin header (DNS rebinding, SR-9) (DONE)
 F-022 Bring the remaining oversized files under the §2 limits (BACKLOG)

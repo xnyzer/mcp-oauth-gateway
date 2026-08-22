@@ -108,6 +108,13 @@ IdP; multi-tenant SaaS. (Multi-user must not be architecturally precluded.)
 ## 6. Decisions (rationale in PROGRESS-ARCHIVE.md)
 - **Build vs fork** → hard fork of `sigbit/mcp-auth-proxy` (F-001).
 - **Language + OAuth library** → Go + Ory Fosite (F-002).
-- **Client registration** → CIMD-first, DCR as deprecated fallback (F-003).
+- **Client registration** → CIMD-first, DCR as deprecated fallback (F-003), **re-confirmed
+  2026-08-22 (F-019)**: `DCR_ENABLED` stays `true` by default. F-003 was decided when the AS
+  metadata did not advertise CIMD at all, so the question was reopened once F-015 fixed that and
+  F-017d proved live that clients then choose CIMD and the DCR store stops growing. It stays on
+  anyway, for a reason that only appeared afterwards — F-023 made DCR the **documented escape
+  hatch** when a client's CIMD document cannot be fetched (see `README.md`); defaulting it off
+  would break that advice, because disabling both mechanisms makes the gateway refuse to start.
+  Individual deployments that serve only CIMD-capable clients may still set it to `false`.
 - **Persistence** → bbolt (default) / SQLite (F-008c).
 - Still open: multi-user evolution (single user now; must not be architecturally precluded, §1).

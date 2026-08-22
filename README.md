@@ -240,7 +240,7 @@ after the first login.
 | `ORIGIN_CHECK_ENABLED` | `true` | Reject requests whose `Origin` header names a foreign origin (DNS rebinding, see the [note](#origin-validation-and-external_url)). A request **without** an `Origin` header always passes. |
 | `CIMD_ENABLED` | `true` | Accept CIMD client IDs (HTTPS URLs). Setting `false` also removes it from the AS metadata, so clients fall back to DCR — the escape hatch when the metadata document cannot be fetched (see the [CIMD note](#cimd-note-for-datacenter-deployments-also-a-silent-failure)). |
 | `CIMD_FETCH_TIMEOUT` / `CIMD_MAX_SIZE` / `CIMD_CACHE_TTL` | `5s` / `65536` / `1h` | CIMD resolution limits. |
-| `DCR_ENABLED` | `true` | Serve the deprecated RFC 7591 registration endpoint. |
+| `DCR_ENABLED` | `true` | Serve the deprecated RFC 7591 registration endpoint. Turning it off shrinks the public surface — see [below](#should-you-turn-dcr-off). |
 | `DCR_CLIENT_TTL` / `DCR_MAX_CLIENTS` | `720h` / `100` | DCR registration expiry / cap. |
 | `KEY_ALG` | `RS256` | `RS256` or `ES256`; switching triggers a key rotation. |
 | `KEY_ROTATION_INTERVAL` | `2160h` (90 d) | Automatic rotation interval (≥1h); `0` disables. |
@@ -254,6 +254,29 @@ after the first login.
 |---|---|---|
 | `RATE_LIMIT_REGISTER` / `RATE_LIMIT_TOKEN` / `RATE_LIMIT_LOGIN` / `RATE_LIMIT_AUTHORIZE` | `10/m` / `60/m` / `10/m` / `60/m` | Per-client-IP token buckets, format `N/s\|m\|h`; `0` disables (not recommended). Over-limit → `429`. |
 | `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_DURATION` | `10` / `15m` | Account lockout after N consecutive failed password logins; threshold `0` disables. |
+
+### Should you turn DCR off?
+
+Clients identify themselves either by **CIMD** (an HTTPS URL pointing at a metadata document) or
+by **Dynamic Client Registration**, which the MCP spec deprecates but keeps for authorization
+servers that cannot do CIMD. This gateway does both, CIMD first.
+
+`DCR_ENABLED=false` removes `POST /.idp/register` from the routing table and drops
+`registration_endpoint` from the AS metadata, so the public surface gets smaller by one open
+endpoint. If every client you serve speaks CIMD — and Claude does — that is a reasonable trade for
+your deployment.
+
+Two things to know before you do it:
+
+- **Never combine it with `CIMD_ENABLED=false`.** With both mechanisms disabled the gateway refuses
+  to start, by design. In particular, DCR is the fallback recommended in the
+  [CIMD note above](#cimd-note-for-datacenter-deployments-also-a-silent-failure) when a client's
+  metadata document cannot be fetched — turning DCR off removes that rescue.
+- **Any client that cannot do CIMD stops working**, with no partial degradation: it has no way to
+  obtain a `client_id` at all.
+
+The default stays `true` because this gateway targets any OAuth-only MCP client, not one vendor's.
+The narrowing is yours to make, deployment by deployment.
 
 ## Operations
 

@@ -659,7 +659,7 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 |---|---|---|
 | AS implements OAuth 2.1 for confidential **and** public clients | MUST | ✔ Ory Fosite; PKCE/S256 enforced for every client since F-012b |
 | AS supports Client ID Metadata Documents | SHOULD | ✔ `pkg/cimd` (§1.3), advertised as `client_id_metadata_document_supported` since F-015 |
-| DCR kept only for backwards compatibility | MAY | ✔ optional, disableable via `DCR_ENABLED` (§1.4); F-019 asks whether it should default to off |
+| DCR kept only for backwards compatibility | MAY | ✔ optional, disableable via `DCR_ENABLED` (§1.4). **F-019 re-confirmed the `true` default (2026-08-22):** DCR is the documented rescue when a client's CIMD document cannot be fetched, so defaulting it off would break that path. An individual deployment serving only CIMD-capable clients may still disable it |
 | Resource server implements PRM (RFC 9728) | MUST | ✔ §1.1 |
 | AS provides RFC 8414 **or** OIDC Discovery | MUST | ✔ both (§1.2) |
 | `iss` in the authorization response (RFC 9207) | SHOULD | ✔ F-005a |
