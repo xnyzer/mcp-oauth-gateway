@@ -9,13 +9,12 @@ How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares
 2026-07-28** (F-017; conformance recorded requirement by requirement in `SPEC.md` §4). Feature-
 complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. Every roadmap task
-F-001–F-018, F-020, F-023 is done — rationale archived in `PROGRESS-ARCHIVE.md`.
+F-001–F-018, F-020, F-021 and F-023 is done — rationale archived in `PROGRESS-ARCHIVE.md`.
 
-**No open tasks.** The execution list below is empty for the first time; four ideas sit in the
-backlog and each needs `/prep-step` before it can be built. Two are worth knowing about:
-**F-021** is the one **unmet MUST** the spec re-check found (`Origin` validation, recorded in
-`SPEC.md` §4.2), and **F-019** can now be decided — F-017d showed the DCR store stops growing once
-clients use CIMD.
+**No open tasks.** With F-021 done, `SPEC.md` §4 records **no unmet requirement** — the ✘ the
+spec re-check left behind is closed. Three ideas remain in the backlog, each needing `/prep-step`
+first; of those, **F-019** is decidable now, because F-017d showed the DCR store stops growing once
+clients use CIMD. Everything since v0.2.1 is unreleased.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
@@ -71,6 +70,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-023 | CIMD documents rejected over a foreign grant type → **the defect v0.2.0 made reachable**. Claude's published document declares `jwt-bearer` beside `authorization_code` and `refresh_token`; the resolver validated the whole list against its supported set and rejected the **entire client** (`invalid_client`, connector dead). A CIMD document is published once and shown to *every* AS, so it names the union of the client's abilities — refusing it for that makes CIMD unusable. Now **narrowed** to the supported subset (fail-closed; nothing-supported still rejected); **DCR stays strict**, since a registration request addresses one server. Hidden until F-015 made clients actually choose CIMD. Regression test reproduces the live error message verbatim; two tests that encoded the old behaviour were deliberately changed. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-017d | Live verification and release → **released `v0.2.0`, deployed, verified live — and the verification broke, which is what made it worth running.** Server side all green, incl. the F-015 proof: `client_id_metadata_document_supported` was **absent before** the switch and `true` after. Client side defeated three approaches (second connector refused; remove+re-add reuses stored credentials and produces *no* OAuth flow; `DCR_CLIENT_TTL` never fires because it is refreshed on every token issuance), so the DCR record was deleted from the store — 2 records before, F-019's evidence that it *had* been growing. Claude then switched to CIMD and the gateway refused it → **F-023 → v0.2.1**, after which `token_issued` carried a **URL** client_id and **zero** `register` events. Corrected a wrong premise en route: the host ran **0.1.1**, not 0.1.0 — the local compose copy had drifted for six weeks. Runbook gained "Force a fresh client registration", because a verification that only exercises an already-connected client passes while the gateway is broken for every new one. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-017 | **Re-verify against the final MCP 2026-07-28 spec — complete** (a/b/c/d): watch item closed, deliberately without a successor. The authorization surface needed **no change** — all six SEPs still satisfied — so everything this task fixed lay elsewhere: a credential-injection spoofing path (F-017b), a CIMD resolver defect that made CIMD unusable with real clients (F-023), and documentation claiming conformance without evidence (F-017c, now `SPEC.md` §4). A paper re-check would have concluded "conformant, no action" and been wrong twice. One MUST recorded as **unmet** rather than glossed over: `Origin` validation (F-021). Released **v0.2.0** and **v0.2.1**, both live-verified. Spawned F-021, F-022, F-023, F-024. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
+| F-021 | Validate the `Origin` header (DNS rebinding, SR-9) → **closes the one unmet MUST** the F-017 re-check found; `SPEC.md` §4.2 now reads ✔. A foreign or `null` Origin gets `403`; an **absent** header passes, deliberately — server-side MCP clients send none, so rejecting absence would take the gateway offline for every real client. Comparison on scheme+host+port, host lower-cased, default ports elided. `ORIGIN_CHECK_ENABLED=false` is the rescue, logged at startup. **The fail-closed test caught a real bug:** an expected origin normalizing to `""` would have matched `Origin: null` and turned the guard into a wildcard while its comment claimed otherwise. Also found: IPv6 bracket handling, and that **the e2e suite does not prove the wiring** (it builds its own router) — verified against the running binary instead. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
 
 ---
 
@@ -78,6 +78,8 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 
 _Empty._ Everything intaked so far is either done or still in the backlog below. Pick a backlog
 entry, run `/prep-step` on it, and it moves up here.
+
+---
 
 ---
 
@@ -108,50 +110,6 @@ A decision task — "keep it as it is" is a valid outcome.
   upgrade note — this entry produces only the decision.
 
 **Dependencies:** F-015 (live-verified, not merely committed) and F-017.
-
----
-
-### F-021 — Validate the `Origin` header (DNS rebinding, SR-9)
-
-**Status:** BACKLOG
-
-**Problem:** The Streamable HTTP transport has required servers to validate `Origin` and answer
-`403 Forbidden` when a present value is invalid since protocol version **2025-03-26** — this is not
-new in 2026-07-28, it was simply never noticed, including by the F-006b audit. The gateway reads
-`Origin` nowhere. It also leaves half of **SR-9** ("Tight CORS/headers") unfulfilled: SPEC §0
-implements only the `Cache-Control: no-store` part, and nothing tracks the other half as open.
-
-**Idea:** Validate `Origin` **only when the client actually sends it**, against the origin derived
-from `EXTERNAL_URL`, and answer 403 otherwise — plus an env option to switch the check off, so an
-operator whose deployment it breaks can rescue it instead of having to downgrade.
-
-**Possible implementation:**
-- **Act on a present header only.** Server-side MCP clients send no `Origin` at all: Claude connects
-  from Anthropic's cloud, not from the user's browser, so the common deployment is untouched by
-  design rather than by luck. A *missing* `Origin` must stay allowed — treating absence as a
-  violation would reject every real client and turn a hardening measure into an outage.
-- Natural allow-list: the origin of `EXTERNAL_URL`. The gateway emits no CORS headers at all, so no
-  legitimate cross-origin browser client works today anyway — a strict default costs nothing that
-  currently functions.
-- **Off-switch via env, defaulting to enabled** (SR-3 stays fail-closed; disabling is an explicit
-  operator decision, and the disabled state belongs in the startup log so it cannot be forgotten).
-- Severity is **defence-in-depth, not an open hole** — the entry should not be read as urgent.
-  `/mcp` is bearer-protected, so a rebinding attacker without a token already gets 401; `/.auth/*`
-  is the browser surface where rebinding would actually bite, and it has carried per-session CSRF
-  tokens and `SameSite=Lax` since F-012c. The case this genuinely improves is a **loopback
-  deployment**, the classic rebinding target — and F-016 showed those are real here.
-- **Sequenced after the release on purpose.** This is exactly the class of change that silently
-  broke the Claude connector twice (F-015, F-016). Landing it once v0.2.0 is released *and* live-
-  verified gives a known-good state to measure against, instead of two variables at once.
-
-**Still to analyse:** whether the env option should be a boolean off-switch or an
-`ALLOWED_ORIGINS` list that widens the accepted set. A list is the more useful shape if
-browser-based MCP clients ever matter; an off-switch is the simpler rescue. Also open: whether the
-check belongs on every route or only on `/mcp` and `/.auth/*` — the `.well-known` documents are
-public by definition and a 403 there would be surprising.
-
-**Dependencies:** F-017 (F-017c records the gap in its conformance table; this entry must not delay
-the v0.2.0 release, and it wants a live-verified deployment to land against).
 
 ---
 
@@ -277,7 +235,7 @@ F-017 Re-verify against the final MCP 2026-07-28 authorization spec (DONE)
 F-018 Build the container image in CI (DONE)
 F-019 Evaluate whether DCR can be switched off (backlog)
 F-020 Split pkg/idp/idp.go along its seams (DONE)
-F-021 Validate the Origin header (DNS rebinding, SR-9) (BACKLOG)
+F-021 Validate the Origin header (DNS rebinding, SR-9) (DONE)
 F-022 Bring the remaining oversized files under the §2 limits (BACKLOG)
 F-023 CIMD documents rejected over a foreign grant type (DONE)
 F-024 Operator view of connected clients, with a kill switch (BACKLOG)

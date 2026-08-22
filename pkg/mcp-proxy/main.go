@@ -86,6 +86,10 @@ type Config struct {
 	HeaderMapping              map[string]string
 	HeaderMappingBase          string
 
+	// OriginCheckEnabled rejects a request whose Origin header names a
+	// foreign origin (SR-9, on by default in main.go). A request without an
+	// Origin header always passes — see requireSameOrigin.
+	OriginCheckEnabled bool
 	// OIDCDiscoveryMirror serves the AS metadata additionally under
 	// /.well-known/openid-configuration (SPEC §1.2, off by default).
 	OIDCDiscoveryMirror bool
@@ -628,6 +632,16 @@ func Run(cfg Config) error {
 		}
 		c.AbortWithStatus(http.StatusInternalServerError)
 	}))
+	// Ahead of the session store and every route, so a rebinding attempt is
+	// turned away before it can touch session or auth state. /healthz is
+	// registered above this line and therefore stays reachable regardless.
+	if cfg.OriginCheckEnabled {
+		router.Use(requireSameOrigin(normalizeOrigin(parsedExternalURL.String()), logger))
+	} else {
+		logger.Warn("Origin validation is disabled (ORIGIN_CHECK_ENABLED=false); " +
+			"the gateway will accept requests from any origin (SR-9)")
+	}
+
 	// Derive distinct authentication and encryption subkeys for the operator
 	// session cookie so it is signed AND encrypted (SPEC §1.12/§2.2). fosite
 	// keeps the raw secret as its GlobalSecret, so issued tokens are

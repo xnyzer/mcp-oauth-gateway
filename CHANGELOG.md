@@ -5,6 +5,34 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
+## [Unreleased]
+
+### Added
+
+- **`Origin` validation (SR-9).** A request whose `Origin` header names anything other than the
+  `EXTERNAL_URL` origin is now answered `403`, which is what stops a page loaded elsewhere from
+  driving the gateway through a victim's browser (DNS rebinding). The Streamable HTTP transport has
+  required this since protocol version **2025-03-26**; the gateway never implemented it, and the
+  F-006b audit missed it. Recorded as an unmet MUST in `SPEC.md` §4.2 since v0.2.0 — now satisfied.
+
+  A request **without** an `Origin` header passes, deliberately and as the specification intends:
+  server-side MCP clients send none, so treating absence as a violation would reject every real
+  client. `Origin: null` — sandboxed iframes, `file://`, some redirect chains — counts as present
+  and invalid. Comparison is on scheme, host and port, with the host lower-cased and default ports
+  elided. `GET /healthz` is registered ahead of the check and stays reachable regardless.
+
+  New `ORIGIN_CHECK_ENABLED` (default `true`) turns it off for deployments it breaks; the disabled
+  state is logged at startup.
+
+### Upgrade notes
+
+- **Check that `EXTERNAL_URL` matches what your browser address bar shows before upgrading.**
+  Browsers send `Origin` on same-origin POSTs too, so the operator login and consent POSTs on
+  `/.auth/*` now carry it. If you reach the gateway under a second hostname, by IP, or on a
+  different port, those POSTs are refused with `403` and you cannot log in. Every rejection is
+  logged at WARN with the offending *and* the expected origin, so the cause is one log line;
+  `ORIGIN_CHECK_ENABLED=false` is the rescue. MCP clients are unaffected — they send no `Origin`.
+
 ## [0.2.1] — 2026-08-21
 
 Hotfix for a defect that v0.2.0 made reachable: with CIMD finally advertised, real clients chose

@@ -229,6 +229,7 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var accessTokenTTL time.Duration
 	var authCodeTTL time.Duration
 	var refreshTokenTTL time.Duration
+	var originCheckEnabled bool
 	var cimdEnabled bool
 	var cimdFetchTimeout time.Duration
 	var cimdMaxSize int64
@@ -320,13 +321,14 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				AuthCodeTTL:         authCodeTTL,
 				RefreshTokenTTL:     refreshTokenTTL,
 
-				CIMDEnabled:      cimdEnabled,
-				CIMDFetchTimeout: cimdFetchTimeout,
-				CIMDMaxSize:      cimdMaxSize,
-				CIMDCacheTTL:     cimdCacheTTL,
-				DCREnabled:       dcrEnabled,
-				DCRClientTTL:     dcrClientTTL,
-				DCRMaxClients:    dcrMaxClients,
+				OriginCheckEnabled: originCheckEnabled,
+				CIMDEnabled:        cimdEnabled,
+				CIMDFetchTimeout:   cimdFetchTimeout,
+				CIMDMaxSize:        cimdMaxSize,
+				CIMDCacheTTL:       cimdCacheTTL,
+				DCREnabled:         dcrEnabled,
+				DCRClientTTL:       dcrClientTTL,
+				DCRMaxClients:      dcrMaxClients,
 
 				KeyAlg:              keyAlg,
 				KeyRotationInterval: keyRotationInterval,
@@ -376,6 +378,7 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().DurationVar(&refreshTokenTTL, "refresh-token-ttl", getEnvDurationWithDefault("REFRESH_TOKEN_TTL", 720*time.Hour), "Refresh token lifetime (1h-8760h; 0 disables the refresh grant)")
 
 	// Client registration: CIMD (primary) + DCR (deprecated fallback)
+	rootCmd.Flags().BoolVar(&originCheckEnabled, "origin-check-enabled", getEnvBoolWithDefault("ORIGIN_CHECK_ENABLED", true), "Reject requests whose Origin header names a foreign origin (a missing Origin always passes)")
 	rootCmd.Flags().BoolVar(&cimdEnabled, "cimd-enabled", getEnvBoolWithDefault("CIMD_ENABLED", true), "Accept CIMD client IDs (HTTPS URLs resolving to a Client ID Metadata Document)")
 	rootCmd.Flags().DurationVar(&cimdFetchTimeout, "cimd-fetch-timeout", getEnvDurationWithDefault("CIMD_FETCH_TIMEOUT", 5*time.Second), "Timeout for fetching a CIMD document (1s-1m)")
 	rootCmd.Flags().Int64Var(&cimdMaxSize, "cimd-max-size", getEnvInt64WithDefault("CIMD_MAX_SIZE", 65536), "Maximum CIMD document size in bytes (1KiB-1MiB)")

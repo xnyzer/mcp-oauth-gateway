@@ -29,6 +29,13 @@
 - **Security headers:** token and authorization responses carry `Cache-Control: no-store`
   (SR-9). All endpoints assume TLS termination (SR-2), either built-in (ACME) or by the
   fronting reverse proxy (GR-1).
+- **Origin validation (SR-9, `ORIGIN_CHECK_ENABLED`, default on):** a request whose `Origin`
+  header names anything other than the `EXTERNAL_URL` origin is answered `403`. A request
+  **without** an `Origin` header passes — server-side MCP clients send none, so treating
+  absence as a violation would reject every real client. `Origin: null` (sandboxed iframes,
+  `file://`, some redirect chains) counts as present and invalid. Comparison is on
+  scheme + host + port with the host lower-cased and default ports elided. `GET /healthz`
+  is registered ahead of the check and stays reachable regardless. **Done (F-021).**
 - **Fail-closed:** any validation or storage error on an auth path results in denial
   (400/401/403), never in an authenticated default (SR-3).
 
@@ -602,6 +609,7 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 | `ACCESS_TOKEN_TTL` | `1h` | §1.7 `exp`. Go duration; 1 m–24 h. **Done (F-005b).** |
 | `AUTH_CODE_TTL` | `10m` | §1.5. 30 s–1 h. **Done (F-005b).** |
 | `REFRESH_TOKEN_TTL` | `720h` (30 d) | §2.1. `0` disables the refresh grant (also removed from metadata). **Done (F-005b).** |
+| `ORIGIN_CHECK_ENABLED` | `true` | §0 Origin validation (SR-9). `false` accepts any origin — rescue switch, logged at startup. **Done (F-021).** |
 | `CIMD_ENABLED` | `true` | §1.3. Disabling leaves DCR-only (not recommended). **Done (F-005c).** |
 | `CIMD_FETCH_TIMEOUT` / `CIMD_MAX_SIZE` / `CIMD_CACHE_TTL` | `5s` / `65536` / `1h` | §1.3 resolution limits (1s–1m / 1KiB–1MiB / 1m–24h). **Done (F-005c).** |
 | `DCR_ENABLED` | `true` | §1.4. `false` removes `registration_endpoint` from metadata and 404s `/.idp/register`. At least one of CIMD/DCR must stay enabled. **Done (F-005c).** |
@@ -677,7 +685,7 @@ the upstream to comply.
 |---|---|---|---|
 | Intermediaries forward unrecognised `Mcp-Param-{Name}` headers and otherwise ignore them | MUST | **gateway** | ✔ F-017b — `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` reach the upstream unchanged and exactly once, asserted by test |
 | A client must not be able to shadow an injected upstream credential | SR-7 | **gateway** | ✔ F-017b, §1.11.4 |
-| `Origin` validated; 403 when present and invalid | MUST | **gateway** | ✘ **not implemented — F-021.** Unchanged since protocol 2025-03-26 and missed by the F-006b audit. Mitigated, not satisfied: `/mcp` is bearer-protected and `/.auth/*` carries per-session CSRF tokens plus `SameSite=Lax` (F-012c), so a **loopback deployment** is the exposed case |
+| `Origin` validated; 403 when present and invalid | MUST | **gateway** | ✔ **F-021** — a foreign or `null` origin is refused with 403; an absent header passes, as the specification intends. Disableable via `ORIGIN_CHECK_ENABLED` for deployments the check breaks |
 | Authentication on all connections | SHOULD | **gateway** | ✔ the gateway's entire purpose |
 | Server implements `server/discover` | MUST | upstream | n/a — a JSON-RPC method, not a path. The reserved-namespace guard matches URL path prefixes only and cannot swallow it (asserted by test, F-017b) |
 | Header values validated against the body (`HeaderMismatch`, `-32020`) | MUST | upstream | n/a — the gateway does not parse bodies |
