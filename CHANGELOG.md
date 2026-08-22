@@ -5,7 +5,7 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
-## [Unreleased]
+## [0.3.0] — 2026-08-22
 
 ### Added
 
@@ -23,6 +23,25 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
 
   New `ORIGIN_CHECK_ENABLED` (default `true`) turns it off for deployments it breaks; the disabled
   state is logged at startup.
+
+### Documentation
+
+- **`DCR_ENABLED` re-confirmed as `true` by default**, and the README now says when *you* might
+  want to change that. Dynamic Client Registration was reconsidered once clients actually started
+  choosing CIMD: turning it off shrinks the public surface by one open endpoint and suits a
+  deployment that serves only CIMD-capable clients. It stays on by default because it is the
+  documented rescue when a client's metadata document cannot be fetched — and because disabling
+  both mechanisms makes the gateway refuse to start, a `false` default would turn that rescue into
+  an outage. New README section "Should you turn DCR off?"; the decision is recorded in
+  `REQUIREMENTS.md` §6 beside the original one.
+- `SPEC.md` §4 now records **no unmet requirement**: the `Origin` row that carried a ✘ since v0.2.0
+  reads satisfied.
+
+### Changed
+
+- Dependencies: `jaeger-idl` 0.11.1. CI actions: `actions/setup-go` v7 and
+  `softprops/action-gh-release` v3 — the latter is the step that publishes this release, so it runs
+  here for the first time.
 
 ### Upgrade notes
 

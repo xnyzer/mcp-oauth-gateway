@@ -4,8 +4,8 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State: released and live.** **v0.2.1 is public** — repo public, multi-arch image on GHCR
-(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.2.1`/`0.2`), verified against the **final MCP spec
+**State: released and live.** **v0.3.0 is public** — repo public, multi-arch image on GHCR
+(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.3.0`/`0.3`), verified against the **final MCP spec
 2026-07-28** (F-017; conformance recorded requirement by requirement in `SPEC.md` §4). Feature-
 complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. Every roadmap task
@@ -14,8 +14,8 @@ F-001–F-021 and F-023 is done — rationale archived in `PROGRESS-ARCHIVE.md`.
 **No open tasks.** `SPEC.md` §4 records **no unmet requirement** since F-021, and F-019 settled the
 last open decision (DCR stays enabled by default). Two ideas remain in the backlog — **F-022**
 (six files past the §2 hard limit) and **F-024** (an operator client list with a kill switch) —
-each needing `/prep-step` first. **Everything since the `v0.2.1` tag is unreleased**, and F-021
-changes runtime behaviour, so the next release is due.
+each needing `/prep-step` first. Released as **v0.3.0** (F-021's
+`Origin` validation changes runtime behaviour, so it is a minor bump, not a patch).
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
