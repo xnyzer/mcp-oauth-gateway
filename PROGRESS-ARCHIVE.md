@@ -2451,3 +2451,93 @@ means editing `kvs.go`, which F-022 will split anyway.
 `kvs_inventory.go`, `sql_inventory.go`, `inventory_test.go`, `inventory_revoke_test.go`; docs
 `PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No config, endpoint, dependency or schema change; no UI —
 nothing calls the new methods yet, which is F-024b.
+
+## F-024b — The settings surface and its wiring — DONE 2026-08-23
+
+Second substep of F-024. `/.auth/settings` gained a **Connected clients** section: who holds
+access, what they hold, and the actions that take it away — per client, per authorization, and the
+panic button for everything at once. It sits behind the page's existing gates (`RequireAuth` +
+`RequireCSRF` + `requireOwnUser`) and follows the "delete passkey" POST as the working template for
+a destructive per-row action.
+
+### What was done
+
+- **`pkg/auth/clients.go`** — the view model and three handlers. `clientView` is a projection *by
+  construction*: the stored records carry the client's hashed secret and the type has nowhere to put
+  it, so no later template change can leak one. Redirect URIs are reduced to their distinct hosts —
+  the recognisable part for a DCR client, whose ID is random — and a URI that does not parse
+  contributes nothing rather than being rendered raw.
+- **The template** shows one row per client (identity, CIMD or registration, redirect hosts,
+  registration expiry, counts, last activity) with the authorizations behind a `<details>`. The
+  wording says what an entry actually is: **per client and per authorization, not per device**, and
+  a revoke ends access without banning the client.
+- **Auth events (SR-8):** every revoke logs `revoked` with actor, scope, record count and client IP —
+  an operator kill is now visible in the log beside the client-initiated RFC 7009 revocations that
+  share the event name. Only non-secret context travels.
+- **Wiring:** one line in `pkg/mcp-proxy/main.go`.
+
+### The mutation that mattered
+
+The suite was green on the first run, and one of its security tests was green **for the wrong
+reason**. Removing `requireOwnUser` from the client-revoke handler left
+`TestSettingsRevokeRejectsForeignSession` passing: the test used a bare `&http.Client{}`, which
+*follows redirects*, so the handler's `302` was chased to the settings page — and that page's own
+`403` satisfied the assertion. The test could never have failed when the gate it names was deleted.
+Fixed by using the non-following client the package already has; the mutation then turns it red as
+it should. The pattern came from the existing `TestSettingsRejectForeignSession`, where it is
+harmless because the WebAuthn endpoint answers `403` directly instead of redirecting.
+
+Two further mutations behaved correctly: dropping `RequireCSRF` from the revoke route turned the
+CSRF test red, and swallowing the enumeration error turned the fail-closed test red.
+
+### Decisions and deviations from the plan
+
+- **`Config.Clients` is required when `Users` is set**, not optional with a nil check. A nil check
+  in the handler would have been exactly the second visibility rule the acceptance criterion rules
+  out; requiring it removes the nil case, mirrors the `ExternalURL` contract already documented in
+  the same struct, and fails at construction rather than at the operator's first visit (§7). Cost:
+  five construction sites updated — one production, four test files.
+- **`pkg/auth/settings.go` was touched** although the plan did not list it: `handleSettings` renders
+  the page, so that is where the list has to be loaded. `credentialViews` was extracted while there
+  to keep the handler under the §3 limit (47 lines).
+- **The confirmation is a server-rendered two-step** (`?confirm=revoke_all` renders a panel that
+  carries the POST), not a JavaScript dialog — it works without JS and is genuinely two deliberate
+  actions. The code records what it is: a guard against a slip, **not** against an attacker. The
+  CSRF token and the session are what make the POST authentic; a direct POST by the logged-in
+  operator still works, and that is the correct boundary.
+- **The panic button only appears when something can be revoked**, and its panel states that the
+  operator's own login, passkeys and settings are untouched and that no client is banned.
+- **An unknown client ID answers exactly like a successful revoke** — same status, same `Location`.
+  The operator's own page gains nothing from an existence oracle, and a typo should not read
+  differently from a kill.
+
+### Verification
+
+- 15 tests in `pkg/auth` covering the surface, including every negative case the plan demanded:
+  missing and wrong CSRF token (403, **and the record survives**), an OIDC-provider session on all
+  three endpoints, and the unknown-client oracle check.
+- The no-secret assertion was made non-vacuous: the test first proves the **store** holds the secret
+  (a token record keeps a full client snapshot), then proves the rendered body does not.
+- The fail-closed test asserts `500`, the absence of "No client currently holds access", **and** that
+  the cause stays in the log rather than reaching the page (§6).
+- `gofmt -l` empty; `go vet` clean; `go test -race ./...` green across 11 packages;
+  `golangci-lint` 2.12.2 **0 issues**. No dependency change.
+
+**Recorded rather than glossed over:** `pkg/auth/auth.go` grew by 24 lines to **558**, past the §2
+hard limit it was already over before this change — the config field and the routes belong there,
+and F-022 owns the split. `clients_test.go` sits at 347, over the 300 target and under the hard
+limit, with section rules. And a doc comment on `handleSettings` that no longer described the page
+was corrected.
+
+**What this substep does *not* prove:** that the surface is reachable in the running binary. The e2e
+harness builds its own gin router, so route registration and middleware in `pkg/mcp-proxy/main.go`
+go unexercised — the same blind spot F-021 ran into. Only inspection backs it here
+(`authRouter.SetupRoutes` is called, `Clients: repo` is set). F-024c supplies the proof.
+
+**Files:** new `pkg/auth/clients.go`, `pkg/auth/clients_test.go`; changed `pkg/auth/auth.go`,
+`pkg/auth/settings.go`, `pkg/auth/templates/settings.html`, `pkg/mcp-proxy/main.go`, and the four
+construction sites in `e2e_harness_test.go`, `pkg/auth/abuse_test.go`,
+`pkg/auth/hardening_test.go`, `pkg/auth/webauthn_test.go`; docs `PROGRESS.md`,
+`PROGRESS-ARCHIVE.md`. Three new endpoints under `/.auth/settings/clients/`; no new config, no new
+dependency, no schema change. `SPEC.md` and `README.md` are deliberately untouched — documentation
+is F-024c.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/models"
 	"go.uber.org/zap"
 )
 
@@ -17,6 +18,10 @@ var settingsMessages = map[string]string{
 	"deleted":      "Passkey deleted.",
 	"need_passkey": "Register a passkey before disabling the password login.",
 	"error":        "The change could not be saved.",
+	"revoked":      "Access revoked. The client must authorize again to return.",
+	"revoked_all":  "Every client's access revoked. Your own login is untouched.",
+	// The sweep is atomic, so a failure really did change nothing.
+	"revoke_failed": "The revoke failed. Nothing was changed.",
 }
 
 type credentialView struct {
@@ -40,23 +45,28 @@ type settingsTemplateData struct {
 	// CSRFToken is the per-session anti-CSRF token embedded in the settings
 	// forms and the passkey-register fetch header (SPEC §1.12).
 	CSRFToken string
+	// Clients lists who holds access, newest activity first (F-024).
+	Clients []clientView
+	// ConfirmRevokeAll renders the panic button's confirmation panel instead
+	// of the button, so revoking everything takes two deliberate actions.
+	ConfirmRevokeAll bool
 }
 
 // handleSettings renders the session-gated settings page (SPEC §1.12):
-// passkey enrollment, credential management, password-fallback toggle.
+// passkey enrollment, credential management, the password-fallback toggle,
+// and the client list with its kill switch (F-024).
 func (a *AuthRouter) handleSettings(c *gin.Context) {
 	user, records, ok := a.requireOwnUser(c)
 	if !ok {
 		return
 	}
-	views := make([]credentialView, 0, len(records))
-	for _, record := range records {
-		views = append(views, credentialView{
-			ID:         record.ID,
-			Name:       record.Name,
-			CreatedAt:  record.CreatedAt,
-			LastUsedAt: record.LastUsedAt,
-		})
+	// Fail closed on the client list: a settings page that renders an empty
+	// list because enumeration failed would tell the operator nobody holds
+	// access (§6).
+	clients, err := a.clientViews(c.Request.Context())
+	if err != nil {
+		a.renderError(c, err)
+		return
 	}
 	// Mint (or reuse) the per-session CSRF token and persist it before the
 	// forms are served (SPEC §1.12); the settings POSTs and the register
@@ -73,12 +83,16 @@ func (a *AuthRouter) handleSettings(c *gin.Context) {
 	}
 	data := settingsTemplateData{
 		Username:              user.user.Username,
-		Credentials:           views,
+		Credentials:           credentialViews(records),
 		HasPassword:           len(a.passwordHash) > 0,
 		PasswordLoginDisabled: user.user.PasswordLoginDisabled,
 		PasswordLoginActive:   a.isPasswordLoginActive(user.user, len(records)),
 		Message:               settingsMessages[c.Query("msg")],
 		CSRFToken:             csrfToken,
+		Clients:               clients,
+		// Compared, never reflected: the query only selects a fixed panel
+		// (SPEC §1.12, no XSS).
+		ConfirmRevokeAll: c.Query("confirm") == "revoke_all",
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
@@ -87,6 +101,20 @@ func (a *AuthRouter) handleSettings(c *gin.Context) {
 		// itself cannot fail.
 		_ = c.AbortWithError(http.StatusInternalServerError, err)
 	}
+}
+
+// credentialViews projects the stored passkeys onto what the page shows.
+func credentialViews(records []models.WebAuthnCredential) []credentialView {
+	views := make([]credentialView, 0, len(records))
+	for _, record := range records {
+		views = append(views, credentialView{
+			ID:         record.ID,
+			Name:       record.Name,
+			CreatedAt:  record.CreatedAt,
+			LastUsedAt: record.LastUsedAt,
+		})
+	}
+	return views
 }
 
 // handleSettingsPassword toggles the password fallback. Disabling requires

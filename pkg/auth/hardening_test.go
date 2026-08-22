@@ -77,6 +77,7 @@ func newLoginTestServer(t *testing.T) *httptest.Server {
 	authRouter, err := NewAuthRouter(Config{
 		PasswordHashes: []string{string(hash)},
 		Users:          repo,
+		Clients:        repo,
 		ExternalURL:    testExternalURL,
 		Logger:         zap.NewNop(),
 	})

@@ -43,7 +43,11 @@ type AuthRouter struct {
 	userInfoFields []string
 	// users persists the operator account + passkeys; nil disables
 	// passkey support and the settings page (SPEC §1.12).
-	users    repository.UserStorage
+	users repository.UserStorage
+	// clients backs the settings page's client list and kill switch (F-024).
+	// It is required whenever users is set — the list is part of the settings
+	// page, not a separately switchable feature.
+	clients  repository.InventoryStorage
 	webAuthn *webauthn.WebAuthn
 	logger   *zap.Logger
 	// loginRateLimit guards the login surfaces (SR-6); nil disables.
@@ -65,6 +69,9 @@ type Config struct {
 	// Users persists the operator account and passkeys. nil disables
 	// passkey login and the settings page.
 	Users repository.UserStorage
+	// Clients backs the client list and the kill switch on that same settings
+	// page (F-024). Required when Users is set.
+	Clients repository.InventoryStorage
 	// ExternalURL is the normalized issuer (SPEC §0); it derives the
 	// WebAuthn RP ID and allowed origin. Required when Users is set.
 	ExternalURL string
@@ -104,6 +111,13 @@ func NewAuthRouter(cfg Config) (*AuthRouter, error) {
 	}
 	var webAuthn *webauthn.WebAuthn
 	if cfg.Users != nil {
+		// The settings page renders the client list, so a user store without
+		// an inventory would serve a page that cannot answer "who has access"
+		// — fail fast at construction rather than at the operator's first
+		// visit (§7, config validation at startup).
+		if cfg.Clients == nil {
+			return nil, errors.New("auth: Clients is required when Users is set")
+		}
 		webAuthn, err = newWebAuthn(cfg.ExternalURL)
 		if err != nil {
 			return nil, err
@@ -120,6 +134,7 @@ func NewAuthRouter(cfg Config) (*AuthRouter, error) {
 		noProviderAutoSelect: cfg.NoProviderAutoSelect,
 		userInfoFields:       cfg.UserInfoFields,
 		users:                cfg.Users,
+		clients:              cfg.Clients,
 		webAuthn:             webAuthn,
 		logger:               cfg.Logger,
 		loginRateLimit:       cfg.LoginRateLimit,
@@ -150,6 +165,12 @@ const (
 	SettingsEndpoint                 = "/.auth/settings"
 	SettingsPasswordEndpoint         = "/.auth/settings/password"           //nolint:gosec // G101: endpoint path, not a credential
 	SettingsCredentialDeleteEndpoint = "/.auth/settings/credentials/delete" //nolint:gosec // G101: endpoint path, not a credential
+
+	// Client list actions (F-024). All three are session-gated and
+	// CSRF-checked like the settings POSTs above.
+	SettingsClientRevokeEndpoint = "/.auth/settings/clients/revoke"
+	SettingsGrantRevokeEndpoint  = "/.auth/settings/clients/grants/revoke"
+	SettingsRevokeAllEndpoint    = "/.auth/settings/clients/revoke-all"
 
 	PasswordProvider = "password"
 	// PasswordUserID is the legacy subject used when no user store is
@@ -185,6 +206,9 @@ func (a *AuthRouter) SetupRoutes(router gin.IRouter) {
 		router.GET(SettingsEndpoint, a.RequireAuth(), a.handleSettings)
 		router.POST(SettingsPasswordEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleSettingsPassword)
 		router.POST(SettingsCredentialDeleteEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleSettingsCredentialDelete)
+		router.POST(SettingsClientRevokeEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleSettingsClientRevoke)
+		router.POST(SettingsGrantRevokeEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleSettingsGrantRevoke)
+		router.POST(SettingsRevokeAllEndpoint, a.RequireAuth(), a.RequireCSRF(), a.handleSettingsRevokeAll)
 	}
 	for _, provider := range a.providers {
 		router.GET(provider.RedirectURL(), func(c *gin.Context) {

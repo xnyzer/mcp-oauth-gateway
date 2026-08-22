@@ -101,6 +101,32 @@
       .muted {
         color: #999;
       }
+      .small {
+        font-size: 0.8rem;
+      }
+      .client-id {
+        word-break: break-all;
+      }
+      a.button {
+        text-decoration: none;
+        display: inline-block;
+      }
+      .button.danger {
+        background: #e74c3c;
+      }
+      .danger-panel {
+        border: 1px solid #f5c6c2;
+        background: #fdf3f2;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-top: 1rem;
+      }
+      details summary {
+        cursor: pointer;
+      }
+      .grants {
+        margin: 0.5rem 0 0.25rem;
+      }
       .footer {
         margin-top: 2rem;
         font-size: 0.85rem;
@@ -117,6 +143,142 @@
 
       {{if .Message}}
       <div class="message">{{.Message}}</div>
+      {{end}}
+
+      <h2>Connected clients</h2>
+      <div class="subtitle">
+        Who holds access, and what they hold. Entries are per client and per
+        authorization — <strong>not per device</strong>: every device signed
+        into the same client shares one client id, and token records carry no
+        device identity. Revoking ends access immediately; it does not ban the
+        client, which can authorize again with your login.
+      </div>
+
+      {{if .Clients}}
+      <table>
+        <tr>
+          <th>Client</th>
+          <th>Holds</th>
+          <th>Last active</th>
+          <th></th>
+        </tr>
+        {{range .Clients}}
+        <tr>
+          <td>
+            <div class="client-id">{{.ClientID}}</div>
+            <div class="muted small">
+              {{if .IsCIMD}}metadata document{{else}}dynamic registration{{end}}{{if
+              .RedirectHosts}} · redirects to {{range $i, $host :=
+              .RedirectHosts}}{{if $i}}, {{end}}{{$host}}{{end}}{{end}}{{if and
+              .Registered (not .ExpiresAt.IsZero)}} · registration expires
+              {{.ExpiresAt.Format "2006-01-02"}}{{end}}
+            </div>
+          </td>
+          <td>
+            {{len .Grants}} authorization{{if ne (len .Grants) 1}}s{{end}}
+            <div class="muted small">
+              {{.AccessTokens}} access / {{.RefreshTokens}} refresh
+            </div>
+          </td>
+          <td>
+            {{if .LastActivity.IsZero}}<span class="muted">never</span
+            >{{else}}{{.LastActivity.Format "2006-01-02 15:04"}}{{end}}
+          </td>
+          <td>
+            <form
+              action="/.auth/settings/clients/revoke"
+              method="POST"
+              style="margin: 0"
+            >
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
+              <input type="hidden" name="client_id" value="{{.ClientID}}" />
+              <button class="button secondary" type="submit">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {{if .Grants}}
+        <tr>
+          <td colspan="4">
+            <details>
+              <summary class="muted small">Show authorizations</summary>
+              <table class="grants">
+                <tr>
+                  <th>Authorized</th>
+                  <th>Last active</th>
+                  <th>Scopes</th>
+                  <th></th>
+                </tr>
+                {{range .Grants}}
+                <tr>
+                  <td>{{.RequestedAt.Format "2006-01-02 15:04"}}</td>
+                  <td>{{.LastActivity.Format "2006-01-02 15:04"}}</td>
+                  <td>
+                    {{if .Scopes}}{{range .Scopes}}<code>{{.}}</code> {{end}}{{else}}<span
+                      class="muted"
+                      >(none)</span
+                    >{{end}}
+                  </td>
+                  <td>
+                    <form
+                      action="/.auth/settings/clients/grants/revoke"
+                      method="POST"
+                      style="margin: 0"
+                    >
+                      <input
+                        type="hidden"
+                        name="csrf_token"
+                        value="{{$.CSRFToken}}"
+                      />
+                      <input
+                        type="hidden"
+                        name="request_id"
+                        value="{{.RequestID}}"
+                      />
+                      <button class="button secondary" type="submit">
+                        Revoke this one
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+                {{end}}
+              </table>
+            </details>
+          </td>
+        </tr>
+        {{end}} {{end}}
+      </table>
+      {{else}}
+      <div class="muted">No client currently holds access.</div>
+      {{end}}
+
+      {{if .ConfirmRevokeAll}}
+      <div class="danger-panel">
+        <strong>Revoke every client's access?</strong>
+        <div class="subtitle">
+          This deletes every token and every dynamic registration in one step.
+          Your own login, passkeys and settings are untouched. No client is
+          banned — each can authorize again, which needs your login.
+        </div>
+        <div class="row">
+          <form
+            action="/.auth/settings/clients/revoke-all"
+            method="POST"
+            style="margin: 0"
+          >
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+            <button class="button danger" type="submit">
+              Yes, revoke everything
+            </button>
+          </form>
+          <a class="button secondary" href="/.auth/settings">Cancel</a>
+        </div>
+      </div>
+      {{else if .Clients}}
+      <div class="row">
+        <a class="button secondary" href="/.auth/settings?confirm=revoke_all"
+          >Revoke everything…</a
+        >
+      </div>
       {{end}}
 
       <h2>Passkeys</h2>

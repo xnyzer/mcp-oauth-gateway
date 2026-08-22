@@ -75,6 +75,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-021 | Validate the `Origin` header (DNS rebinding, SR-9) → **closes the one unmet MUST** the F-017 re-check found; `SPEC.md` §4.2 now reads ✔. A foreign or `null` Origin gets `403`; an **absent** header passes, deliberately — server-side MCP clients send none, so rejecting absence would take the gateway offline for every real client. Comparison on scheme+host+port, host lower-cased, default ports elided. `ORIGIN_CHECK_ENABLED=false` is the rescue, logged at startup. **The fail-closed test caught a real bug:** an expected origin normalizing to `""` would have matched `Origin: null` and turned the guard into a wildcard while its comment claimed otherwise. Also found: IPv6 bracket handling, and that **the e2e suite does not prove the wiring** (it builds its own router) — verified against the running binary instead. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
 | F-019 | Evaluate whether DCR can be switched off → **decision: `DCR_ENABLED` stays `true`**, no code. F-017d supplied the evidence asked for (Claude picks CIMD, the store stops growing) — but that shows *Claude* needs no DCR, not that no client does. The decisive argument arrived after the entry was written: **F-023 made DCR the documented escape hatch** when a CIMD document cannot be fetched (#650), so a `false` default would *break* that advice — flipping only `CIMD_ENABLED=false` hits the both-disabled fail-fast and the gateway refuses to start. The original motivation was gone anyway: the store grew *because* clients were forced onto DCR, which F-015 fixed. Delivered as guidance rather than a bare verdict — a README section on when an operator *should* disable it, the re-decision beside F-003 in REQUIREMENTS §6, and `SPEC.md` §4.1 updated because it still posed the question this task answered. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
 | F-024a | Enumerate and revoke in the repository layer → **the layer had no enumeration at all**, which is why F-017d needed a purpose-built bbolt tool to delete one record. New `InventoryStorage` (`ListClientGrants`, `RevokeClient`, `RevokeGrant`, `RevokeAll`) on both backends, fed by **one** shared aggregator so the two listings cannot drift. Built from **token records, not client records**: a CIMD client has no stored registration, so enumerating `client-*` would miss exactly the clients that matter. A revoke sweeps all five record kinds plus the registration in **one transaction**; an unreadable record **fails loudly** instead of being skipped, unlike the sweeper — skipping would report a kill that did not happen. `RevokeAll` spares the operator's account and passkeys. No schema change. 30 subtests, **non-vacuity proven by two mutations**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
+| F-024b | The settings surface and its wiring → `/.auth/settings` gained **Connected clients**: one row per client with its authorizations behind a `<details>`, actions per client and per grant, and the panic button behind a **server-rendered two-step** confirmation (no JS). Behind the page's existing gates; `authevent.Revoked` now carries an operator kill beside the client-initiated RFC 7009 ones. **A mutation caught a security test passing for the wrong reason** — a bare `&http.Client{}` followed the handler's redirect and scored the settings page's own 403, so the own-user gate could have been deleted unnoticed; fixed and re-proven. `Config.Clients` is **required** when `Users` is set rather than nil-checked, so no second visibility rule appears. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 
 ---
 
@@ -135,30 +136,6 @@ promises. **No schema change**: SQL filtering decodes the request blobs in Go ra
 indexed `client_id` column, so `SchemaVersion` stays 1 and a downgrade stays possible. **All new
 code lands in new files** — `kvs.go` (470) and `sql.go` (694) and `auth.go` (534) are already at or
 past the §2 limits that F-022 exists to fix, and this task must not make that worse.
-
-#### F-024b — The settings surface and its wiring
-
-**What:** The list and the kill switch in `/.auth/settings`, behind the existing `RequireAuth` +
-`RequireCSRF` + `requireOwnUser` gates, following the "delete passkey" POST as the working template
-for a destructive per-row action. One row per client, expandable to its authorizations; actions
-"revoke this authorization", "revoke this client", and the panic "revoke everything" behind a
-confirmation. The view struct is a projection — `models.Client` carries the hashed client secret
-and none of it reaches the template. Every revoke emits `authevent.Revoked` with client id and
-grant count (SR-8). The wording must say what the entry actually is: per client and per grant,
-never per device, and a revoked CIMD client may re-authorize rather than being banned.
-
-**Files:** new `pkg/auth/clients.go`, `pkg/auth/clients_test.go`; `pkg/auth/auth.go` (config field
-+ routes), `pkg/auth/templates/settings.html`, `pkg/mcp-proxy/main.go` (one line)
-
-**Acceptance:**
-- [ ] Negative tests, mandatory on this surface (§9): missing/wrong CSRF token, an OIDC-provider
-      session, and an unknown client id — the last redirects without revealing whether it existed
-- [ ] No secret reaches the page — asserted on the rendered body, not on the view struct
-- [ ] An enumeration error renders an error, never an empty list that reads as "nothing granted"
-      (fail-closed, §6)
-- [ ] The section follows the settings page's existing visibility rule rather than adding a second
-      one
-- [ ] Suite + `-race` + `golangci-lint` green
 
 #### F-024c — Verify against the running binary, then document
 

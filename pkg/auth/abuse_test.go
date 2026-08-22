@@ -38,6 +38,7 @@ func newAbuseTestServer(t *testing.T, mutate func(*Config)) (*httptest.Server, *
 	cfg := Config{
 		PasswordHashes: []string{string(hash)},
 		Users:          repo,
+		Clients:        repo,
 		ExternalURL:    testExternalURL,
 		Logger:         zap.New(core),
 	}

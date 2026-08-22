@@ -42,6 +42,7 @@ func newWebAuthnTestServer(t *testing.T) (*httptest.Server, repository.Repositor
 	authRouter, err := NewAuthRouter(Config{
 		PasswordHashes: []string{string(hash)},
 		Users:          repo,
+		Clients:        repo,
 		ExternalURL:    testExternalURL,
 	})
 	require.NoError(t, err)
@@ -333,6 +334,7 @@ func TestSettingsRejectForeignSession(t *testing.T) {
 	authRouter, err := NewAuthRouter(Config{
 		PasswordHashes: []string{"dummy"},
 		Users:          repo,
+		Clients:        repo,
 		ExternalURL:    testExternalURL,
 	})
 	require.NoError(t, err)

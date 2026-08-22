@@ -150,6 +150,7 @@ func newE2EGateway(t *testing.T, opts e2eOpts) *e2eGateway {
 	authRouter, err := auth.NewAuthRouter(auth.Config{
 		PasswordHashes: []string{string(hash)},
 		Users:          repo,
+		Clients:        repo,
 		ExternalURL:    e2eIssuer,
 		Logger:         logger,
 		Lockout:        ratelimit.NewLockout(0, 0), // disabled but nil-safe

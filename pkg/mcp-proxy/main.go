@@ -540,6 +540,7 @@ func Run(cfg Config) error {
 		UserInfoFields:       userInfoFields,
 		Providers:            providers,
 		Users:                repo,
+		Clients:              repo,
 		ExternalURL:          externalURL,
 		Logger:               logger,
 		LoginRateLimit:       ratelimit.Middleware(loginLimiter, "login", logger),
