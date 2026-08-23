@@ -100,6 +100,16 @@ Short, descriptive, visually set apart. No rambling block comments.
 
 - **Business logic** (token issuance, PKCE verification, DCR caps, fail-closed paths) has unit tests, using the chosen language's standard test framework (to be specified in F-002).
 - **Negative tests are mandatory** for an auth boundary: missing token, tampered token, replay, expired token, PKCE downgrade — each must be denied.
+- **Prove a new assertion can fail.** A green test is evidence only once you have seen it go red:
+  break the thing it guards, watch it fail, restore. This has caught three of our own tests that
+  passed for the wrong reason, and the pattern repeats — so check these first:
+  - **Reading an aggregate where one record was meant.** A helper that sums a client's records will
+    happily answer from an *older* record after the newer one lost the value.
+  - **A loose `Contains` on a rendered page.** The string usually appears somewhere else too, so the
+    assertion survives the removal of the thing it claims to check. Assert the specific rendering.
+  - **An HTTP client that follows redirects.** The status you assert may come from the page the
+    redirect landed on, not from the handler under test — which is how a deleted authorization gate
+    stayed green.
 - **Never commit with red tests.** Fix pre-existing red tests anyway, or report them explicitly.
 
 ---
@@ -128,4 +138,10 @@ The stack is **Go + Ory Fosite** (fork of `sigbit/mcp-auth-proxy`).
 - **Concurrency:** no shared state without synchronisation; no goroutine leaks (bounded lifetimes, respect `ctx`).
 - **Crypto/OAuth:** use **Ory Fosite** + `golang-jwt` + `golang.org/x/crypto` — never hand-roll (§7, SR-1).
 - **Tests:** standard `testing` package, table-driven where it helps; tests live in `_test.go` next to the code. Mocks via `go.uber.org/mock` (already in use). Negative auth tests are mandatory (§9).
+- **Adding a field to `idp.Session`: copy it in `Clone`, and test the refresh grant.** The two paths
+  carry session state differently, and only one of them is obvious. At the authorize→token exchange
+  fosite restores the session from its **stored JSON**, so a new field survives on its own. The
+  **refresh** grant instead clones the loaded session in memory and persists the clone — a field
+  missing from `Clone` is lost there, silently, and nowhere else. A test that only covers the token
+  exchange therefore proves nothing about it (measured in F-025a).
 - **Dependencies:** `go.mod`/`go.sum` pinned; `go mod tidy` clean; all permissive (no GPL/AGPL) — verified in CI (§7).
