@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/ory/fosite"
 	"github.com/stretchr/testify/require"
@@ -38,7 +37,7 @@ func TestRegisterClientCapIsAtomicUnderConcurrency(t *testing.T) {
 						ID:           fmt.Sprintf("client-%d", i),
 						RedirectURIs: []string{"https://app.example.com/cb"},
 					}
-					err := repo.RegisterClient(ctx, client, time.Time{}, maxClients)
+					err := repo.RegisterClient(ctx, ClientRegistration{Client: client, MaxClients: maxClients})
 					mu.Lock()
 					defer mu.Unlock()
 					switch {
@@ -71,14 +70,14 @@ func TestRegisterClientCapAllowsReRegistration(t *testing.T) {
 			ctx := t.Context()
 			client := &fosite.DefaultClient{ID: "client-1", RedirectURIs: []string{"https://app.example.com/cb"}}
 
-			require.NoError(t, repo.RegisterClient(ctx, client, time.Time{}, 1))
+			require.NoError(t, repo.RegisterClient(ctx, ClientRegistration{Client: client, MaxClients: 1}))
 			// Cap is 1 and one client exists, but re-registering the same ID
 			// updates in place rather than being rejected.
-			require.NoError(t, repo.RegisterClient(ctx, client, time.Time{}, 1))
+			require.NoError(t, repo.RegisterClient(ctx, ClientRegistration{Client: client, MaxClients: 1}))
 
 			// A different ID is rejected — the cap is full.
 			other := &fosite.DefaultClient{ID: "client-2", RedirectURIs: []string{"https://app.example.com/cb"}}
-			require.ErrorIs(t, repo.RegisterClient(ctx, other, time.Time{}, 1), ErrClientCapReached)
+			require.ErrorIs(t, repo.RegisterClient(ctx, ClientRegistration{Client: other, MaxClients: 1}), ErrClientCapReached)
 
 			count, err := repo.CountClients(ctx)
 			require.NoError(t, err)

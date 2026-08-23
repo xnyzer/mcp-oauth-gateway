@@ -223,6 +223,14 @@ Consent MUST show the client identity (CIMD `client_name` + the client_id URL, o
 `client_name` + ID) and requested scopes. Approval is per-authorization (no silent long-lived
 blanket grants in v1).
 
+**Naming a connection (F-025).** The consent form additionally offers an optional
+`connection_name`, prefilled with the `client_name` the client declares about itself. What the
+operator submits is stored with the authorization and identifies it in the client list (§1.12); it
+is display text and decides nothing. The value is sanitized where it enters — control characters
+dropped, trimmed, capped at 64 runes — because it is repeated into the auth log, where
+`html/template` escaping does not reach. The client's declared name is **prefill only**: the
+verified `client_id`, redirect URI and scopes stay the identity the page is judged on.
+
 **Success response:** `302` to `redirect_uri` with `code` (single-use, short-lived: default
 10 min, consumed on first token exchange), `state`, and **`iss`** (RFC 9207, **target**).
 
@@ -237,7 +245,10 @@ Document proves who published it, never which process is listening.
 error page (§1.12 template) with `400` and MUST NOT redirect.
 
 **Delta:** flow exists (Fosite); `iss` parameter **done (F-005a)**; `resource` validation
-**done (F-005b)**; CIMD client support **done (F-005c)**. PKCE presence is now enforced by
+**done (F-005b)**; CIMD client support **done (F-005c)**. The **client identity** requirement above
+is **done (F-025b)** — and was unmet from F-004 until then: both mechanisms parsed `client_name`
+and discarded it, so the page showed the client_id alone. DCR now stores the declared name, CIMD
+reads it from the resolved document through the same cached resolver fosite uses for the lookup. PKCE presence is now enforced by
 Fosite config for **every** client — `EnforcePKCE: true`, so confidential DCR clients must
 send `code_challenge` too, not only public/CIMD ones (**done, F-012b**; closes the prior
 open delta). The consent approval POST additionally carries the §1.12 per-session anti-CSRF
@@ -438,6 +449,10 @@ someone else's. Three properties define the contract:
   registration — it is re-resolved from its URL on every lookup (§1.3) — so enumerating client
   records would miss exactly the clients that hold access. Non-expired registrations join as a
   second source, so a registration without tokens still shows.
+- **Rows are identified by the operator's own name** where one was given at consent time (§1.5,
+  F-025); the `client_id` stays visible beneath it, because the name is a label and the id is the
+  verifiable identity. The name lives in the authorization's session record, so it needs no store of
+  its own and is deleted with the authorization.
 - **Granularity is per client and per authorization, never per device.** Token records carry no IP
   and no user agent, and every device signed into the same client shares one client ID. The page
   says so rather than implying device identity.
@@ -508,6 +523,10 @@ entity with a passed expiry; lookups MUST treat expired-but-not-yet-swept record
 | **PKCE session** | request signature; challenge + method | tied to auth-code lifetime | `pkce_request_sessions` / `pkce_request-` |
 | **User** (new, F-005e1) | `user_id`; `username`, `password_login_disabled`, `created_at` — **no password hash** (the env config stays authoritative; decision F-005e, replacing the originally drafted optional `password_hash`) | permanent (single record, FR-4) | `user_records` / `user-` |
 | **Passkey credential** (new, F-005e1) | WebAuthn credential ID (base64url); `user_id`, name, marshaled credential (COSE public key, sign count, transports, flags), `created_at`, `last_used_at` | permanent, user-revocable | `webauthn_credential_records` / `webauthn_credential-` |
+
+`client_name` in the DCR client row above is **stored since F-025b**; before that it was parsed at
+registration and dropped. The operator's own name for an authorization is not an entity either — it
+rides the grant's session record (`SessionData`), which is why it is deleted with the authorization.
 
 The operator's client list (§1.12, F-024) adds **no entity**: it aggregates the access- and
 refresh-token records above by the client snapshot each one carries, and joins the stored DCR

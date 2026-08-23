@@ -9,6 +9,20 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
 
 ### Added
 
+- **Name a connection when you authorize it (F-025).** The consent page now offers an optional
+  name for the connection, prefilled with the `client_name` the client declares about itself. What
+  you type identifies that connection in the client list and appears in the `token_issued` and
+  `revoked` auth events, so the log reads in your words instead of in client ids.
+
+  The name is stored with the authorization itself, not in a list of its own — so it is deleted
+  when you revoke, and re-authorizing asks again. **No schema change**, and no client can set it:
+  the value rides the session the gateway builds server-side.
+
+  This also closes a requirement the gateway's own `SPEC.md` §1.5 had carried unmet since it was
+  written: consent had to show the client's declared name, and both registration mechanisms parsed
+  that name and threw it away. It is shown as prefill, while the verified client id, redirect URI
+  and scopes remain the identity the page is judged on.
+
 - **Operator view of connected clients, with a kill switch (F-024).** `/.auth/settings` now lists
   every client that holds access — its authorizations, token-record counts, redirect hosts and
   activity times — and revokes it: one client, one authorization, or everything at once behind a

@@ -150,15 +150,18 @@ the disabled state is logged at startup so it does not stay off by accident.
    with the URL `https://<your-host>/<mcp-path>` — the path your upstream serves MCP on
    (commonly `/mcp`).
 2. Claude starts the OAuth flow (via CIMD): log in with your operator password, review the
-   consent screen (it shows the client's identity and requested scopes), authorize.
+   consent screen (it shows the client's identity and requested scopes), optionally **give the
+   connection a name** — the field is prefilled with the name the client gives itself — and
+   authorize.
 3. Claude lists the upstream's tools and can call them through the gateway.
 
 Recommended hardening after the first login: open `https://<your-host>/.auth/settings`,
 **enrol a passkey**, then disable the password fallback there (the `PASSWORD_HASH` env stays
 as a break-glass rescue; deleting all passkeys re-activates password login).
 
-The same page lists **connected clients** — who holds access, how many authorizations, when they
-were last active — and revokes it: one client, one authorization, or everything at once. A revoke
+The same page lists **connected clients** — by the name you gave them when authorizing, with the
+client id beneath — showing how many authorizations each holds and when it was last active, and
+revokes it: one client, one authorization, or everything at once. A revoke
 takes effect on the client's next request rather than after the token's remaining lifetime. It does
 not ban anyone: a revoked client can authorize again, which needs your login. Entries are per
 client and per authorization, **not per device** — every device signed into the same client shares

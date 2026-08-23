@@ -96,15 +96,33 @@ type MaintenanceStorage interface {
 // transaction, so this is the atomic cap decision — no TOCTOU window.
 var ErrClientCapReached = errors.New("dynamic client registration cap reached")
 
+// ClientRegistration is what RegisterClient stores. A struct rather than four
+// parameters (§3), which also names the optional fields at the call site.
+type ClientRegistration struct {
+	// Client is the fosite client to persist.
+	Client fosite.Client
+	// Name is the client's self-declared `client_name` (RFC 7591 §2). Kept for
+	// the consent page (SPEC §1.5); display text only, never a decision input.
+	Name string
+	// ExpiresAt is the registration TTL (SR-5); a zero value never expires.
+	ExpiresAt time.Time
+	// MaxClients caps stored non-expired registrations; <= 0 means unlimited.
+	MaxClients int
+}
+
 // DynamicClientStorage manages DCR client registrations (SPEC §1.4).
 // Expired registrations are treated as absent by GetClient (fail-closed).
 type DynamicClientStorage interface {
-	// RegisterClient stores a registration; a zero expiresAt never expires.
-	// When maxClients > 0 the count of non-expired registrations and the
-	// insert run in a single write transaction; if the store already holds
-	// maxClients non-expired clients it returns ErrClientCapReached and stores
-	// nothing (SR-5, no TOCTOU). maxClients <= 0 means unlimited.
-	RegisterClient(ctx context.Context, client fosite.Client, expiresAt time.Time, maxClients int) error
+	// RegisterClient stores a registration. When MaxClients > 0 the count of
+	// non-expired registrations and the insert run in a single write
+	// transaction; if the store already holds that many non-expired clients it
+	// returns ErrClientCapReached and stores nothing (SR-5, no TOCTOU).
+	RegisterClient(ctx context.Context, registration ClientRegistration) error
+	// GetClientName returns the name a DCR client declared at registration, or
+	// an empty string when the client is unknown, expired, or never named
+	// itself. It exists because fosite's client type has nowhere to carry a
+	// name, so GetClient cannot return one.
+	GetClientName(ctx context.Context, id string) (string, error)
 	// TouchClient extends a registration's expiry (refresh-on-use, SR-5).
 	TouchClient(ctx context.Context, id string, expiresAt time.Time) error
 	// CountClients returns the number of stored, non-expired registrations.

@@ -1,6 +1,7 @@
 package idp
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"net/http"
@@ -87,6 +88,33 @@ func sanitizeLabel(raw string) string {
 	return cleaned
 }
 
+// declaredClientName returns the name the client gives itself — from its CIMD
+// document (SPEC §1.3) or from the stored DCR registration (§1.4) — so the
+// consent page can show it and prefill the operator's own label (§1.5).
+//
+// Best-effort on purpose: a name that cannot be read must not keep the operator
+// from authorizing, so every failure yields an empty prefill rather than an
+// error. The CIMD lookup goes through the resolver fosite already used for this
+// request, so its cache answers and no second document is fetched.
+func (a *IDPRouter) declaredClientName(ctx context.Context, clientID string) string {
+	if strings.HasPrefix(clientID, "https://") {
+		if a.cimdResolver == nil {
+			return ""
+		}
+		doc, err := a.cimdResolver.Resolve(ctx, clientID)
+		if err != nil {
+			return ""
+		}
+		return doc.ClientName
+	}
+	name, err := a.repo.GetClientName(ctx, clientID)
+	if err != nil {
+		a.logger.Warn("Failed to read the client name for consent", zap.Error(err))
+		return ""
+	}
+	return name
+}
+
 func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 	arID := c.Param("ar_id")
 	session := sessions.Default(c)
@@ -124,14 +152,59 @@ func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
 	if err := consentTemplate.Execute(c.Writer, consentTemplateData{
-		ClientID:     ar.GetClient().GetID(),
-		RedirectURI:  redirectURI,
-		Scopes:       ar.GetRequestedScopes(),
-		CSRFToken:    csrfToken,
-		LoopbackOnly: allRedirectsLoopback(ar.GetClient().GetRedirectURIs()),
+		ClientID:    ar.GetClient().GetID(),
+		RedirectURI: redirectURI,
+		Scopes:      ar.GetRequestedScopes(),
+		CSRFToken:   csrfToken,
+		// Sanitized like the operator's own input: it is prefill, but it is the
+		// client's text and it reaches the same store and log if approved.
+		ConnectionName: sanitizeLabel(a.declaredClientName(c.Request.Context(), ar.GetClient().GetID())),
+		LoopbackOnly:   allRedirectsLoopback(ar.GetClient().GetRedirectURIs()),
 	}); err != nil {
 		a.logger.Error("Failed to render consent page", zap.Error(err))
 	}
+}
+
+// grantRequested grants exactly what the request asked for, plus this gateway
+// as the audience. Approval is all-or-nothing by design (SPEC §1.5): the
+// operator approves the authorization on the consent page, not scope by scope.
+func (a *IDPRouter) grantRequested(ar fosite.AuthorizeRequester) {
+	for _, scope := range ar.GetRequestedScopes() {
+		ar.GrantScope(scope)
+	}
+	ar.GrantAudience(a.externalURL)
+}
+
+// approvedSession assembles the session an approved authorization carries: the
+// subject from the operator's login, the optional OIDC claims, and the name the
+// operator gave this connection.
+func (a *IDPRouter) approvedSession(c *gin.Context, ar fosite.AuthorizeRequester) (*Session, error) {
+	session := sessions.Default(c)
+
+	subject := "user"
+	if userID, ok := session.Get(auth.SessionKeyUserID).(string); ok && userID != "" {
+		subject = userID
+	}
+	var userInfo map[string]any
+	if userInfoJSON, ok := session.Get(auth.SessionKeyUserInfo).(string); ok && userInfoJSON != "" {
+		// A malformed value only loses the optional claims; the session
+		// cookie is HMAC-authenticated, so this should not happen.
+		if err := json.Unmarshal([]byte(userInfoJSON), &userInfo); err != nil {
+			a.logger.Warn("failed to decode session user info; continuing without claims", zap.Error(err))
+		}
+	}
+
+	jwtSession, err := NewJWTSession(a.externalURL, subject, ar.GetClient().GetID(), userInfo)
+	if err != nil {
+		return nil, err
+	}
+	// The operator's name for this connection rides the session, so it is
+	// stored with every record of the grant and deleted with it (F-025). Set
+	// here rather than passed to NewJWTSession: the value comes from this
+	// form, and the constructor already carries as many parameters as §3
+	// allows.
+	jwtSession.Label = sanitizeLabel(c.PostForm("connection_name"))
+	return jwtSession, nil
 }
 
 func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
@@ -155,37 +228,14 @@ func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 		}
 	}()
 
-	for _, scope := range ar.GetRequestedScopes() {
-		ar.GrantScope(scope)
-	}
-	ar.GrantAudience(a.externalURL)
+	a.grantRequested(ar)
 
-	subject := "user"
-	if userID, ok := session.Get(auth.SessionKeyUserID).(string); ok && userID != "" {
-		subject = userID
-	}
-	var userInfo map[string]any
-	if userInfoJSON, ok := session.Get(auth.SessionKeyUserInfo).(string); ok && userInfoJSON != "" {
-		// A malformed value only loses the optional claims; the session
-		// cookie is HMAC-authenticated, so this should not happen.
-		if err := json.Unmarshal([]byte(userInfoJSON), &userInfo); err != nil {
-			a.logger.Warn("failed to decode session user info; continuing without claims", zap.Error(err))
-		}
-	}
-
-	jwtSession, err := NewJWTSession(a.externalURL, subject, ar.GetClient().GetID(), userInfo)
+	jwtSession, err := a.approvedSession(c, ar)
 	if err != nil {
 		a.logger.With(utils.Err(err)...).Error("Failed to create JWT session", zap.Error(err))
 		a.writeAuthorizeError(ctx, c.Writer, ar, err)
 		return
 	}
-
-	// The operator's name for this connection rides the session, so it is
-	// stored with every record of the grant and deleted with it (F-025). Set
-	// here rather than passed to NewJWTSession: the value comes from this
-	// form, and the constructor already carries as many parameters as §3
-	// allows.
-	jwtSession.Label = sanitizeLabel(c.PostForm("connection_name"))
 
 	response, err := a.provider.NewAuthorizeResponse(ctx, ar, jwtSession)
 	if err != nil {

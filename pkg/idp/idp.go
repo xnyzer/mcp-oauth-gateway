@@ -32,13 +32,17 @@ type IDPRouter struct {
 	authRouter          *auth.AuthRouter
 	oidcDiscoveryMirror bool
 	refreshEnabled      bool
-	cimdEnabled         bool
-	dcrEnabled          bool
-	dcrClientTTL        time.Duration
-	dcrMaxClients       int
-	tokenRateLimit      gin.HandlerFunc
-	registerRateLimit   gin.HandlerFunc
-	authorizeRateLimit  gin.HandlerFunc
+	// cimdResolver serves the consent page the name a CIMD client declares
+	// (SPEC §1.5). It is the same resolver fosite's client source uses, so the
+	// lookup is answered from that cache rather than by a second fetch.
+	cimdResolver       CIMDResolver
+	cimdEnabled        bool
+	dcrEnabled         bool
+	dcrClientTTL       time.Duration
+	dcrMaxClients      int
+	tokenRateLimit     gin.HandlerFunc
+	registerRateLimit  gin.HandlerFunc
+	authorizeRateLimit gin.HandlerFunc
 }
 
 // Config carries all options for the OAuth authorization-server surface
@@ -141,6 +145,7 @@ func NewIDPRouter(cfg Config) (*IDPRouter, error) {
 		authRouter:          cfg.AuthRouter,
 		oidcDiscoveryMirror: cfg.OIDCDiscoveryMirror,
 		refreshEnabled:      refreshEnabled,
+		cimdResolver:        cfg.CIMDResolver,
 		// The resolver's presence is what makes CIMD work, so it is also
 		// what the metadata advertises — the two cannot drift apart.
 		cimdEnabled:        cfg.CIMDResolver != nil,

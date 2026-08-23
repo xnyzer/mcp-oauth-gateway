@@ -252,15 +252,16 @@ func (r *kvsRepository) EnsureSchemaVersion(ctx context.Context, version int) er
 	return nil
 }
 
-func (r *kvsRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client, expiresAt time.Time, maxClients int) error {
-	client := models.FromFositeClient(fositeClient)
+func (r *kvsRepository) RegisterClient(ctx context.Context, registration ClientRegistration) error {
+	client := models.FromFositeClient(registration.Client)
+	client.Name = registration.Name
 	client.CreatedAt = time.Now().UTC()
-	client.ExpiresAt = expiresAt
+	client.ExpiresAt = registration.ExpiresAt
 	data, err := json.Marshal(client) //nolint:gosec // G117: persisting the DCR client secret server-side is the repository's purpose (SPEC §2.1)
 	if err != nil {
 		return fmt.Errorf("failed to marshal client: %w", err)
 	}
-	key := []byte("client-" + fositeClient.GetID())
+	key := []byte("client-" + registration.Client.GetID())
 
 	// Count and insert in one read-write transaction. bbolt allows only a
 	// single writer at a time, so the cap check cannot race a concurrent
@@ -269,8 +270,8 @@ func (r *kvsRepository) RegisterClient(ctx context.Context, fositeClient fosite.
 		bucket := tx.Bucket([]byte(r.bucketName))
 		// A re-registration of an existing ID replaces in place and must not
 		// count against the cap; only a genuinely new key does.
-		if maxClients > 0 && bucket.Get(key) == nil &&
-			countNonExpiredClients(bucket, time.Now().UTC()) >= maxClients {
+		if registration.MaxClients > 0 && bucket.Get(key) == nil &&
+			countNonExpiredClients(bucket, time.Now().UTC()) >= registration.MaxClients {
 			return ErrClientCapReached
 		}
 		return bucket.Put(key, data)
@@ -306,6 +307,22 @@ func (r *kvsRepository) GetClient(ctx context.Context, id string) (fosite.Client
 		return nil, fosite.ErrNotFound
 	}
 	return client.ToFositeClient(), nil
+}
+
+// GetClientName returns the name a DCR client declared at registration.
+// An expired registration answers empty, like GetClient treats it as absent.
+func (r *kvsRepository) GetClientName(ctx context.Context, id string) (string, error) {
+	var client models.Client
+	if err := r.get(ctx, "client-"+id, &client); err != nil {
+		if errors.Is(err, fosite.ErrNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !client.ExpiresAt.IsZero() && client.ExpiresAt.Before(time.Now().UTC()) {
+		return "", nil
+	}
+	return client.Name, nil
 }
 
 // TouchClient extends a registration's expiry (refresh-on-use, SR-5).

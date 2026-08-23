@@ -11,19 +11,17 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task in flight.** Every roadmap task F-001–F-024 is done — **F-024** added the operator's
-client list with its kill switch, live-verified on 2026-08-23 (a revoke reached the real client in
-**44 seconds**, against a one-hour token TTL). **F-025** is half built: a connection can be **named
-at consent time** (F-025a), and the name shows in that list. Open is **F-025b**, the prefill from
-the name the client declares — which also closes a `SPEC.md` §1.5 identity requirement unmet since
-it was written. Two entries wait in the backlog, both needing `/prep-step` first:
-**F-022** (six files past the §2 hard limit — `pkg/auth/auth.go` reached 558 through F-024), wanted
-**before the next release**, and **F-026** (fold `REQUIREMENTS.md` into `SPEC.md` and strip the
-implementation history that buried a MUST for seven weeks).
+**No open tasks.** Every roadmap task F-001–F-025 is done. **F-024** added the operator's client
+list with its kill switch and **F-025** the name each connection carries — both live-verified on
+2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
+name prefilled from Claude's own metadata document). Two entries wait in the backlog, both needing
+`/prep-step` first and both wanted **before the next release**: **F-022** (six files past the §2
+hard limit) and **F-026** (fold `REQUIREMENTS.md` into `SPEC.md` and strip the implementation
+history that hid a MUST from F-004 until F-025 tripped over it).
 
 **Released: v0.3.0 — but the deployment is ahead of it.** It runs a locally built image carrying
-F-024, by the operator's decision, and is not reproducible from the registry until a release
-replaces it. `CHANGELOG.md` carries the work under `[Unreleased]`.
+F-024 **and F-025**, by the operator's decision, and is not reproducible from the registry until a
+release replaces it. `CHANGELOG.md` carries the work under `[Unreleased]`.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
@@ -86,65 +84,15 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-024c | Verify against the running binary, then document → the substep no test suite could stand in for: `e2e_harness_test.go` builds its own router, so the wiring was proven against a **local binary** (full OAuth+PKCE flow, real token, revoke, immediate `401`) and then against the **live deployment** with the operator's own Claude connector. The measurement that matters: **44 seconds** from revoke to the client's `401`, against an `ACCESS_TOKEN_TTL` of one hour. Live-only findings: rotation history aggregated on real data (`1 access / 6 refresh` as one row), and a leftover DCR registration showing with `0 authorizations`. The operator asked what the two revoke buttons differ in — a fair question, so they were relabelled **Revoke client** / **Revoke this authorization** and pinned by a test. One acceptance criterion of mine was overstated and got corrected in the spec, not glossed over. F-017d's manual store-editing procedure is **gone** from the runbook. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-024 | **Operator view of connected clients, with a kill switch — complete** (a/b/c). The gateway can now show who holds access and take it away; `/.idp/revoke` never could, being client-authenticated. Built from **token records, not registrations**, because a CIMD client has no stored registration — the obvious implementation would have missed exactly the clients that matter, and the live run confirmed it. Per client and per authorization, **never per device**, and a revoke bans nobody. Three mutations were run against the finished code; one caught a security test **passing for the wrong reason**. Retires the manual bbolt procedure F-017d had to write. Spawned **F-025**. Not yet released. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-025a | The label, end to end → a connection can be **named at consent time**; the name rides the gateway's own session, so it is server-set (no client can plant one), written with every token record, and deleted with the authorization — **no new entity, no cleanup path**. Sanitized once where it enters (control characters, 64 runes), shown as the row's primary identifier, and carried into `token_issued` and `revoked`. **Mutation testing found two of my own defective assertions:** the acceptance criterion claimed `Session.Clone` carries the label through the token exchange — it does not, the session is restored from stored JSON there, and `Clone` matters **only on refresh**; and the refresh test read an aggregate, so an older record answered for the newer one that had lost the name. Both fixed, then four mutations verified red. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
+| F-025b | The prefill, and the documentation → the consent field is prefilled with the `client_name` the client declares, which **closes the `SPEC.md` §1.5 identity requirement** unmet since F-004: both mechanisms parsed that name and threw it away. DCR stores it now (`RegisterClient` took an options struct, removing a §3 violation instead of growing it); CIMD reads it through the **same** resolver fosite uses, so its cache serves it. **The review caught a defect the tests could not:** the SQL backend never stored the name — invisible because the idp tests and the deployment are both bbolt. Fixed, with a two-backend contract test that goes red on exactly that. Live-verified: the prefill arrived as "Claude" from Claude's real document. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
+| F-025 | **Name a connection at consent time — complete** (a/b). The design came from the operator's pushback against a three-substep plan: their "a new data field, not a new storage structure" pointed at the gateway's own **session**, which is already persisted with every record of a grant — server-built, so no client can plant a label, and deleted with the authorization, so no cleanup path exists. Two substeps and the renaming UI fell away with it. Closed a §1.5 violation nobody had noticed, and spawned **F-026**. **Three defects found, none by a red suite:** two by mutation (a wrong acceptance criterion about `Session.Clone`, two assertions that could never fail) and one by review (SQL never stored the name). The first two are now rules in `CODING-STANDARDS.md`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 
 ---
 
 ## Open tasks — work top to bottom
 
-### F-025 — Name a connection at consent time, and show the client's own name
-
-**Status:** PLANNED
-
-**Problem:** Three different names meet on this surface and are easy to confuse, so this entry names
-them first: the **`client_id`** is fixed and verifiable (a URL for CIMD, a random string for DCR);
-the **`client_name`** is what the client declares about *itself*; and there is **no third name** —
-nowhere for the operator to write down what a connection actually is. F-024's list therefore
-identifies a connection by its `client_id`, which for a DCR client is unreadable. Separately and
-pre-existing: both mechanisms **parse** `client_name` and both throw it away — `registrationRequest`
-in `pkg/idp/register.go` echoes it back and never stores it, `cimd.Client` never reads it — although
-`SPEC.md` §1.5 says the consent page MUST show it. That is a literal gap in the gateway's own
-contract; it sits outside the §4 conformance table, which tracks the MCP spec rather than our own.
-
-**Idea:** Add **one field**. At consent time — the moment the operator is already looking at the
-connection they started — a text box takes a short name, prefilled with the client's declared name
-where there is one. It is stored with the authorization and shown wherever that authorization
-appears. Everything already on the consent page stays exactly as it is.
-
-**Solution (decided at `/prep-step`, 2026-08-23 — this replaces the intake sketch):**
-- The label lives on the gateway's **own session type** (`pkg/idp/session.go`), which is already
-  persisted as `SessionData` with every token record and deleted with the grant. **No new entity,
-  no new table, no schema change** — and it is deliberately *not* the request `Form`, which is
-  filled from the client's query parameters and would let a client plant its own label.
-- `models.Request` gains a `Label` field, filled in `FromFositeReq`, so F-024's list and the
-  repository layer read it directly instead of decoding session JSON.
-- Prefill: CIMD through the resolver (cached, no extra outbound request), DCR from the
-  `client_name` the registration already parses but has never stored.
-- **Presentation stays plain** — a normal prefilled field, no claim marking. Operator decision, and
-  it holds: the flow is operator-initiated and login-gated, the verified `client_id`, redirect URI
-  and scopes stay visible below, and the page already warns to approve only self-started requests.
-  The prefill only matters on a first connection; after that the field holds the operator's own text.
-- The label travels into the auth events, so the log reads in the operator's words.
-- **Renaming later is out of scope**: re-authorizing asks again, and the field is right there.
-
-**Dependencies:** F-024 (done) — its list is where the name pays off.
-
-#### F-025b — The prefill, and the documentation
-
-**What:** `IDPRouter` keeps a reference to the client source so the consent handler can resolve a
-CIMD document's `client_name`; DCR stores the name it already parses, which needs `models.Client` to
-carry it and `RegisterClient` to take an options struct — the call has four parameters today, past
-the three §3 allows, so the fix removes an existing violation rather than growing it. Then the
-documentation, including the §1.5 requirement this closes.
-
-**Files:** `pkg/idp/idp.go`, `pkg/idp/consent.go`, `pkg/idp/register.go`, `pkg/models/models.go`,
-`pkg/repository/interface.go` + both backends, `SPEC.md`, `README.md`, `CHANGELOG.md`, plus tests
-
-**Acceptance:**
-- [ ] The field arrives prefilled for a CIMD client **and** for a DCR client
-- [ ] Resolving the CIMD name issues **no** additional outbound request (the resolver cache serves it)
-- [ ] `RegisterClient` takes an options struct; §3's three-parameter rule holds again
-- [ ] `SPEC.md` §1.5's client-identity requirement is satisfied and recorded as satisfied
-- [ ] Suite + `-race` + `golangci-lint` green
+_Empty._ Everything intaked so far is either done or still in the backlog below. Pick a backlog
+entry, run `/prep-step` on it, and it moves up here.
 
 ---
 
@@ -278,6 +226,6 @@ F-021 Validate the Origin header (DNS rebinding, SR-9) (DONE)
 F-022 Bring the remaining oversized files under the §2 limits (BACKLOG)
 F-023 CIMD documents rejected over a foreign grant type (DONE)
 F-024 Operator view of connected clients, with a kill switch (DONE)
-F-025 Name a connection at consent time, and show the client's own name (PLANNED)
+F-025 Name a connection at consent time, and show the client's own name (DONE)
 F-026 Fold REQUIREMENTS into SPEC and strip the implementation history (BACKLOG)
 -->

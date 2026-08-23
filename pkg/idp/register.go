@@ -138,7 +138,14 @@ func (a *IDPRouter) handleRegister(c *gin.Context) {
 	// The cap is enforced atomically inside the write transaction (SR-5, no
 	// TOCTOU): the store counts non-expired registrations and inserts in one
 	// step, returning ErrClientCapReached rather than evicting active clients.
-	if err := a.repo.RegisterClient(ctx, client, expiresAt, a.dcrMaxClients); err != nil {
+	if err := a.repo.RegisterClient(ctx, repository.ClientRegistration{
+		Client: client,
+		// The name the client gives itself. Parsed here since F-005c and, until
+		// F-025b, thrown away — SPEC §1.5 asks the consent page to show it.
+		Name:       req.ClientName,
+		ExpiresAt:  expiresAt,
+		MaxClients: a.dcrMaxClients,
+	}); err != nil {
 		if errors.Is(err, repository.ErrClientCapReached) {
 			a.logger.Warn("DCR client cap reached", zap.Int("cap", a.dcrMaxClients))
 			c.JSON(503, gin.H{"error": "temporarily_unavailable", "error_description": "client registration is temporarily unavailable"})

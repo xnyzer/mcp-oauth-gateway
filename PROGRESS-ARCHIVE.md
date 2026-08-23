@@ -2812,3 +2812,163 @@ already earmarks its split for F-025b.
 `pkg/repository/inventory.go`, `pkg/auth/clients.go`, `pkg/auth/templates/settings.html`; new
 `pkg/idp/label_test.go`; extended `pkg/repository/inventory_test.go`, `pkg/auth/clients_test.go`;
 docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No new endpoint, config, dependency or schema change.
+
+## F-025b — The prefill, and the documentation — DONE 2026-08-23
+
+Second and final substep of F-025. The consent field is now prefilled with the name the client
+declares about itself, which also closes the `SPEC.md` §1.5 client-identity requirement that had
+been unmet since F-004 wrote it.
+
+### What was done
+
+- **DCR:** `models.Client` gained `Name`, and `RegisterClient` now takes a `ClientRegistration`
+  struct instead of four positional parameters — the fifth would have pushed it further past the
+  three §3 allows, so the fix **removes** a violation rather than growing it. Seven call sites
+  updated.
+- **CIMD:** `IDPRouter` keeps the resolver it already hands to fosite, so the consent page reads the
+  document's `client_name` through the **same** resolver — and therefore from the same cache.
+- **New repository method `GetClientName`**, which the plan did not anticipate but the code
+  demanded: fosite's client type has nowhere to carry a name, so `GetClient` can never return one.
+  Kept deliberately narrow rather than a `GetClientRecord`, which would have handed callers the
+  hashed client secret.
+- Documentation: `SPEC.md` §1.5 (the requirement, now recorded as satisfied, plus the naming
+  contract), §1.12 (rows identified by the operator's name), §2.1 (`client_name` is stored since
+  this substep; the operator's own name rides the session and is no entity); `README.md`;
+  `CHANGELOG.md` under `[Unreleased]`.
+
+### The review caught a defect the tests could not
+
+`step-done`'s file-by-file review found that **the SQL backend never stored the name**: the bbolt
+implementation set `client.Name`, the SQLite one did not. Neither the suite nor the live
+verification could have caught it —
+
+- the `pkg/idp` prefill test drives a test server that is **always bbolt** (`setupTestServerWith`),
+  so the DCR prefill was only ever exercised on one backend;
+- the deployment runs bbolt too (no `REPOSITORY_BACKEND` set), so the live check passed for the
+  same reason rather than despite it.
+
+A SQLite deployment would have shown an empty prefill for every DCR client, silently. Fixed, and
+covered by `TestClientNameRoundTrip` plus the unknown- and expired-registration cases, all running
+against **both** backends through `testRepos`. Verified by re-removing the fixed line: the `sql`
+subtest goes red, `kvs` stays green — which is precisely the shape the defect had.
+
+The general lesson, and the reason it is recorded here rather than only fixed: **a contract that
+both backends implement needs a test that runs against both.** The two-backend helper existed; the
+new method simply had no test using it.
+
+### The cache criterion, split honestly
+
+The acceptance criterion read "resolving the CIMD name issues no additional outbound request". That
+cannot be proven end to end at the `pkg/idp` layer: the real resolver's SSRF guard blocks a test
+server, and the hook that works around it is package-internal to `pkg/cimd`. So the claim was split
+into the two halves that *can* be proven, and both are:
+
+- `TestConsentUsesTheConfiguredCIMDResolver` shows the consent page goes through the resolver the
+  router was configured with — not a second one, not a direct fetch. Measured: **two consultations**
+  per authorization, one from fosite's client lookup and one from the render.
+- `pkg/cimd`'s existing `TestResolverHappyPathAndCache` shows that resolver serves a repeat
+  resolution from cache without fetching.
+
+Together: one document fetch per authorization. Recorded as two halves rather than asserted as one.
+
+### Live verification
+
+Deployed to the running gateway and exercised with the operator's real Claude connector. The
+prefill arrived as **"Claude"** — the `client_name` in Claude's published CIMD document, which no
+local test could have known, since the tests supply their own stub. The operator overrode it with
+their own wording, and the log then read
+`token_issued client_id=https://claude.ai/oauth/… label=claude.ai`. The omit-when-empty branch
+verified itself in the same run: the `revoked` event for the *older* grant, authorized before this
+feature existed, carried no label field at all.
+
+### Cleanups this substep carried, both noted by F-025a
+
+- `handleAuthorizationReturn` (71 lines) split into `approvedSession` and `grantRequested`; the
+  latter now carries a statement that had been implicit — approval is all-or-nothing, not scope by
+  scope (SPEC §1.5). The handler is at 48 lines.
+- `pkg/auth/clients_test.go` (429 lines) split along its section rules into 230 + 220
+  (`clients_revoke_test.go`). Verified as a pure move the way F-020 established: **19 declarations
+  before, 19 after**, nothing lost — a green suite proves nothing about a move.
+
+**Files:** `pkg/idp/idp.go`, `pkg/idp/consent.go`, `pkg/idp/register.go`, `pkg/models/models.go`,
+`pkg/repository/interface.go`, `kvs.go`, `sql.go`; new `pkg/idp/prefill_test.go`,
+`pkg/auth/clients_revoke_test.go`; tests in `pkg/repository/inventory_test.go`, `cap_test.go`,
+`maintenance_test.go`, `pkg/auth/clients_test.go`; docs `SPEC.md`, `README.md`, `CHANGELOG.md`,
+`PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No new endpoint, config or dependency; no schema change.
+
+## F-025 — Name a connection at consent time, and show the client's own name — DONE 2026-08-23
+
+
+**Problem:** Three different names meet on this surface and are easy to confuse, so this entry names
+them first: the **`client_id`** is fixed and verifiable (a URL for CIMD, a random string for DCR);
+the **`client_name`** is what the client declares about *itself*; and there is **no third name** —
+nowhere for the operator to write down what a connection actually is. F-024's list therefore
+identifies a connection by its `client_id`, which for a DCR client is unreadable. Separately and
+pre-existing: both mechanisms **parse** `client_name` and both throw it away — `registrationRequest`
+in `pkg/idp/register.go` echoes it back and never stores it, `cimd.Client` never reads it — although
+`SPEC.md` §1.5 says the consent page MUST show it. That is a literal gap in the gateway's own
+contract; it sits outside the §4 conformance table, which tracks the MCP spec rather than our own.
+
+**Idea:** Add **one field**. At consent time — the moment the operator is already looking at the
+connection they started — a text box takes a short name, prefilled with the client's declared name
+where there is one. It is stored with the authorization and shown wherever that authorization
+appears. Everything already on the consent page stays exactly as it is.
+
+**Solution (decided at `/prep-step`, 2026-08-23 — this replaces the intake sketch):**
+- The label lives on the gateway's **own session type** (`pkg/idp/session.go`), which is already
+  persisted as `SessionData` with every token record and deleted with the grant. **No new entity,
+  no new table, no schema change** — and it is deliberately *not* the request `Form`, which is
+  filled from the client's query parameters and would let a client plant its own label.
+- `models.Request` gains a `Label` field, filled in `FromFositeReq`, so F-024's list and the
+  repository layer read it directly instead of decoding session JSON.
+- Prefill: CIMD through the resolver (cached, no extra outbound request), DCR from the
+  `client_name` the registration already parses but has never stored.
+- **Presentation stays plain** — a normal prefilled field, no claim marking. Operator decision, and
+  it holds: the flow is operator-initiated and login-gated, the verified `client_id`, redirect URI
+  and scopes stay visible below, and the page already warns to approve only self-started requests.
+  The prefill only matters on a first connection; after that the field holds the operator's own text.
+- The label travels into the auth events, so the log reads in the operator's words.
+- **Renaming later is out of scope**: re-authorizing asks again, and the field is right there.
+
+**Dependencies:** F-024 (done) — its list is where the name pays off.
+
+### Complete (a/b)
+
+A connection can be given a name where the operator is already looking at it, and that name follows
+the authorization everywhere it appears — the client list, the auth log — and is deleted with it.
+
+**The design came out of the operator's own pushback.** The first plan was three substeps with a new
+entity keyed by client id, renaming in the list, and a claim-marked presentation of the client's
+declared name. The operator asked why it was that complicated, and the question was fair: their
+framing — "a new data field, not a new storage structure" — pointed at a place the plan had missed.
+The name rides the gateway's **own session**, which fosite already persists with every record of a
+grant. That single choice settled three properties at once: server-built, so no client can plant a
+label; written with every token record, so it travels; deleted with those records, so no cleanup
+path exists. Two of the three substeps fell away with it, and the renaming UI was never needed —
+re-authorizing asks again.
+
+**Presentation stayed plain**, also the operator's call, and the reasoning holds: the flow is
+operator-initiated and login-gated, the verified client id and redirect URI stay visible beneath,
+and the page already warns to approve only self-started requests. The prefill only matters on a
+first connection; afterwards the field holds the operator's own words.
+
+**It closed a spec violation nobody had noticed.** `SPEC.md` §1.5 required consent to show the
+client's declared name; both registration mechanisms parsed `client_name` and discarded it, so the
+page had shown the bare client id since F-004. The gap surfaced only because this task went looking
+at the same code — and it prompted **F-026**, since the reason it stayed hidden is that §1.12 and
+§1.5 read as changelogs rather than contracts.
+
+**Three defects found, none by the suite being red.**
+
+| Found by | What |
+|---|---|
+| Mutation (F-025a) | The acceptance criterion was wrong: `Session.Clone` does **not** carry the label through the token exchange — the session is restored from stored JSON there. `Clone` matters only on **refresh**. |
+| Mutation (F-025a) | Two assertions could never fail: one read an aggregate where a specific record was meant, one used a loose `Contains` that matched elsewhere on the page. |
+| Review (F-025b) | The **SQL backend never stored the declared name**. Invisible to both the suite (the idp tests are bbolt-only) and the live check (the deployment is bbolt too). |
+
+The first two are now rules in `CODING-STANDARDS.md` §9 and §11; the third has its two-backend
+contract test.
+
+**Live-verified** with the real Claude connector: the prefill arrived as **"Claude"** from Claude's
+published CIMD document, the operator's override reached the store, the list and the
+`token_issued` event, and the older unnamed grant's `revoked` event correctly carried no label.

@@ -329,8 +329,10 @@ func (r *sqlRepository) EnsureSchemaVersion(ctx context.Context, version int) er
 	return nil
 }
 
-func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.Client, expiresAt time.Time, maxClients int) error {
+func (r *sqlRepository) RegisterClient(ctx context.Context, registration ClientRegistration) error {
+	fositeClient, expiresAt, maxClients := registration.Client, registration.ExpiresAt, registration.MaxClients
 	client := models.FromFositeClient(fositeClient)
+	client.Name = registration.Name
 	client.CreatedAt = time.Now().UTC()
 	client.ExpiresAt = expiresAt
 	data, err := json.Marshal(client) //nolint:gosec // G117: persisting the DCR client secret server-side is the repository's purpose (SPEC §2.1)
@@ -368,6 +370,22 @@ func (r *sqlRepository) RegisterClient(ctx context.Context, fositeClient fosite.
 		}
 		return tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&record).Error
 	})
+}
+
+// GetClientName returns the name a DCR client declared at registration.
+// An expired registration answers empty, like GetClient treats it as absent.
+func (r *sqlRepository) GetClientName(ctx context.Context, id string) (string, error) {
+	client, err := r.getClientModel(ctx, id)
+	if err != nil {
+		if errors.Is(err, fosite.ErrNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !client.ExpiresAt.IsZero() && client.ExpiresAt.Before(time.Now().UTC()) {
+		return "", nil
+	}
+	return client.Name, nil
 }
 
 // countNonExpiredClientRecords counts the client registrations whose expiry

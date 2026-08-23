@@ -42,6 +42,11 @@ type Client struct {
 	Scopes         []string
 	Audience       []string
 	Public         bool
+	// Name is the client's self-declared `client_name` (RFC 7591 §2), kept so
+	// the consent page can show it and prefill the operator's own label
+	// (SPEC §1.5). It is display text the client chose for itself and never
+	// decides anything.
+	Name string `json:",omitempty"`
 	// CreatedAt/ExpiresAt implement the DCR registration TTL (SPEC §1.4).
 	// A zero ExpiresAt means the registration never expires.
 	CreatedAt time.Time `json:",omitempty"`

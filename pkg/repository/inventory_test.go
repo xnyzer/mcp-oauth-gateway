@@ -104,10 +104,13 @@ func allPresent() map[string]bool {
 
 func registerTestClient(t *testing.T, ctx context.Context, repo Repository, clientID string, expiresAt time.Time) {
 	t.Helper()
-	require.NoError(t, repo.RegisterClient(ctx, &fosite.DefaultClient{
-		ID:           clientID,
-		RedirectURIs: []string{testRedirect},
-	}, expiresAt, 0))
+	require.NoError(t, repo.RegisterClient(ctx, ClientRegistration{
+		Client: &fosite.DefaultClient{
+			ID:           clientID,
+			RedirectURIs: []string{testRedirect},
+		},
+		ExpiresAt: expiresAt,
+	}))
 }
 
 func rowFor(rows []ClientGrants, clientID string) (ClientGrants, bool) {
@@ -309,6 +312,59 @@ func TestListClientGrantsKeepsExpiredRegistrationThatStillHoldsTokens(t *testing
 			require.NoError(t, err)
 			require.Len(t, rows, 1)
 			require.Equal(t, 1, rows[0].AccessTokens)
+		})
+	}
+}
+
+// -- The client's declared name -----------------------------------------
+
+// The name a DCR client declares at registration is stored so the consent page
+// can show it (SPEC §1.5, F-025b). Both backends, because only bbolt backs the
+// idp tests — a SQL-only defect here would otherwise stay invisible, which is
+// exactly what happened until this test existed.
+func TestClientNameRoundTrip(t *testing.T) {
+	for name, repo := range testRepos(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			require.NoError(t, repo.RegisterClient(ctx, ClientRegistration{
+				Client:    &fosite.DefaultClient{ID: dcrClientID, RedirectURIs: []string{testRedirect}},
+				Name:      "Claude",
+				ExpiresAt: time.Now().UTC().Add(time.Hour),
+			}))
+
+			stored, err := repo.GetClientName(ctx, dcrClientID)
+			require.NoError(t, err)
+			require.Equal(t, "Claude", stored)
+		})
+	}
+}
+
+// An unknown client is not an error — the consent page renders either way.
+func TestClientNameOfUnknownClientIsEmpty(t *testing.T) {
+	for name, repo := range testRepos(t) {
+		t.Run(name, func(t *testing.T) {
+			stored, err := repo.GetClientName(t.Context(), "no-such-client")
+			require.NoError(t, err)
+			require.Empty(t, stored)
+		})
+	}
+}
+
+// An expired registration answers empty, the same way GetClient treats it as
+// absent (fail-closed, SPEC §1.4).
+func TestClientNameOfExpiredRegistrationIsEmpty(t *testing.T) {
+	for name, repo := range testRepos(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			require.NoError(t, repo.RegisterClient(ctx, ClientRegistration{
+				Client:    &fosite.DefaultClient{ID: dcrClientID, RedirectURIs: []string{testRedirect}},
+				Name:      "Claude",
+				ExpiresAt: time.Now().UTC().Add(-time.Hour),
+			}))
+
+			stored, err := repo.GetClientName(ctx, dcrClientID)
+			require.NoError(t, err)
+			require.Empty(t, stored, "an expired registration is absent, name included")
 		})
 	}
 }
