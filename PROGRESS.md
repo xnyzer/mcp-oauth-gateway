@@ -232,6 +232,14 @@ numbers and §-numbering stay exactly as they are.
 - Update the pointers in `README.md`, `CLAUDE.md`, `THREAT-MODEL.md`; `REQUIREMENTS.md` is removed.
 - **373 references must survive**: 242 `SPEC §…` and 75 FR/GR/SR in Go code, 56 across the other
   docs. A script proves none dangle afterwards — that is the acceptance criterion, not a reading.
+- **Walk §2.1 for fields that never existed.** The DCR client row promises `client_name`,
+  `created_at`, `expires_at` and **`last_used_at`**; F-025b made `client_name` real, and
+  `last_used_at` is now the only fiction left in that row — nothing in `models.Client` or either
+  backend has ever written it. Recommendation, to be confirmed at prep time: **correct the spec
+  rather than build the field.** F-024 settled that "last active" comes from the token records, and
+  §2.1 itself states the client list needs no new entity, so a second timestamp on the registration
+  would be a competing source of truth. The point generalises — a document that describes fields
+  nobody implemented is the same staleness this task exists to remove, one layer down.
 - No code change.
 
 **Still to analyse:** whether §4 (MCP conformance) belongs in the contract document at all — it is
