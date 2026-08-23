@@ -49,6 +49,33 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   the client-initiated ones. **No schema change** — the listing aggregates existing token records,
   so a store from an earlier version needs no migration.
 
+### Changed
+
+- **Documentation restructured (F-026, F-027) — no behaviour change.** `REQUIREMENTS.md` is gone:
+  its FR/GR/SR requirement register now lives in [`SPEC.md`](SPEC.md) §5, with every identifier
+  unchanged. `SPEC.md` lost the implementation history it had accumulated (15 "Delta" paragraphs,
+  108 lines naming internal task numbers) and reads as a contract throughout; its option tables in
+  §3 were a duplicate of the README configuration reference and now state only what is normative.
+
+  The MCP conformance record moved out of `SPEC.md` §4 into
+  [`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md) — it is a verification result, not a
+  contract. A short §4 stays behind and points there, so existing references keep working.
+
+  `README.md` now separates the **rules** (`SPEC.md`, `CODING-STANDARDS.md`, `THREAT-MODEL.md`)
+  from the **records**, and names `CODING-STANDARDS.md` and `CONTRIBUTING.md`, which its index had
+  omitted.
+
+- **A reference guard runs in CI.** `docs_refs_test.go` resolves every `SPEC §…` /
+  `CODING-STANDARDS §…` pointer, every FR/GR/SR identifier and every relative documentation link
+  in the repository, so a renamed section or a deleted document fails the build instead of leaving
+  dead references behind. No new dependency.
+
+### Removed
+
+- `REQUIREMENTS.md` (dissolved into `SPEC.md` §5, see above) and `docs/README.md` (an unwritten
+  stub whose three planned pages have long existed as README sections). If you linked to either,
+  link to [`SPEC.md`](SPEC.md) or [`README.md`](README.md) instead.
+
 ## [0.3.0] — 2026-08-22
 
 ### Added
@@ -76,8 +103,9 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   deployment that serves only CIMD-capable clients. It stays on by default because it is the
   documented rescue when a client's metadata document cannot be fetched — and because disabling
   both mechanisms makes the gateway refuse to start, a `false` default would turn that rescue into
-  an outage. New README section "Should you turn DCR off?"; the decision is recorded in
-  `REQUIREMENTS.md` §6 beside the original one.
+  an outage. New README section "Should you turn DCR off?"; the decision was recorded beside the
+  original one in the decision list of the then-separate `REQUIREMENTS.md` (dissolved in F-026;
+  the rationale lives in `PROGRESS-ARCHIVE.md`).
 - `SPEC.md` §4 now records **no unmet requirement**: the `Origin` row that carried a ✘ since v0.2.0
   reads satisfied.
 

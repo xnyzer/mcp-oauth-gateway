@@ -1,27 +1,27 @@
 # SPEC — mcp-oauth-gateway (implementable contracts)
 
-> **Status: draft (F-004).** Contract-level companion to `REQUIREMENTS.md` (intent-level source
-> of truth). This document turns the FR/GR/SR requirements into precise, RFC-conformant
-> contracts that F-005 implements and F-006 verifies. Normative keywords (**MUST**, **SHOULD**,
-> **MAY**) per RFC 2119. Baseline: the **final MCP authorization spec 2026-07-28**, verified
-> requirement by requirement in **§4** (F-017).
->
-> Each section notes the **Delta** between the fork's current behaviour and the target
-> contract, so F-005 can be implemented and reviewed section by section.
+> Precise, RFC-conformant contracts for the FR/GR/SR requirement register (**§5**). Normative
+> keywords (**MUST**, **SHOULD**, **MAY**) per RFC 2119. Baseline: the **final MCP authorization
+> spec 2026-07-28**; the requirement-by-requirement conformance record is
+> [`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md) (§4).
+
+**This document is binding for changes to the gateway.** It says *what must hold*. Two documents
+sit beside it and are equally binding: `CODING-STANDARDS.md` (how the code is written) and
+`THREAT-MODEL.md` (what it defends against). Everything else in the repository — README, the
+`docs/` records, PROGRESS — is description, not rule.
 
 ## 0. Conventions
 
 - **Base URL / issuer:** every absolute URL below is relative to the configured public base URL
   (`EXTERNAL_URL`). The OAuth **issuer is `EXTERNAL_URL` normalized without a trailing slash**;
   the same normalized value MUST be used in AS metadata (`issuer`), token `iss` claims, and the
-  RFC 9207 `iss` authorization-response parameter. (Delta: **done, F-005a** — the external URL
-  is validated as absolute http(s) without path/query/fragment and normalized without a
-  trailing slash at startup.)
-- **Endpoint paths:** the fork's `/.idp/*` and `/.auth/*` prefixes are **kept** (decision,
-  F-004 prep): clients discover endpoint paths via RFC 8414/9728 metadata, and the prefixes
-  cannot collide with paths proxied to the upstream MCP server. `REQUIREMENTS.md` FR-2/FR-3
-  path examples (`/register`, `/authorize`) are to be read as "the paths advertised in
-  discovery metadata".
+  RFC 9207 `iss` authorization-response parameter. `EXTERNAL_URL` is validated at startup as an
+  absolute http(s) URL without path, query or fragment.
+- **Endpoint paths:** OAuth and login endpoints live under the `/.idp/*` and `/.auth/*`
+  prefixes: clients discover endpoint paths via RFC 8414/9728 metadata, and the prefixes
+  cannot collide with paths proxied to the upstream MCP server. The FR-2/FR-3 path examples
+  (`/register`, `/authorize`) in §5.2 are to be read as "the paths advertised in discovery
+  metadata".
 - **Error format:** OAuth endpoints return RFC 6749 §5.2-style JSON errors
   (`{"error": "...", "error_description": "..."}`) with the appropriate HTTP status. Error
   responses MUST NOT leak internals (no stack traces, no file paths, no upstream details)
@@ -35,37 +35,36 @@
   absence as a violation would reject every real client. `Origin: null` (sandboxed iframes,
   `file://`, some redirect chains) counts as present and invalid. Comparison is on
   scheme + host + port with the host lower-cased and default ports elided. `GET /healthz`
-  is registered ahead of the check and stays reachable regardless. **Done (F-021).**
+  is registered ahead of the check and stays reachable regardless.
 - **Fail-closed:** any validation or storage error on an auth path results in denial
   (400/401/403), never in an authenticated default (SR-3).
 
 ### Endpoint overview
 
-| # | Method + path | Purpose | RFC | Req. | Status |
-|---|---|---|---|---|---|
-| 1.1 | `GET /.well-known/oauth-protected-resource` | PRM discovery | 9728 | FR-1 | exists, **thin** |
-| 1.2 | `GET /.well-known/oauth-authorization-server` | AS metadata | 8414 | FR-1 | exists, **incomplete** |
-| 1.2 | `GET /.well-known/openid-configuration` | OIDC Discovery mirror | OIDC Disc. | FR-1 | **new (optional)** |
-| 1.3 | — (no endpoint; URL client IDs) | CIMD client identification | MCP 2025-11-25 | FR-2 | **new** |
-| 1.4 | `POST /.idp/register` | DCR (deprecated fallback) | 7591 | FR-2 | exists, needs SR-5 |
-| 1.5 | `GET /.idp/auth` | Authorization endpoint | 6749, 7636, 9207, 8707 | FR-3 | exists, needs `iss`+`resource` |
-| 1.5 | `GET/POST /.idp/auth/:ar_id` | Login-gated consent step | — | FR-4 | exists |
-| 1.6 | `POST /.idp/token` | Token endpoint | 6749, 7636, 8707 | FR-3/5 | exists, needs `aud` binding |
-| 1.8 | `GET /.well-known/jwks.json` | JWKS | 7517 | FR-7 | exists, single static key |
-| 1.9 | `POST /.idp/revoke` | Token revocation | 7009 | FR-9 | **new** (storage exists) |
-| 1.10 | `POST /.idp/introspect` | Token introspection | 7662 | FR-9 | exists |
-| 1.11 | `ANY <any non-public path>` | Authenticated proxy to upstream | 6750 | FR-6/8 | exists, 401 needs `WWW-Authenticate` |
-| 1.12 | `/.auth/login`, `/.auth/logout`, `/.auth/oidc*` | User login (password / optional OIDC) | — | FR-4 | exists, F-005 reworks |
-| 1.13 | `GET /healthz` | Health | — | GR-4 | exists |
+| # | Method + path | Purpose | RFC | Req. |
+|---|---|---|---|---|
+| 1.1 | `GET /.well-known/oauth-protected-resource` | PRM discovery | 9728 | FR-1 |
+| 1.2 | `GET /.well-known/oauth-authorization-server` | AS metadata | 8414 | FR-1 |
+| 1.2 | `GET /.well-known/openid-configuration` | OIDC Discovery mirror (optional) | OIDC Disc. | FR-1 |
+| 1.3 | — (no endpoint; URL client IDs) | CIMD client identification | MCP 2025-11-25 | FR-2 |
+| 1.4 | `POST /.idp/register` | DCR (deprecated fallback) | 7591 | FR-2 |
+| 1.5 | `GET /.idp/auth` | Authorization endpoint | 6749, 7636, 9207, 8707 | FR-3 |
+| 1.5 | `GET/POST /.idp/auth/:ar_id` | Login-gated consent step | — | FR-4 |
+| 1.6 | `POST /.idp/token` | Token endpoint | 6749, 7636, 8707 | FR-3/5 |
+| 1.8 | `GET /.well-known/jwks.json` | JWKS | 7517 | FR-7 |
+| 1.9 | `POST /.idp/revoke` | Token revocation | 7009 | FR-9 |
+| 1.10 | `POST /.idp/introspect` | Token introspection | 7662 | FR-9 |
+| 1.11 | `ANY <any non-public path>` | Authenticated proxy to upstream | 6750 | FR-6/8 |
+| 1.12 | `/.auth/login`, `/.auth/logout`, `/.auth/oidc*` | Operator login (password / passkey / optional OIDC) | — | FR-4 |
+| 1.13 | `GET /healthz` | Health | — | GR-4 |
 
 **Public (unauthenticated) paths** are exactly: the three `/.well-known/*` documents,
 `/.idp/auth`, `/.idp/auth/:ar_id`, `/.idp/token`, `/.idp/register`, `/.idp/revoke`,
 `/.idp/introspect`, `/.auth/*`, and `/healthz`. Every other path is the protected proxy
 surface (§1.11). This list is normative for SR-7/SR-10 (minimal public surface).
 The `/.idp/`, `/.auth/`, and `/.well-known/` namespaces are **reserved**: unmatched paths
-inside them (e.g. config-disabled endpoints) return `404` and are **never proxied upstream**
-*(added in F-005c after the DCR_ENABLED=false smoke test showed the disabled endpoint falling
-through to the proxy)*.
+inside them (e.g. config-disabled endpoints) return `404` and are **never proxied upstream** —
+a disabled endpoint MUST NOT fall through to the proxy.
 
 ---
 
@@ -79,13 +78,12 @@ RFC 9728. Response `200`, `Content-Type: application/json`:
 |---|---|---|
 | `resource` | issuer | The gateway is the MCP resource. |
 | `authorization_servers` | `[issuer]` | The gateway is its own AS. |
-| `jwks_uri` | `<issuer>/.well-known/jwks.json` | **target** (advertise; RFC 9728 §2) |
-| `bearer_methods_supported` | `["header"]` | **target** — only `Authorization: Bearer`. |
+| `jwks_uri` | `<issuer>/.well-known/jwks.json` | advertised per RFC 9728 §2 |
+| `bearer_methods_supported` | `["header"]` | only `Authorization: Bearer` |
 | `scopes_supported` | `[]` (until scopes are defined) | keep consistent with §1.2 |
-| `resource_name` | `"mcp-oauth-gateway"` | **target**, optional cosmetic |
+| `resource_name` | `"mcp-oauth-gateway"` | optional, cosmetic |
 
-**Delta:** **done, F-005a** — all fields above are served. The PRM URL is referenced by the
-`WWW-Authenticate` challenge (§1.11).
+The PRM URL is the one the `WWW-Authenticate` challenge points at (§1.11).
 
 ### 1.2 AS metadata — `GET /.well-known/oauth-authorization-server`
 
@@ -97,28 +95,26 @@ RFC 8414. Response `200 application/json`:
 | `authorization_endpoint` | `<issuer>/.idp/auth` |
 | `token_endpoint` | `<issuer>/.idp/token` |
 | `registration_endpoint` | `<issuer>/.idp/register` (present while DCR fallback is enabled) |
-| `jwks_uri` | `<issuer>/.well-known/jwks.json` — **target** |
-| `revocation_endpoint` | `<issuer>/.idp/revoke` — **target** |
-| `introspection_endpoint` | `<issuer>/.idp/introspect` — **target** |
+| `jwks_uri` | `<issuer>/.well-known/jwks.json` |
+| `revocation_endpoint` | `<issuer>/.idp/revoke` |
+| `introspection_endpoint` | `<issuer>/.idp/introspect` |
 | `response_types_supported` | `["code"]` |
 | `response_modes_supported` | `["query"]` |
-| `grant_types_supported` | `["authorization_code", "refresh_token"]` |
+| `grant_types_supported` | `["authorization_code", "refresh_token"]`; `refresh_token` is omitted when the refresh grant is disabled (`REFRESH_TOKEN_TTL=0`) |
 | `token_endpoint_auth_methods_supported` | `["client_secret_basic", "client_secret_post", "none"]` |
 | `code_challenge_methods_supported` | `["S256"]` (plain MUST NOT be offered) |
-| `authorization_response_iss_parameter_supported` | `true` — **target** (RFC 9207) |
+| `authorization_response_iss_parameter_supported` | `true` (RFC 9207) |
 | `client_id_metadata_document_supported` | `true` while CIMD is enabled (§1.3), else `false` — always present |
 | `scopes_supported` | `[]` (until scopes are defined) |
 
-**OIDC Discovery mirror (optional, F-009):** `GET /.well-known/openid-configuration` MAY serve
+**OIDC Discovery mirror (optional):** `GET /.well-known/openid-configuration` MAY serve
 the same document for clients that only probe that path (the gateway issues no ID tokens; this
-is a discovery convenience, not OIDC conformance). Off by default; config flag in part 3.
+is a discovery convenience, not OIDC conformance). Off by default; config flag in §3.
 
-**Delta:** **done, F-005a/b** — all fields including `revocation_endpoint` are served;
-`grant_types_supported` reflects a disabled refresh grant (`REFRESH_TOKEN_TTL=0`).
-**F-015:** added `client_id_metadata_document_supported`, which this table had omitted even
-though §1.3 makes CIMD the primary mechanism. Clients pick CIMD only when the metadata
-advertises it *and* offers `none` auth, so without it every client fell back to the deprecated
-DCR path. Emitted as a boolean either way, driven by whether a CIMD resolver is configured.
+`client_id_metadata_document_supported` MUST always be present, as a boolean, driven by whether
+a CIMD resolver is configured. Clients pick CIMD only when the metadata advertises it *and*
+offers `none` client authentication; omitting the field pushes every client onto the deprecated
+DCR path (§1.4), which is why it is emitted either way rather than only when true.
 
 ### 1.3 Client identification — CIMD (primary mechanism)
 
@@ -130,17 +126,17 @@ client. No registration endpoint is involved; nothing is persisted beyond a cach
 `/.idp/token` is treated as a CIMD client ID. All other client IDs are looked up in the DCR
 store (§1.4).
 
-**Resolution contract** (all limits configurable, part 3; defaults here):
+**Resolution contract** (all limits configurable, §3; defaults here):
 1. `GET client_id` with `Accept: application/json`; **timeout 5 s**, response **size cap
    64 KiB**, **no redirects followed**, TLS verification mandatory.
 2. **SSRF guard:** the URL MUST be `https://` with a non-empty host; resolution MUST reject
    loopback, link-local, RFC 1918/ULA, and metadata-service addresses (fail-closed on DNS
-   returning such addresses). No userinfo, no non-default ports unless explicitly allowed by
-   config.
+   returning such addresses). The check MUST happen at dial time, so that DNS rebinding cannot
+   bypass it. No userinfo, no non-default ports unless explicitly allowed by config.
 3. The document MUST contain `client_id` exactly equal to the fetched URL, and
    `redirect_uris` (non-empty). Accepted redirect URI schemes: `https://` and
    custom/native schemes; `http://` only for loopback literals (RFC 8252 §7.3).
-   **Port tolerance (F-016):** a registered loopback URI matches a request that differs from it
+   **Port tolerance:** a registered loopback URI matches a request that differs from it
    in **nothing but the port** — the part a native client cannot pre-register, because the OS
    assigns it per session. RFC 8252 §7.3 requires this for the IP literals `127.0.0.1`/`[::1]`
    (fosite implements it); the gateway extends it to the hostname `localhost`, which §8.3
@@ -151,32 +147,30 @@ store (§1.4).
 4. Relevant fields: `client_id`, `client_name`, `redirect_uris`, `grant_types` (default
    `["authorization_code"]`), `response_types` (default `["code"]`),
    `token_endpoint_auth_method` — MUST be `none` (CIMD clients are **public**; PKCE is their
-   proof of possession). Unknown fields are ignored.
+   proof of possession); an **absent** value is read as `none`, which is common in real CIMD
+   documents, while an explicit non-`none` value is rejected. Unknown fields are ignored.
 5. **Cache:** successful resolutions cached (default TTL 1 h, honouring shorter
    `Cache-Control: max-age`); failures negative-cached (default 60 s). Cache is
    in-store/in-memory, not a client registration.
 6. Any resolution/validation failure → the OAuth request fails with `invalid_client`
    (fail-closed); the resolution error detail goes to structured logs (SR-8), not the client.
 
-**Delta:** **done, F-005c** — implemented in `pkg/cimd` (dial-time SSRF checks, so DNS
-rebinding cannot bypass them) and integrated as the fosite client source, effective at the
-authorize and token endpoints alike. An absent `token_endpoint_auth_method` is treated as
-`none` (decision: common in CIMD documents; explicit non-`none` values are rejected).
-Declared `grant_types`/`response_types` are **narrowed** to the §1.2 sets rather than rejected
-for naming something outside them: a CIMD document is published once and presented to every
-authorization server, so it declares the union of the client's abilities — Claude's names
-`urn:ietf:params:oauth:grant-type:jwt-bearer` beside `authorization_code` and `refresh_token`.
-A document that leaves *no* supported grant or response type is still rejected, since no flow
-remains to run. Narrowing is fail-closed: the resolved client only ever ends up with a subset of
-what the document asked for, and the endpoints refuse an unsupported flow if one is attempted
-anyway. **DCR stays strict** (§1.4, F-012a) — a registration request is addressed to this server
-alone, so declaring something it does not support is a client error there.
-**Done (F-023)**; before it, one unsupported grant type rejected the whole client, which made
-CIMD unusable with real clients as soon as F-015 caused them to choose it.
+Resolution is effective at the authorize and token endpoints alike.
+
+**Narrowing, not rejecting.** Declared `grant_types`/`response_types` are **narrowed** to the
+§1.2 sets rather than rejected for naming something outside them: a CIMD document is published
+once and presented to every authorization server, so it declares the union of the client's
+abilities — Claude's names `urn:ietf:params:oauth:grant-type:jwt-bearer` beside
+`authorization_code` and `refresh_token`. A document that leaves *no* supported grant or
+response type is still rejected, since no flow remains to run. Narrowing is fail-closed: the
+resolved client only ever ends up with a subset of what the document asked for, and the
+endpoints refuse an unsupported flow if one is attempted anyway. **DCR stays strict** (§1.4) —
+a registration request is addressed to this server alone, so declaring something it does not
+support is a client error there.
 
 ### 1.4 Dynamic Client Registration — `POST /.idp/register` (deprecated fallback)
 
-RFC 7591. Kept for backward compatibility (decision F-003); MAY be disabled by config.
+RFC 7591. Kept for backward compatibility; MAY be disabled by config.
 
 **Request** (`application/json`): `redirect_uris` (REQUIRED, non-empty, schemes as in §1.3.3),
 `token_endpoint_auth_method` (`none` | `client_secret_basic` | `client_secret_post`; default
@@ -184,24 +178,21 @@ RFC 7591. Kept for backward compatibility (decision F-003); MAY be disabled by c
 `response_types` (subset; default `["code"]`), `client_name`, `scope` (space-separated).
 
 **Response `201`:** `client_id` (generated), `client_secret` (confidential clients only),
-`client_id_issued_at`, `client_secret_expires_at` (**target:** epoch seconds =
-issued_at + registration TTL; `0` only if expiry is disabled), echo of the accepted metadata,
+`client_id_issued_at`, `client_secret_expires_at` (epoch seconds = issued_at + registration
+TTL; `0` only if expiry is disabled), echo of the accepted metadata,
 `registration_client_uri` (reserved; management API is out of scope).
 
-**SR-5 hardening (target):**
+**SR-5 hardening:**
 - **Registration TTL:** registrations expire (default 30 days) and are garbage-collected;
-  expiry is refreshed on successful token issuance (active clients never expire mid-use).
+  expiry is refreshed on successful token issuance (active clients never expire mid-use). An
+  expired registration is treated as absent on lookup.
 - **Cap:** at most N stored DCR clients (default 100); at the cap, registration returns
-  `503` + `{"error":"temporarily_unavailable"}` (never silent eviction of active clients).
-- **Rate limit:** per-IP limit on `/.idp/register` (default 10/min, part 3).
+  `503` + `{"error":"temporarily_unavailable"}` (never silent eviction of active clients). The
+  count and the insert MUST run in one write transaction, so the cap cannot be exceeded by
+  concurrent registrations (no TOCTOU).
+- **Rate limit:** per-IP limit on `/.idp/register` (default 10/min, §3).
 - **Validation:** redirect URIs validated as in §1.3.3; grant/response types restricted to the
   §1.2 sets; unknown `token_endpoint_auth_method` → `invalid_client_metadata` (400).
-
-**Delta:** **done, F-005c** — TTL (refreshed on token issuance), cap (503, no eviction),
-redirect-URI scheme validation, grant/response-type whitelist, `client_secret_expires_at`,
-and `DCR_ENABLED` (endpoint + metadata entry removed when off) are implemented; expired
-registrations are treated as absent on lookup. The per-IP rate limit (429 +
-`temporarily_unavailable`) is **done (F-005e2)**.
 
 ### 1.5 Authorization endpoint — `GET /.idp/auth`
 
@@ -209,7 +200,8 @@ RFC 6749 §4.1 + PKCE (RFC 7636) + RFC 9207 + RFC 8707.
 
 **Parameters:** `client_id` (CIMD URL or DCR ID), `redirect_uri` (MUST exactly match a
 registered/resolved URI), `response_type=code` (only), `state` (RECOMMENDED, echoed verbatim),
-`code_challenge` (**REQUIRED** — requests without PKCE are rejected), `code_challenge_method=S256`
+`code_challenge` (**REQUIRED** for **every** client, confidential DCR clients included —
+requests without PKCE are rejected), `code_challenge_method=S256`
 (only; `plain` rejected), `scope` (optional), `resource` (RFC 8707, optional — see below).
 
 **`resource` handling:** the gateway fronts exactly one MCP resource: itself. If present,
@@ -220,10 +212,12 @@ token's `aud` (§1.7).
 **Flow:** valid request → login (§1.12) if no session → consent form
 (`GET /.idp/auth/:ar_id`, login-gated) → user approval (`POST /.idp/auth/:ar_id`).
 Consent MUST show the client identity (CIMD `client_name` + the client_id URL, or DCR
-`client_name` + ID) and requested scopes. Approval is per-authorization (no silent long-lived
-blanket grants in v1).
+`client_name` + ID) and requested scopes; both mechanisms therefore MUST retain the declared
+`client_name` rather than parsing and discarding it. The approval POST carries the §1.12
+per-session anti-CSRF token on top of its `ar_id` session binding. Approval is
+per-authorization (no silent long-lived blanket grants in v1).
 
-**Naming a connection (F-025).** The consent form additionally offers an optional
+**Naming a connection.** The consent form additionally offers an optional
 `connection_name`, prefilled with the `client_name` the client declares about itself. What the
 operator submits is stored with the authorization and identifies it in the client list (§1.12); it
 is display text and decides nothing. The value is sanitized where it enters — control characters
@@ -232,28 +226,17 @@ dropped, trimmed, capped at 64 runes — because it is repeated into the auth lo
 verified `client_id`, redirect URI and scopes stay the identity the page is judged on.
 
 **Success response:** `302` to `redirect_uri` with `code` (single-use, short-lived: default
-10 min, consumed on first token exchange), `state`, and **`iss`** (RFC 9207, **target**).
+10 min, consumed on first token exchange), `state`, and **`iss`** (RFC 9207).
 
-**Errors:** per RFC 6749 §4.1.2.1 — redirectable errors (`access_denied`,
-**Loopback warning (F-016):** when *every* registered redirect URI of the requesting client is a
+**Loopback warning:** when *every* registered redirect URI of the requesting client is a
 loopback address, the consent page adds an explicit warning that the application runs on the
 operator's own device and that any local program could have claimed the port. A Client ID Metadata
 Document proves who published it, never which process is listening.
 
+**Errors:** per RFC 6749 §4.1.2.1 — redirectable errors (`access_denied`,
 `invalid_scope`, `invalid_target`, `server_error`) go to the redirect URI with `state` and
 `iss`; non-redirectable ones (unknown client, invalid/missing `redirect_uri`) render an HTML
 error page (§1.12 template) with `400` and MUST NOT redirect.
-
-**Delta:** flow exists (Fosite); `iss` parameter **done (F-005a)**; `resource` validation
-**done (F-005b)**; CIMD client support **done (F-005c)**. The **client identity** requirement above
-is **done (F-025b)** — and was unmet from F-004 until then: both mechanisms parsed `client_name`
-and discarded it, so the page showed the client_id alone. DCR now stores the declared name, CIMD
-reads it from the resolved document through the same cached resolver fosite uses for the lookup. PKCE presence is now enforced by
-Fosite config for **every** client — `EnforcePKCE: true`, so confidential DCR clients must
-send `code_challenge` too, not only public/CIMD ones (**done, F-012b**; closes the prior
-open delta). The consent approval POST additionally carries the §1.12 per-session anti-CSRF
-token (hidden field, constant-time check) on top of its existing `ar_id` session binding
-(**done, F-012c**).
 
 ### 1.6 Token endpoint — `POST /.idp/token`
 
@@ -279,10 +262,6 @@ configurable), `refresh_token` (when granted), `scope`.
 PKCE mismatch, rotated refresh token), `unauthorized_client`, `unsupported_grant_type`,
 `invalid_target`.
 
-**Delta:** `resource`→`aud` binding and TTL configuration **done (F-005b)**; CIMD client
-resolution at the token endpoint **done (F-005c**, via the shared client source**)**; per-IP
-rate limiting (429) and the `token_issued` event **done (F-005e2)**.
-
 ### 1.7 Access token claims (JWT) — FR-5, SR-4
 
 Signed JWS, `alg` RS256 (default) or ES256 (`KEY_ALG`, §2.2), header `kid` = active signing
@@ -291,21 +270,17 @@ key (§1.8), set at signing time.
 | Claim | Value | Verified on `/mcp` (§1.11) |
 |---|---|---|
 | `iss` | issuer (§0) | MUST equal issuer |
-| `sub` | stable user ID (the persisted operator account's ID since F-005e1; OIDC logins keep their provider identity) | present |
+| `sub` | stable user ID (the persisted operator account's ID; OIDC logins keep their provider identity) | present |
 | `aud` | granted resource (§1.5/§1.6) — the issuer, as array | MUST contain issuer |
 | `exp` | issue time + access-token TTL (default 3600 s) | MUST be in the future |
 | `iat`, `nbf` | issue time | `nbf` MUST NOT be in the future |
-| `jti` | unique token ID — **target** (enables revocation checks, part 2) | — |
-| `client_id` | requesting client's ID (CIMD URL or DCR ID) — **target** | — |
-| `scope` | granted scopes (space-separated) — **target** when scopes exist | — |
+| `jti` | unique token ID, regenerated per issued token including on refresh (§2.4) | — |
+| `client_id` | requesting client's ID (CIMD URL or DCR ID) | — |
+| `scope` | granted scopes (space-separated), when scopes exist | — |
 | `userinfo` | user attributes for header mapping (existing `Extra`) | — |
 
 Refresh tokens and authorization codes are **opaque Fosite HMAC tokens** (not JWTs), stored
-server-side (part 2), revocable.
-
-**Delta:** **done, F-005b** — `aud` carries the granted resource, `jti` is unique per issued
-token (regenerated on refresh), `client_id` and space-separated `scope` claims are emitted;
-`exp` follows `ACCESS_TOKEN_TTL`.
+server-side (§2), revocable.
 
 ### 1.8 JWKS — `GET /.well-known/jwks.json`
 
@@ -313,13 +288,11 @@ RFC 7517. Response `200 application/json`: `{"keys": [...]}` — public keys onl
 `kty`, `use: "sig"`, `kid`, `alg`, and the key parameters (`n`/`e` for RSA; `crv`/`x`/`y` for
 EC when ES256 is enabled).
 
-**Rotation contract (detail in part 2):** during a rotation window the set contains
+**Rotation contract (detail in §2.3):** during a rotation window the set contains
 the **new active key and the previous key(s)** until every token signed with them has
-expired (window ≥ access-token TTL + clock skew). Verifiers select by `kid`. The endpoint MAY
-send `Cache-Control: max-age` ≤ 300 s so rotations propagate quickly.
-
-**Delta:** **done, F-005d** — the set serves the active key first, then every retiring key
-(EC keys with `crv`/`x`/`y` per RFC 7518 §6.2.1); `Cache-Control: max-age=300` is sent.
+expired (window ≥ access-token TTL + clock skew). The active key is served first, then every
+retiring key (EC keys with `crv`/`x`/`y` per RFC 7518 §6.2.1). Verifiers select by `kid`. The
+endpoint sends `Cache-Control: max-age=300` so rotations propagate quickly.
 
 ### 1.9 Token revocation — `POST /.idp/revoke` (new)
 
@@ -332,12 +305,8 @@ unknown or already revoked/expired** (RFC 7009 §2.2; no token-existence oracle)
 invalid_client` for failed client auth; `503` if the store is unavailable (revocation MUST NOT
 silently no-op).
 
-Revoking a refresh token revokes the grant (its access tokens are rejected via store lookup /
-`jti`, part 2). The Fosite `TokenRevocationStorage` interface is already implemented by the
-repository — this endpoint wires it up.
-
-**Delta:** **done, F-005b** — endpoint wired via fosite's revocation handler; the storage
-`Revoke*` implementations were fixed to delete by grant request ID (upstream no-op bug).
+Revoking a refresh token revokes the whole grant; its access tokens are then rejected by the
+§2.4 record-presence check.
 
 ### 1.10 Token introspection — `POST /.idp/introspect`
 
@@ -346,16 +315,14 @@ RFC 7662 (optional per FR-9; exists today). Form-encoded `token`, `token_type_hi
 introspection MUST be rejected — no token oracle). Response `200`:
 `{"active": false}` or `{"active": true, iss, sub, aud, exp, iat, client_id, scope, ...}`.
 
-**Delta:** **done, F-005b** — client-auth enforcement verified by test (anonymous
-introspection rejected); revoked tokens introspect `active: false`.
-
 ### 1.11 Protected proxy surface (every non-public path)
 
 FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
 
 1. **Bearer required:** `Authorization: Bearer <jwt>`. Validation: JWS signature against the
-   JWKS key set (`kid`), `iss`, `aud` contains issuer, `exp`/`nbf` (small skew tolerance,
-   default 30 s), revocation state (once `jti` lands, part 2). Any failure → `401`.
+   JWKS key set (`kid`; RS256/ES256, unknown `kid` or alg mismatch → 401), `iss`, `aud`
+   contains issuer, `exp` (**MUST be present**) and `nbf` (small skew tolerance, default 30 s),
+   and the §2.4 record-presence check. Any failure → `401`.
 2. **401 contract (RFC 6750 + RFC 9728 §5 — target):**
    `WWW-Authenticate: Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource"`,
    plus `error="invalid_token", error_description="..."` when a (malformed/invalid/expired)
@@ -364,7 +331,9 @@ FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
    client compatibility.
 3. **Upstream forwarding on success:** request streamed to the upstream MCP server
    (streamable HTTP; SSE passthrough unless `HTTP_STREAMING_ONLY` rejects GET-SSE with `405`).
-   No buffering of streaming bodies; hop-by-hop headers stripped per RFC 9110.
+   No buffering of streaming bodies; hop-by-hop headers stripped per RFC 9110. Request-body
+   buffering for an upstream 307/308 replay is capped at **4 MiB**: a larger body streams
+   through unbuffered, and a redirect for it is passed to the client instead of followed.
 4. **Credential injection (FR-6):** configured upstream credential attached
    (`Authorization: Bearer <PROXY_BEARER_TOKEN>` / custom headers / none). The client's
    token is **not** forwarded unless `PROXY_FORWARD_AUTHORIZATION=true`. The upstream
@@ -377,61 +346,55 @@ FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
    `HEADER_MAPPING_BASE`, default `/userinfo`) to request headers; inbound copies of those
    headers are stripped first (anti-spoofing).
 
-**Delta:** enforcement, streaming, injection, and header mapping exist; the
-`WWW-Authenticate` challenge and clock-skew leeway are **done (F-005a)**; the fail-closed
-revocation check is **done (F-005b**, §2.4 record-presence lookup**)**; signature validation
-against the full JWKS key set selected by `kid` (RS256/ES256, unknown `kid` or alg mismatch
-→ 401) is **done (F-005d)**. Token validation additionally requires `exp` to be present, and
-request-body buffering for upstream 307/308 replay is capped at 4 MiB — a larger body streams
-through unbuffered and a redirect for it passes to the client instead of being followed
-(F-012a, hardening the §1.11.3 no-buffering rule). The §1.11.4 `PROXY_HEADERS` strip is
-**done (F-017b)**; it closed a gap that MCP 2026-07-28 made reachable in normal operation by
-mirroring tool parameters into client-set `Mcp-Param-*` headers.
-
 ### 1.12 User authentication & consent — `/.auth/*`
 
 FR-4/SR-6. Session-cookie based (`Secure`, `HttpOnly`, `SameSite=Lax`; keys from
-`AUTH_HMAC_SECRET` or generated, part 2/3). The cookie is **signed and encrypted** with
-HKDF-derived auth+encryption subkeys distinct from the Fosite token secret (§2.2, F-012d);
+`AUTH_HMAC_SECRET` or generated, §2/§3). The cookie is **signed and encrypted** with
+HKDF-derived auth+encryption subkeys distinct from the Fosite token secret (§2.2);
 upgrading forces a one-time operator re-login. A per-session anti-CSRF token (32 random bytes,
 crypto/rand) is stored in the HMAC-signed session and embedded in the login/consent/settings
 forms; every state-changing POST on this surface is checked against it in constant time —
-defence-in-depth on top of `SameSite=Lax` (**done, F-012c**). Form POSTs carry it in a hidden
+defence-in-depth on top of `SameSite=Lax`. Form POSTs carry it in a hidden
 `csrf_token` field; the WebAuthn `fetch()` calls send it as the `X-CSRF-Token` request header.
 
 - `GET /.auth/login` — login page. Backends: **passkey/WebAuthn** (preferred, offered once a
   credential is enrolled), **password** (bcrypt hash(es) from the env config — see below),
-  and **generic OIDC** (off by default, active only when configured — decision F-011).
-- `POST /.auth/login` — password verification. **Rate limiting / lockout (SR-6, done
-  F-005e2):** per-IP token bucket on the login surfaces (password + passkey ceremony) and a
+  and **generic OIDC** (off by default, active only when configured).
+- `POST /.auth/login` — password verification. **Rate limiting / lockout (SR-6):** per-IP token
+  bucket on the login surfaces (password + passkey ceremony) and a
   per-account lockout after `LOGIN_LOCKOUT_THRESHOLD` consecutive failed password logins
   (passkey assertions are exempt — cryptographic, not guessable). Uniform error message and
   timing (no user/state enumeration): a locked account and a disabled password fallback both
   answer exactly like a wrong password, and the bcrypt comparison always runs first. The
   disabled-fallback rejection does not count toward the lockout (it is a correct password,
-  not a guessing signal).
-- `GET /.auth/logout` — session invalidation.
+  not a guessing signal). An **empty** password runs the same bcrypt path and returns the same
+  uniform error as a wrong one — no distinct pre-bcrypt rejection (SR-6).
+- `GET /.auth/logout` — session invalidation: the whole session is cleared and the cookie
+  expired (`MaxAge -1`), not merely the authorized flag.
 - `/.auth/oidc`, `/.auth/oidc/callback` — generic OIDC login backend (unchanged contract,
   off by default).
 - Consent (`/.idp/auth/:ar_id`, §1.5) requires an authenticated session; it MUST re-verify
-  the pending authorize request server-side (existing `ar_id` session mechanism).
+  the pending authorize request server-side (`ar_id` session mechanism).
+- A stored post-login redirect target MUST be normalised to a local path (it MUST start with
+  `/` and MUST NOT start with `//` or `/\`) at every login consumer — password, passkey and
+  OIDC callback alike.
 
-**Operator account & bootstrap (F-005e1):** the gateway has exactly **one** persisted user
+**Operator account & bootstrap:** the gateway has exactly **one** persisted user
 (FR-4), created on the first successful password login. Its generated 64-character ID is the
 JWT `sub` (§1.7) and the WebAuthn user handle. **The env config stays the authoritative
-password source** (decision F-005e, user-approved): the record never stores a password hash —
-only identity, passkeys, and the password-disabled flag.
+password source:** the record never stores a password hash — only identity, passkeys, and the
+password-disabled flag.
 
-**Passkey/WebAuthn (F-005e1):** RP ID = the issuer's host, allowed origin = the issuer
+**Passkey/WebAuthn:** RP ID = the issuer's host, allowed origin = the issuer
 (§0). Ceremony state lives in the cookie session, one `finish` per `begin`.
 
 | Endpoint | Access | Purpose |
 |---|---|---|
-| `POST /.auth/webauthn/login/begin` / `finish` | public (CSRF-checked) | **discoverable** (usernameless) assertion ceremony — empty allow-list, so the begin response never enumerates the operator's credential IDs to an anonymous caller (F-012c); `400`/`401` with a uniform error when unavailable or failed; a sign-count regression (clone warning) or a failed sign-count persist denies the login (fail-closed) |
-| `POST /.auth/webauthn/register/begin` / `finish` | session-gated (CSRF-checked) | enrollment (attestation) ceremony; existing credentials are excluded; a resident (discoverable) key is **required** so every new passkey supports discoverable login (F-012c) |
-| `GET /.auth/settings` | session-gated | passkey list/enroll/delete + password-fallback toggle + **the client list** (F-024) |
-| `POST /.auth/settings/password`, `POST /.auth/settings/credentials/delete` | session-gated (CSRF-checked) | form posts (per-session CSRF token + `SameSite=Lax`, F-012c) |
-| `POST /.auth/settings/clients/revoke`, `.../clients/grants/revoke`, `.../clients/revoke-all` | session-gated (CSRF-checked) | operator revocation: one client, one authorization, or everything (F-024) |
+| `POST /.auth/webauthn/login/begin` / `finish` | public (CSRF-checked) | **discoverable** (usernameless) assertion ceremony — empty allow-list, so the begin response never enumerates the operator's credential IDs to an anonymous caller; `400`/`401` with a uniform error when unavailable or failed; a sign-count regression (clone warning) or a failed sign-count persist denies the login (fail-closed) |
+| `POST /.auth/webauthn/register/begin` / `finish` | session-gated (CSRF-checked) | enrollment (attestation) ceremony; existing credentials are excluded; a resident (discoverable) key is **required** so every new passkey supports discoverable login |
+| `GET /.auth/settings` | session-gated | passkey list/enroll/delete + password-fallback toggle + **the client list** |
+| `POST /.auth/settings/password`, `POST /.auth/settings/credentials/delete` | session-gated (CSRF-checked) | form posts (per-session CSRF token + `SameSite=Lax`) |
+| `POST /.auth/settings/clients/revoke`, `.../clients/grants/revoke`, `.../clients/revoke-all` | session-gated (CSRF-checked) | operator revocation: one client, one authorization, or everything |
 
 Settings and enrollment additionally require the session to belong to the persisted operator
 account (OIDC-provider sessions get `403`). **Password-fallback rule:** disabling requires ≥ 1
@@ -439,7 +402,7 @@ passkey; the stored flag is only honoured while a passkey exists — deleting th
 re-activates the password login (lockout rescue). At startup, at least one usable backend
 (password, OIDC, or an enrolled passkey) MUST exist, otherwise fail-fast (§3.1).
 
-**Client list and operator revocation (F-024).** The settings page lists every client that holds
+**Client list and operator revocation.** The settings page lists every client that holds
 access, with its authorizations, token-record counts and activity times, and revokes per client,
 per authorization, or all at once. It closes a gap `/.idp/revoke` cannot: RFC 7009 is
 **client-authenticated**, so it lets a client drop its *own* token and never lets the operator drop
@@ -449,8 +412,8 @@ someone else's. Three properties define the contract:
   registration — it is re-resolved from its URL on every lookup (§1.3) — so enumerating client
   records would miss exactly the clients that hold access. Non-expired registrations join as a
   second source, so a registration without tokens still shows.
-- **Rows are identified by the operator's own name** where one was given at consent time (§1.5,
-  F-025); the `client_id` stays visible beneath it, because the name is a label and the id is the
+- **Rows are identified by the operator's own name** where one was given at consent time
+  (§1.5); the `client_id` stays visible beneath it, because the name is a label and the id is the
   verifiable identity. The name lives in the authorization's session record, so it needs no store of
   its own and is deleted with the authorization.
 - **Granularity is per client and per authorization, never per device.** Token records carry no IP
@@ -473,40 +436,21 @@ and login surfaces; they MUST NOT reflect unvalidated request input (XSS — set
 are fixed server-side texts selected by code) and MUST NOT reveal whether a user exists
 (SR-6).
 
-**Delta:** **done, F-005e1** — passkey login/enrollment, operator bootstrap, `sub` = user ID,
-fallback semantics, and the startup auth-backend check are implemented (side fix: the
-session-gate middleware previously continued the handler chain after its login redirect;
-it now aborts). Rate limiting, lockout, and the auth events are **done (F-005e2)**.
-Login-flow hardening **done (F-012b)**: an empty password runs the same bcrypt path and
-returns the same uniform error as a wrong one (SR-6, no distinct pre-bcrypt body); logout
-clears the whole session and expires the cookie (`MaxAge -1`), not just the authorized flag;
-the stored post-login redirect target is normalised to a local path (must start with `/`,
-never `//` or `/\`) at all three login consumers (password, passkey, OIDC callback).
-Login-surface hardening **done (F-012c)**: a per-session anti-CSRF token guards every
-state-changing POST (login, consent §1.5, both settings POSTs, and the WebAuthn ceremonies)
-in constant time, defence-in-depth on top of `SameSite=Lax`; passkey login is now
-**discoverable** (`BeginDiscoverableLogin` / `FinishDiscoverableLogin`, empty allow-list) so
-anonymous callers can no longer enumerate the operator's credential IDs, and registration
-requires a resident key so new passkeys are always discoverable. **Operational note:** a
-non-resident passkey enrolled before F-012c can no longer complete the empty-allow-list login;
-synced-keychain passkeys are resident and unaffected. Rescue path (unchanged, §1.12 lockout
-rescue): delete the passkey records in the data dir → the password fallback re-activates.
-
 ### 1.13 Health — `GET /healthz`
 
 `200 {"status":"ok"}` once the process is serving; no auth, no version/internals disclosure
 (SR-10). Not proxied to the upstream. Served on every listener: in TLS modes the plain-HTTP
 listener answers `/healthz` directly (everything else redirects to https), so the container
-health probe (`mcp-oauth-gateway healthcheck`, F-007b) always targets `LISTEN`.
+health probe (`mcp-oauth-gateway healthcheck`) always targets `LISTEN`.
 
 ---
 
 ## 2. Data model, persistence & key management
 
 Persistence goes through the existing `pkg/repository.Repository` interface —
-**bbolt (default,** single bucket `mcp-oauth-gateway`, prefixed keys**) or SQLite (GORM)** —
-decided in F-008c. New entities below extend that interface; none bypass it. All times are
-stored UTC. A periodic **expiry sweeper** (default every 5 min, part 3) garbage-collects every
+**bbolt (default,** single bucket `mcp-oauth-gateway`, prefixed keys**) or SQLite (GORM)**.
+Every entity below extends that interface; none bypass it. All times are
+stored UTC. A periodic **expiry sweeper** (default every 5 min, §3) garbage-collects every
 entity with a passed expiry; lookups MUST treat expired-but-not-yet-swept records as absent
 (fail-closed, no reliance on the sweeper).
 
@@ -514,73 +458,66 @@ entity with a passed expiry; lookups MUST treat expired-but-not-yet-swept record
 
 | Entity | Key fields | Lifetime / expiry | Store mapping (SQLite table / bbolt key prefix) |
 |---|---|---|---|
-| **DCR client** | `client_id`; hashed secret, redirect URIs, grant/response types, scopes, public flag, `client_name`, `created_at`, **`expires_at`**, **`last_used_at`** | `DCR_CLIENT_TTL` (default 30 d), refreshed on token issuance; hard cap `DCR_MAX_CLIENTS` (§1.4) | `client_records` / `client:` |
+| **DCR client** | `client_id`; hashed secret, redirect URIs, grant/response types, scopes, public flag, `client_name`, `created_at`, **`expires_at`** | `DCR_CLIENT_TTL` (default 30 d), refreshed on token issuance; hard cap `DCR_MAX_CLIENTS` (§1.4) | `client_records` / `client:` |
 | **CIMD cache entry** | `client_id` URL; resolved metadata JSON, `fetched_at`, `expires_at`, `negative` flag | positive: `CIMD_CACHE_TTL` (default 1 h, capped by upstream `max-age`); negative: 60 s | in-memory (MAY persist as `cimd_cache` / `cimd:`) — loss on restart is acceptable (re-resolve) |
 | **Authorize request** | `ar_id`; serialized Fosite authorize request | 10 min (= auth-code TTL); consumed on completion | `authorize_request_records` / `authorize_request:` |
 | **Authorization code session** | code signature; request + session data | `AUTH_CODE_TTL` (default 10 min), single-use | `authorize_code_sessions` / `authorize_code:` |
 | **Access token record** | token signature (JWT signature segment) + **request ID** (grant); request + session data | `ACCESS_TOKEN_TTL` (default 1 h) | `access_token_sessions` / `access_token-` |
 | **Refresh token record** | token signature + **request ID** (grant); request + session data, rotation state | `REFRESH_TOKEN_TTL` (default 30 d); rotated on use (§1.6) | `refresh_token_sessions` / `refresh_token-` |
 | **PKCE session** | request signature; challenge + method | tied to auth-code lifetime | `pkce_request_sessions` / `pkce_request-` |
-| **User** (new, F-005e1) | `user_id`; `username`, `password_login_disabled`, `created_at` — **no password hash** (the env config stays authoritative; decision F-005e, replacing the originally drafted optional `password_hash`) | permanent (single record, FR-4) | `user_records` / `user-` |
-| **Passkey credential** (new, F-005e1) | WebAuthn credential ID (base64url); `user_id`, name, marshaled credential (COSE public key, sign count, transports, flags), `created_at`, `last_used_at` | permanent, user-revocable | `webauthn_credential_records` / `webauthn_credential-` |
+| **User** | `user_id`; `username`, `password_login_disabled`, `created_at` — **no password hash** (the env config stays authoritative, §1.12) | permanent (single record, FR-4) | `user_records` / `user-` |
+| **Passkey credential** | WebAuthn credential ID (base64url); `user_id`, name, marshaled credential (COSE public key, sign count, transports, flags), `created_at`, `last_used_at` | permanent, user-revocable | `webauthn_credential_records` / `webauthn_credential-` |
 
-`client_name` in the DCR client row above is **stored since F-025b**; before that it was parsed at
-registration and dropped. The operator's own name for an authorization is not an entity either — it
-rides the grant's session record (`SessionData`), which is why it is deleted with the authorization.
+"Last active" for a client is derived from its token records, not stored on the registration — a
+second timestamp there would be a competing source of truth. The operator's own name for an
+authorization is not an entity either: it rides the grant's session record (`SessionData`), which
+is why it is deleted with the authorization.
 
-The operator's client list (§1.12, F-024) adds **no entity**: it aggregates the access- and
+The operator's client list (§1.12) adds **no entity**: it aggregates the access- and
 refresh-token records above by the client snapshot each one carries, and joins the stored DCR
-registrations. `SchemaVersion` is therefore unchanged, and a store written before the feature reads
+registrations. `SchemaVersion` is therefore unchanged, and a store written before the client list reads
 without migration.
 
 Access tokens are JWTs (§1.7) **and** have a server-side record: `/mcp` validation stays
 stateless-first (signature/claims), then requires the token's **record to still exist**
 (§2.4). Refresh tokens and authorization codes are opaque Fosite HMAC tokens, server-side
-only. *(Design change during F-005b: the originally specified revoked-`jti` deny-list was
-replaced by this record-presence check — same guarantees, no extra entity, and the RFC 7009
-cascade falls out of deleting the grant's records. The `jti` claim is kept for introspection
-and logging and is regenerated per issued token, including on refresh.)*
+only. Revocation is decided by **record presence** rather than by a revoked-`jti` deny-list:
+same guarantee, no extra entity, and the RFC 7009 cascade falls out of deleting the grant's
+records. The `jti` claim serves introspection and logging, and is regenerated per issued
+token, including on refresh.
 
 ### 2.2 Signing keys & secrets
 
 Keys live in the **data directory** (not the DB), permissions `0600`, directory `0700`
-(backup/restore = back up the data directory, NFR):
+(backup/restore = back up the data directory, §5.5):
 
 - `keys/<kid>.pem` — PKCS#8 private key (RSA-2048 default; P-256 when `KEY_ALG=ES256`).
 - `keys/manifest.json` —
   `{ "active": "<kid>", "active_since": ts, "retiring": [{"kid": "...", "not_after": ts}] }`
-  *(F-005d added `active_since` — it drives the §2.3.1 interval check; timestamps are RFC 3339
-  UTC)*.
-- `kid` = hex-encoded first 8 bytes of the SHA-256 fingerprint of the PKIX public key
-  *(F-005d: kept the fork's existing scheme instead of the originally drafted base64url form —
-  outstanding tokens carry it in their header, so the legacy migration preserves their `kid`)*.
+  (`active_since` drives the §2.3.1 interval check; timestamps are RFC 3339 UTC).
+- `kid` = hex-encoded first 8 bytes of the SHA-256 fingerprint of the PKIX public key. The
+  scheme is fixed: outstanding tokens carry the `kid` in their header, so the legacy migration
+  below MUST preserve it.
 - **First run:** no manifest → generate a key, write manifest atomically (temp file + fsync +
   rename). Startup MUST fail (fail-fast) if the manifest references a missing/unreadable key
   file or a file whose fingerprint does not match its `kid`.
-- Legacy single-key file (pre-F-005d `data/private_key.pem`): migrated on first start by
+- Legacy single-key file (`data/private_key.pem`): migrated on first start by
   adopting it as the active key (kid preserved) and writing a manifest — existing deployments
   keep their key; the original file is left in place.
 - `JWT_PRIVATE_KEY` (env, existing behaviour): the key is used as a **static** single key —
   no key directory, automatic rotation disabled (startup WARNING when
   `KEY_ROTATION_INTERVAL` > 0); `KEY_ALG` must match the key type (fail-fast). RSA keys below
-  **2048 bits** are refused (fail-fast, F-012a) — this applies to supplied and adopted legacy
+  **2048 bits** are refused (fail-fast) — this applies to supplied and adopted legacy
   keys alike.
 - `AUTH_HMAC_SECRET` (session cookies + Fosite HMAC): from env (base64) or generated secret
   file in the data directory (existing behaviour). The operator **session cookie** no longer
   uses the raw secret directly: two independent subkeys (authentication + AES-256 encryption)
   are HKDF-derived (`crypto/hkdf`, SHA-256, distinct context labels) so the cookie is signed
-  **and** encrypted (**done, F-012d**). Fosite keeps the **raw** secret as its `GlobalSecret`,
+  **and** encrypted. Fosite keeps the **raw** secret as its `GlobalSecret`,
   so issued tokens are unaffected; only the short-lived (`MaxAge` 600 s) operator session
   cookie changes format and is re-issued on the next login — a one-time re-login after upgrade.
 
-**Delta:** **done, F-005d** — implemented in `pkg/keys` (`Manager`); key files 0600, key
-directory 0700. **Persistence hardening done, F-012d:** the DCR registration cap is enforced
-inside the write transaction (count + insert atomic, no TOCTOU → `ErrClientCapReached` → `503`;
-bbolt single-writer / SQLite `SetMaxOpenConns(1)`), the SQLite backend sets
-`busy_timeout`/WAL/`synchronous=NORMAL`/`foreign_keys=ON` pragmas on open, and the session
-cookie gets HKDF-separated auth+encryption keys (above).
-
-### 2.3 Key rotation (SR-4, NFR "no abrupt invalidation")
+### 2.3 Key rotation (SR-4, §5.5 "no abrupt invalidation")
 
 1. Rotation trigger: `KEY_ROTATION_INTERVAL` elapsed since active-key creation (default 90 d;
    `0` disables) — checked at startup and periodically by the sweeper. Additionally, the
@@ -595,19 +532,16 @@ cookie gets HKDF-separated auth+encryption keys (above).
 5. Rotation MUST be atomic (manifest rewrite via temp file + rename); a crash mid-rotation
    leaves the old manifest intact.
 
-**Delta:** **done, F-005d** — rotation checked at startup and by the 5-minute sweeper;
-changing `KEY_ALG` also triggers a rotation at startup (§3.2). Verification is multi-key
-end to end: the proxy resolves `kid` against active + retiring keys, and fosite validates
-through the same key set (custom `jwt.Signer` in `pkg/keys`), so introspection keeps working
-across rotations. Sweep order is crash-safe (manifest rewritten before key files are
-deleted). The manual `rotate-key` ops command landed in F-007a (same retiring window; offline,
-documented restart).
+Rotation is checked at startup and by a 5-minute sweeper; changing `KEY_ALG` also triggers a
+rotation at startup (§3.2). Verification is multi-key end to end: the proxy resolves `kid`
+against active + retiring keys, and fosite validates through the same key set, so introspection
+keeps working across rotations. Sweep order MUST be crash-safe — the manifest is rewritten
+before key files are deleted.
 
-### 2.4 Revocation semantics (completes §1.9) — **done, F-005b**
+### 2.4 Revocation semantics (completes §1.9)
 
 - Token records carry their grant's **request ID**; revocation deletes **all records of the
-  grant** (refresh revocation therefore cascades to its access tokens). This fixed a latent
-  upstream bug where the store deleted by request ID as if it were a signature (a no-op).
+  grant** (refresh revocation therefore cascades to its access tokens).
 - `/mcp` checks **record presence** (lookup by the JWT's signature segment) after stateless
   validation; missing record → `401 invalid_token`; a store error during the check → `503`
   (fail-closed, SR-3 — never "assume not revoked").
@@ -618,8 +552,11 @@ documented restart).
 - A `schema_version` marker (SQLite: table; bbolt: `meta:schema_version` key) is written on
   first run and checked at startup; an unknown newer version → fail-fast with a clear error.
 - SQLite schema changes ship as GORM auto-migrations **plus** a documented entry in the
-  release notes (F-007); bbolt value-format changes bump the schema version and provide an
+  release notes; bbolt value-format changes bump the schema version and provide an
   in-place upgrade path. Downgrades are unsupported (documented).
+- The SQLite backend sets `busy_timeout`, WAL, `synchronous=NORMAL` and `foreign_keys=ON` on
+  open; writes are serialised (bbolt single-writer, SQLite `SetMaxOpenConns(1)`) so the §1.4
+  cap check and insert stay atomic.
 
 ---
 
@@ -629,54 +566,57 @@ documented restart).
 validation at startup** (CODING-STANDARDS §7): invalid values abort with a clear message —
 never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
 
-### 3.1 Existing options (post-F-011 state — unchanged contracts)
+### 3.1 Server, storage and login options
 
-| Env (flag) | Default | Notes / validation |
-|---|---|---|
-| `EXTERNAL_URL` (`-e`) | `http://localhost` | Public base URL = issuer (§0). MUST be absolute, no path/query/fragment. `http://` only sensible behind TLS-terminating proxy — startup WARNING when scheme is http and host is non-loopback. |
-| `LISTEN` | `:80` | HTTP listen address. |
-| `TLS_LISTEN` | `:443` | TLS listen address (when TLS enabled). |
-| `NO_AUTO_TLS`, `TLS_HOST` (`-H`), `TLS_DIRECTORY_URL`, `TLS_ACCEPT_TOS`, `TLS_CERT_FILE`, `TLS_KEY_FILE` | — | Built-in ACME / manual cert options (GR-1). Cert+key must be set together; `TLS_HOST` conflicts with manual certs (existing checks). |
-| `DATA_PATH` (`-d`) | `./data` (image: `/data`) | Data directory (§2.2). Created if absent. |
-| `REPOSITORY_BACKEND` | `local` | `local` (bbolt) or `sqlite`. |
-| `REPOSITORY_DSN` | — | Required iff backend is `sqlite`. |
-| `PASSWORD` / `PASSWORD_HASH` | — | Self-contained login (§1.12). At least one auth backend MUST be configured (password, OIDC, or an already-enrolled passkey); otherwise startup fails *(fail-fast implemented in F-005e1)*. `PASSWORD` is bcrypt-hashed at startup; prefer `PASSWORD_HASH`. |
-| `OIDC_CONFIGURATION_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`, `OIDC_USER_ID_FIELD`, `OIDC_PROVIDER_NAME`, `OIDC_ALLOWED_USERS`, `OIDC_ALLOWED_USERS_GLOB`, `OIDC_ALLOWED_ATTRIBUTES`, `OIDC_ALLOWED_ATTRIBUTES_GLOB` | off | Generic OIDC login backend — **off by default**, active only when URL + ID + secret are all set (decision F-011). |
-| `NO_PROVIDER_AUTO_SELECT` | `false` | Disable auto-redirect to a sole login provider. |
-| `PROXY_BEARER_TOKEN` | — | Upstream credential injection (FR-6). |
-| `PROXY_HEADERS` | — | Static upstream headers `H1:V1,H2:V2`. |
-| `PROXY_FORWARD_AUTHORIZATION` | `false` | Forward the validated client bearer upstream. |
-| `HEADER_MAPPING`, `HEADER_MAPPING_BASE` | — / `/userinfo` | Claim→header mapping (§1.11.5). |
-| `TRUSTED_PROXIES` | — | IPs/CIDRs allowed to set `X-Forwarded-*` (GR-1). Empty = none trusted. |
-| `HTTP_STREAMING_ONLY` | `false` | Reject GET-SSE with 405 (§1.11.3). |
-| `AUTH_HMAC_SECRET` | generated | Base64; session/HMAC secret (§2.2). |
-| positional args | — | Upstream MCP target: `http(s)://…` URL or a stdio command. Exactly one target in v1. |
+The option reference — every variable, its default and its description — is `README.md`
+("Configuration reference") together with `.env.example`. Duplicating it here would create a
+second source of truth; this section states only what is **normative** about these options.
 
-### 3.2 New options (targets specified in parts 1–2; implemented in F-005)
+- **`EXTERNAL_URL`** is the issuer (§0): absolute http(s), no path/query/fragment. An `http`
+  scheme on a non-loopback host MUST log a startup WARNING.
+- **At least one login backend MUST exist at startup** — a password, a configured OIDC provider,
+  or an already-enrolled passkey. Otherwise the gateway MUST refuse to start (§1.12): a silently
+  missing auth backend is worse than a process that will not boot.
+- **TLS** is either terminated by the gateway (built-in ACME or a supplied cert+key, which MUST
+  be set together) or by a fronting reverse proxy (GR-1, SR-2).
+- **`TRUSTED_PROXIES`** accepts bare IPs and CIDR ranges; bare IPs are normalised to `/32`
+  (IPv4) and `/128` (IPv6). Empty means **nothing is trusted**, so `X-Forwarded-*` is ignored
+  (GR-1).
+- **`REPOSITORY_DSN`** is REQUIRED iff the backend is `sqlite`, and MUST point at a persistent,
+  non-shared path (§2.5 serialises writes and enables WAL).
+- Exactly **one** upstream target is configured, as a positional argument: an `http(s)://` URL
+  or a stdio command. The upstream credential to inject is configured alongside it and never
+  reaches the client (FR-6, §1.11.4).
 
-| Env | Default | Contract |
-|---|---|---|
-| `ACCESS_TOKEN_TTL` | `1h` | §1.7 `exp`. Go duration; 1 m–24 h. **Done (F-005b).** |
-| `AUTH_CODE_TTL` | `10m` | §1.5. 30 s–1 h. **Done (F-005b).** |
-| `REFRESH_TOKEN_TTL` | `720h` (30 d) | §2.1. `0` disables the refresh grant (also removed from metadata). **Done (F-005b).** |
-| `ORIGIN_CHECK_ENABLED` | `true` | §0 Origin validation (SR-9). `false` accepts any origin — rescue switch, logged at startup. **Done (F-021).** |
-| `CIMD_ENABLED` | `true` | §1.3. Disabling leaves DCR-only (not recommended). **Done (F-005c).** |
-| `CIMD_FETCH_TIMEOUT` / `CIMD_MAX_SIZE` / `CIMD_CACHE_TTL` | `5s` / `65536` / `1h` | §1.3 resolution limits (1s–1m / 1KiB–1MiB / 1m–24h). **Done (F-005c).** |
-| `DCR_ENABLED` | `true` | §1.4. `false` removes `registration_endpoint` from metadata and 404s `/.idp/register`. At least one of CIMD/DCR must stay enabled. **Done (F-005c).** |
-| `DCR_CLIENT_TTL` | `720h` (30 d) | §1.4/§2.1. `0` disables expiry. **Done (F-005c).** |
-| `DCR_MAX_CLIENTS` | `100` | §1.4 cap; `0` = unlimited (not recommended). **Done (F-005c).** |
-| `RATE_LIMIT_REGISTER` / `RATE_LIMIT_TOKEN` / `RATE_LIMIT_LOGIN` / `RATE_LIMIT_AUTHORIZE` | `10/m` / `60/m` / `10/m` / `60/m` | Per-client-IP token buckets (SR-5/SR-6), format `N/s\|m\|h`; `0` disables (not recommended). Over-limit → `429` + `temporarily_unavailable`. Honour `TRUSTED_PROXIES` for client-IP extraction; state is in-memory (GR-3). `RATE_LIMIT_AUTHORIZE` also bounds unauthenticated CIMD-resolution fetches driven by unique client IDs (§1.3). **Done (F-005e2; `RATE_LIMIT_AUTHORIZE` added F-006b).** |
-| `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_DURATION` | `10` / `15m` | Per-account lockout after N consecutive failed password logins (SR-6, §1.12); uniform error either way. Threshold `0` disables; duration 1m–24h. **Done (F-005e2).** |
-| `KEY_ALG` | `RS256` | `RS256` or `ES256` (§2.2); switching triggers a rotation (§2.3). **Done (F-005d).** |
-| `KEY_ROTATION_INTERVAL` | `2160h` (90 d) | §2.3; `0` disables automatic rotation, otherwise ≥ 1h. **Done (F-005d).** |
-| `CLOCK_SKEW` | `30s` | §1.11.1 validation tolerance. |
-| `OIDC_DISCOVERY_MIRROR` | `false` | §1.2 `openid-configuration` mirror. |
+### 3.2 Protocol, abuse-protection and key options
+
+Reference as in §3.1; the normative part:
+
+- **Token lifetimes** are validated at startup and MUST stay inside their ranges:
+  `ACCESS_TOKEN_TTL` 1 m–24 h, `AUTH_CODE_TTL` 30 s–1 h, `REFRESH_TOKEN_TTL` 1 h–8760 h,
+  `CLOCK_SKEW` 0–5 m, `KEY_ROTATION_INTERVAL` ≥ 1 h. A value outside its range is a startup
+  failure, never a silent default.
+- **`REFRESH_TOKEN_TTL=0`** disables the refresh grant entirely, which also removes
+  `refresh_token` from `grant_types_supported` (§1.2).
+- **`KEY_ALG`** is `RS256` or `ES256` (§2.2); changing it triggers a key rotation at startup
+  (§2.3).
+- **Rate limits** are per-client-IP token buckets written `N/s|m|h`; `0` disables a limit.
+  Over-limit responses are `429` + `temporarily_unavailable` (SR-5/SR-6). Client-IP extraction
+  honours `TRUSTED_PROXIES`; the state is in-memory (GR-3). `RATE_LIMIT_AUTHORIZE` also bounds
+  unauthenticated CIMD resolutions driven by unique client IDs (§1.3).
+- **`LOGIN_LOCKOUT_THRESHOLD`/`_DURATION`** gate the per-account lockout (§1.12); the error
+  stays uniform either way (SR-6). Threshold `0` disables it.
+- **`CIMD_ENABLED`/`DCR_ENABLED`:** at least one MUST stay enabled, otherwise the gateway
+  refuses to start. Disabling either also removes it from the AS metadata (§1.2). The DCR
+  registration TTL and client cap are the SR-5 abuse mitigations (§1.4).
+- **`ORIGIN_CHECK_ENABLED=false`** accepts any origin — a rescue switch (SR-9), and it MUST be
+  logged at startup (§0).
 
 ### 3.3 Deployment artefacts & compatibility
 
 - **`docker-compose.example.yml`** (repo root): gateway + example upstream, placeholder env
   values only (GR-5) — see file.
-- **`Dockerfile`** *(hardened in F-007b, audit M9)*: digest-pinned `golang:1.26-bookworm`
+- **`Dockerfile`**: digest-pinned `golang:1.26-bookworm`
   builder and `gcr.io/distroless/static-debian12:nonroot` runtime — non-root (uid 65532), no
   shell/package manager/interpreters (stdio upstreams needing `npx`/`uvx` run as a separate
   service or custom image). In-image defaults `LISTEN=:8080` / `TLS_LISTEN=:8443` (a non-root
@@ -684,80 +624,111 @@ never silent defaults for malformed input. Booleans accept `true|1`/`false|0`.
   fresh named volumes inherit ownership; `HEALTHCHECK` runs the binary's own `healthcheck`
   subcommand against `/healthz`; `VERSION` build arg is wired to `pkg/version` (reported by
   `--version` and the MCP ClientInfo).
-- **Backward compatibility (NFR):** existing env keys keep working; renames ship with the old
-  key still honoured for ≥1 minor release plus a startup deprecation warning. Config removed
-  in F-011 (`GOOGLE_*`, `GITHUB_*`) is gone pre-release (no compatibility obligation).
+- **Backward compatibility (§5.5):** existing env keys keep working; renames ship with the old
+  key still honoured for ≥1 minor release plus a startup deprecation warning.
 - **Health/observability:** `/healthz` (§1.13); structured JSON logs to stdout with
   `login_ok`, `login_fail`, `token_issued`, `register`, `rate_limited`, `revoked` events
-  (SR-8) — **done (F-005e2)**: one fixed `"auth event"` message with a generic `event` field
+  (SR-8): one fixed `"auth event"` message with a generic `event` field
   (GR-4) plus non-secret context (`method`, `endpoint`, `client_id`, `client_ip`); `revoked`
   fires per accepted revocation request (RFC 7009 hides token existence, so the event does
   too).
 
+---
+
+## 4. MCP 2026-07-28 conformance
+
+The requirement-by-requirement conformance record moved out of this document: it is a
+**verification result**, not a contract, and it is kept in
+[`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md). Its §4.1/§4.2/§4.3 are that file's §1/§2/§3.
+
+At the last check against the **final MCP authorization specification 2026-07-28** the gateway
+satisfied every requirement addressed to it; the two deliberate limitations (the scope-less design
+and the stdio backend's protocol version) are recorded there.
 
 ---
 
-## 4. MCP 2026-07-28 conformance (F-017)
+## 5. Requirement register
 
-> Recorded requirement by requirement so the **next** revision can be walked against a table
-> instead of re-derived from prose. Client-side obligations are omitted: this gateway is an
-> authorization server and a resource server, never an MCP client.
+The intent-level requirements this document turns into contracts. They are stable identifiers,
+cited from code comments and tests throughout the repository: a requirement is in force or
+repealed, never "done". The contracts above say *how* each one is met; this register says *what*
+must hold.
 
-### 4.1 Authorization
+### 5.1 Scope
 
-| Requirement | Level | Status |
-|---|---|---|
-| AS implements OAuth 2.1 for confidential **and** public clients | MUST | ✔ Ory Fosite; PKCE/S256 enforced for every client since F-012b |
-| AS supports Client ID Metadata Documents | SHOULD | ✔ `pkg/cimd` (§1.3), advertised as `client_id_metadata_document_supported` since F-015 |
-| DCR kept only for backwards compatibility | MAY | ✔ optional, disableable via `DCR_ENABLED` (§1.4). **F-019 re-confirmed the `true` default (2026-08-22):** DCR is the documented rescue when a client's CIMD document cannot be fetched, so defaulting it off would break that path. An individual deployment serving only CIMD-capable clients may still disable it |
-| Resource server implements PRM (RFC 9728) | MUST | ✔ §1.1 |
-| AS provides RFC 8414 **or** OIDC Discovery | MUST | ✔ both (§1.2) |
-| `iss` in the authorization response (RFC 9207) | SHOULD | ✔ F-005a |
-| An AS that emits `iss` advertises `authorization_response_iss_parameter_supported` | MUST | ✔ `true` (§1.2) — conditional on emitting `iss`, which this AS does |
-| Access tokens validated per OAuth 2.1 §5.2 | MUST | ✔ §1.11.1 |
-| Audience validated per RFC 8707 §2 | MUST | ✔ `aud` bound to the granted resource (§1.7), checked on every proxied request |
-| Invalid or expired token → HTTP 401 | MUST | ✔ §1.11.2, fail-closed (SR-3) |
-| Only tokens valid for the server's own resources accepted; no others transited | MUST | ✔ `iss` and `aud` both pinned to `EXTERNAL_URL`; the client's bearer is not forwarded unless `PROXY_FORWARD_AUTHORIZATION=true` |
-| Appropriate HTTP status codes for authorization errors (401 / 403 / 400) | MUST | ✔ 401 per §1.11.2; 400 on a malformed authorization request (Fosite); the 403 case is scope-only here and cannot arise (§4.3) |
-| Scope hierarchies accounted for when judging a token sufficient | MUST | **Not applicable by design** (§4.3) — no scopes exist to form a hierarchy |
-| `offline_access` absent from PRM `scopes_supported` | SHOULD NOT | ✔ absent (§4.3) |
-| `scope` in the `WWW-Authenticate` challenge | SHOULD | **Not applicable by design** (§4.3) |
-| 403 + `insufficient_scope` on runtime scope errors | SHOULD | **Not applicable by design** (§4.3) |
+**In scope:** a gateway process that terminates MCP-spec OAuth toward the client and forwards
+authenticated MCP traffic to a single configured upstream MCP server (streamable HTTP). What the
+gateway deliberately is *not* is stated in `README.md` ("Why").
 
-### 4.2 Streamable HTTP transport
+### 5.2 Functional requirements (FR)
 
-The gateway proxies transparently and never parses a JSON-RPC body, so most transport
-requirements land on the upstream. These rows say which is which — the distinction is the point,
-because "the upstream owns it" is only an answer while the gateway provably forwards enough for
-the upstream to comply.
+- **FR-1 Discovery:** serve `GET /.well-known/oauth-protected-resource` (RFC 9728) and
+  `GET /.well-known/oauth-authorization-server` (RFC 8414); optionally mirror the latter as
+  **OIDC Discovery** (`GET /.well-known/openid-configuration`) for clients that only probe
+  that path.
+- **FR-2 Client registration — CIMD-first:** accept **CIMD** client IDs (HTTPS-URL client IDs
+  resolving to a Client ID Metadata Document) as the primary mechanism; keep **DCR**
+  (`POST /register`, RFC 7591) as a **deprecated fallback** for backward compatibility.
+  CIMD avoids persisting registrations; DCR registrations remain subject to
+  the SR-5 abuse mitigations.
+- **FR-3 Authorization Code + PKCE/S256:** `GET /authorize`, `POST /token`. No implicit grant.
+  Include the **RFC 9207 `iss`** parameter in the authorization response.
+- **FR-4 User authentication:** single configured user. **Passkey/WebAuthn preferred**; strong
+  password fallback. Explicit consent step. Auth backend pluggable (self-contained now; external
+  self-hosted OIDC later).
+- **FR-5 Token issuance & validation:** short-lived signed JWT access tokens (optional refresh).
+  Validate signature, `exp`, `aud`, `iss` on every proxied request.
+- **FR-6 Upstream auth injection:** on a valid token, forward to the upstream MCP server and
+  attach the configured upstream credential — **static bearer / custom header / none**
+  (configurable). The client never sees the upstream credential.
+- **FR-7 JWKS:** serve `GET /.well-known/jwks.json`.
+- **FR-8 Streaming passthrough:** proxy MCP streamable-HTTP/SSE transparently (no buffering;
+  correct headers).
+- **FR-9 Token lifecycle:** support **token revocation (RFC 7009)** (`POST /revoke`); optionally
+  **token introspection (RFC 7662)** (`POST /introspect`).
 
-| Requirement | Level | Owner | Status |
-|---|---|---|---|
-| Intermediaries forward unrecognised `Mcp-Param-{Name}` headers and otherwise ignore them | MUST | **gateway** | ✔ F-017b — `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` reach the upstream unchanged and exactly once, asserted by test |
-| A client must not be able to shadow an injected upstream credential | SR-7 | **gateway** | ✔ F-017b, §1.11.4 |
-| `Origin` validated; 403 when present and invalid | MUST | **gateway** | ✔ **F-021** — a foreign or `null` origin is refused with 403; an absent header passes, as the specification intends. Disableable via `ORIGIN_CHECK_ENABLED` for deployments the check breaks |
-| Authentication on all connections | SHOULD | **gateway** | ✔ the gateway's entire purpose |
-| Server implements `server/discover` | MUST | upstream | n/a — a JSON-RPC method, not a path. The reserved-namespace guard matches URL path prefixes only and cannot swallow it (asserted by test, F-017b) |
-| Header values validated against the body (`HeaderMismatch`, `-32020`) | MUST | upstream | n/a — the gateway does not parse bodies |
-| GET/DELETE on the MCP endpoint → 405 | SHOULD | upstream | n/a; with `HTTP_STREAMING_ONLY=true` the gateway answers GET-SSE with 405 itself (§1.11.3) |
-| `Mcp-Session-Id` ignored, no session minted or echoed | — | upstream | n/a — the gateway never minted one |
-| `Last-Event-ID` ignored, streams not resumable | — | upstream | n/a |
-| `X-Accel-Buffering: no` on SSE responses | SHOULD | upstream | passed through; the gateway adds no buffering of its own (`FlushInterval: -1`, §1.11.3) |
+### 5.3 Generic / portability requirements (GR)
 
-### 4.3 Recorded limitations
+- **GR-1 Reverse-proxy-agnostic:** work behind any reverse proxy **or** optionally terminate TLS
+  itself (built-in ACME). Correctly honor `Forwarded` / `X-Forwarded-Proto/Host`. A
+  **configurable public base URL** drives all OAuth metadata and redirect URIs.
+- **GR-2 Upstream-agnostic:** configurable upstream URL + auth mode (FR-6). Not tied to any
+  specific MCP server.
+- **GR-3 12-factor config:** env-based config, sane defaults, example compose; runs on any
+  Docker host. Single container preferred.
+- **GR-4 Portable observability:** structured logs to stdout (JSON), a health endpoint; no
+  dependency on a specific logging/metrics backend.
+- **GR-5 No-leak by default:** ship no personal/deployment specifics; secrets via env/file/volume,
+  generated on first run if absent.
 
-**The gateway is scope-less by design.** It issues no scopes, `scopes_supported` is `[]`, and no
-operation it guards is gated on one. The `scope` challenge and the `insufficient_scope` flow
-therefore have nothing to express: a challenge naming required scopes would name none, and every
-valid token is already sufficient for everything the gateway itself decides. Authorization *inside*
-the upstream stays the upstream's business — that is the defence-in-depth split of SR-7. Should
-per-operation authorization ever be wanted here, the two "not applicable" rows in §4.1 become work
-rather than notes.
+### 5.4 Security requirements (SR)
 
-**The stdio backend speaks protocol 2025-11-25.** A `PROXY_TARGET` given as a command (§3.1) drives
-the upstream through `mark3labs/mcp-go`, whose stable line still declares
-`LATEST_PROTOCOL_VERSION = "2025-11-25"`; only the v1.0.0 pre-release implements 2026-07-28. F-017a
-deliberately took the stable line, because CODING-STANDARDS §7 pins stable versions and this is a
-public auth boundary. So that path offers neither `server/discover` nor `_meta`-carried protocol
-versions yet. **The transparent backend — the documented primary mode — is unaffected**, because it
-forwards bytes and holds no protocol opinion.
+- **SR-1 No hand-rolled crypto.** OAuth/PKCE/JWT/JWKS primitives via a vetted library; project
+  code is glue only (DCR policy, PRM, login, upstream injection).
+- **SR-2 TLS everywhere;** tokens never traverse cleartext.
+- **SR-3 Fail-closed.** Any failed/absent token check → 401/403; never forward unauthenticated.
+- **SR-4 Token hardening.** Short-lived; `aud` bound to the MCP resource (replay protection);
+  `iss` checked; asymmetric signing (RS256/ES256); private key stored securely, rotatable.
+- **SR-5 DCR abuse mitigation.** `/register` is open by spec; the real gate is the user login.
+  Add rate-limiting on `/register` and `/token`, auto-expiring client registrations, and a cap
+  on stored clients.
+- **SR-6 Brute-force protection** on login (rate-limit/lockout; generic errors, no enumeration).
+- **SR-7 Defense-in-depth.** Keep upstream auth (e.g. its bearer) in place; expose only `/mcp`
+  plus OAuth/discovery endpoints.
+- **SR-8 No secrets in logs** (redact tokens/codes/keys). Auth events emitted as structured
+  fields for alerting (`login_ok`, `login_fail`, `token_issued`, `register`).
+- **SR-9 Tight CORS/headers;** `Cache-Control: no-store` on token responses; HSTS when serving TLS.
+- **SR-10 Minimal attack surface;** lean image; only required endpoints public.
+- **SR-11 Maintained dependencies;** documented update path; **permissive-licensed deps only
+  (avoid GPL/AGPL)** to keep the project freely usable under Apache-2.0.
+
+### 5.5 Non-functional requirements (NFR)
+
+- Actively maintainable; pinned base image; SemVer; data/schema migrations if persistence is
+  used (§2.5); **backward-compatible config changes** — old env keys keep working or have a
+  deprecation path (contract: §3.3).
+- **Key rotation** without invalidating in-flight sessions abruptly (contract: §2.3).
+- Backup/restore of signing keys + client registrations (contract: §2.2; operator guide in
+  `README.md`, Operations).
+- Tests/CI (OAuth + MCP conformance) so others can trust it.
+- End-user docs: how to front an MCP server and add it as a client connector.

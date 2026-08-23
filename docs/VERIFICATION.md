@@ -140,11 +140,12 @@ Record each row pass/fail with evidence in `private/`.
 ## 6. Close-out
 
 - [ ] All rows recorded in `private/`.
-- [x] Re-verify against the **final MCP authorization spec 2026-07-28**: walk `SPEC.md` §4 and
-  confirm each row still holds. The watch item that used to live here closed with F-017; keeping
-  the row means the table gets re-walked on every deployment rather than trusted indefinitely.
-  *Done 2026-08-21 for v0.2.0/v0.2.1 — every §4.1 and §4.2 row held except the one already
-  recorded as unmet (`Origin`, F-021).*
+- [x] Re-verify against the **final MCP authorization spec 2026-07-28**: walk
+  [`MCP-CONFORMANCE.md`](MCP-CONFORMANCE.md) and confirm each row still holds. The watch item that
+  used to live here closed with F-017; keeping the row means the table gets re-walked on every
+  deployment rather than trusted indefinitely.
+  *Done 2026-08-21 for v0.2.0/v0.2.1 — every authorization and transport row held except the one
+  already recorded as unmet (`Origin`, F-021).*
 
 ### Force a fresh authorization (learned in F-017d, mechanised in F-024)
 

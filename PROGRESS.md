@@ -2,22 +2,26 @@
 
 Living task list. **Done table** at the top, **open tasks in execution order** below, **feature index** at the very end.
 
-How it works: `/add-feature` intakes new tasks (F-number), `/prep-step` prepares and decomposes, `/step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
+How it works: `/coding-kit:add-feature` intakes new tasks (F-number), `/coding-kit:prep-step` prepares and decomposes, `/coding-kit:build-step` implements, `/coding-kit:step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
 **State: released and live.** **v0.3.0 is public** — repo public, multi-arch image on GHCR
 (`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.3.0`/`0.3`), verified against the **final MCP spec
-2026-07-28** (F-017; conformance recorded requirement by requirement in `SPEC.md` §4). Feature-
+2026-07-28** (F-017; conformance recorded requirement by requirement in
+`docs/MCP-CONFORMANCE.md`). Feature-
 complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**No open tasks.** Every roadmap task F-001–F-025 is done. **F-024** added the operator's client
+**One task open.** Every roadmap task F-001–F-027 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
-name prefilled from Claude's own metadata document). Two entries wait in the backlog, both needing
-`/prep-step` first and both wanted **before the next release**: **F-022** (six files past the §2
-hard limit) and **F-026** (fold `REQUIREMENTS.md` into `SPEC.md` and strip the implementation
-history that hid a MUST from F-004 until F-025 tripped over it).
+name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
+`SPEC.md` §5 and stripped the implementation history that hid a MUST from F-004 until F-025 tripped
+over it; **F-027** retired the project's local skills and settled the documentation architecture —
+rules (`SPEC.md`, `CODING-STANDARDS.md`, `THREAT-MODEL.md`) apart from records (`docs/`). A
+reference guard (`docs_refs_test.go`) now keeps every `SPEC §…` and FR/GR/SR pointer honest in CI.
+**F-022** (six files past the §2 hard limit) waits in the backlog and needs
+`/coding-kit:prep-step` first. It is wanted **before the next release**.
 
 **Released: v0.3.0 — but the deployment is ahead of it.** It runs a locally built image carrying
 F-024 **and F-025**, by the operator's decision, and is not reproducible from the registry until a
@@ -78,7 +82,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-017d | Live verification and release → **released `v0.2.0`, deployed, verified live — and the verification broke, which is what made it worth running.** Server side all green, incl. the F-015 proof: `client_id_metadata_document_supported` was **absent before** the switch and `true` after. Client side defeated three approaches (second connector refused; remove+re-add reuses stored credentials and produces *no* OAuth flow; `DCR_CLIENT_TTL` never fires because it is refreshed on every token issuance), so the DCR record was deleted from the store — 2 records before, F-019's evidence that it *had* been growing. Claude then switched to CIMD and the gateway refused it → **F-023 → v0.2.1**, after which `token_issued` carried a **URL** client_id and **zero** `register` events. Corrected a wrong premise en route: the host ran **0.1.1**, not 0.1.0 — the local compose copy had drifted for six weeks. Runbook gained "Force a fresh client registration", because a verification that only exercises an already-connected client passes while the gateway is broken for every new one. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-017 | **Re-verify against the final MCP 2026-07-28 spec — complete** (a/b/c/d): watch item closed, deliberately without a successor. The authorization surface needed **no change** — all six SEPs still satisfied — so everything this task fixed lay elsewhere: a credential-injection spoofing path (F-017b), a CIMD resolver defect that made CIMD unusable with real clients (F-023), and documentation claiming conformance without evidence (F-017c, now `SPEC.md` §4). A paper re-check would have concluded "conformant, no action" and been wrong twice. One MUST recorded as **unmet** rather than glossed over: `Origin` validation (F-021). Released **v0.2.0** and **v0.2.1**, both live-verified. Spawned F-021, F-022, F-023, F-024. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-21 |
 | F-021 | Validate the `Origin` header (DNS rebinding, SR-9) → **closes the one unmet MUST** the F-017 re-check found; `SPEC.md` §4.2 now reads ✔. A foreign or `null` Origin gets `403`; an **absent** header passes, deliberately — server-side MCP clients send none, so rejecting absence would take the gateway offline for every real client. Comparison on scheme+host+port, host lower-cased, default ports elided. `ORIGIN_CHECK_ENABLED=false` is the rescue, logged at startup. **The fail-closed test caught a real bug:** an expected origin normalizing to `""` would have matched `Origin: null` and turned the guard into a wildcard while its comment claimed otherwise. Also found: IPv6 bracket handling, and that **the e2e suite does not prove the wiring** (it builds its own router) — verified against the running binary instead. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
-| F-019 | Evaluate whether DCR can be switched off → **decision: `DCR_ENABLED` stays `true`**, no code. F-017d supplied the evidence asked for (Claude picks CIMD, the store stops growing) — but that shows *Claude* needs no DCR, not that no client does. The decisive argument arrived after the entry was written: **F-023 made DCR the documented escape hatch** when a CIMD document cannot be fetched (#650), so a `false` default would *break* that advice — flipping only `CIMD_ENABLED=false` hits the both-disabled fail-fast and the gateway refuses to start. The original motivation was gone anyway: the store grew *because* clients were forced onto DCR, which F-015 fixed. Delivered as guidance rather than a bare verdict — a README section on when an operator *should* disable it, the re-decision beside F-003 in REQUIREMENTS §6, and `SPEC.md` §4.1 updated because it still posed the question this task answered. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
+| F-019 | Evaluate whether DCR can be switched off → **decision: `DCR_ENABLED` stays `true`**, no code. F-017d supplied the evidence asked for (Claude picks CIMD, the store stops growing) — but that shows *Claude* needs no DCR, not that no client does. The decisive argument arrived after the entry was written: **F-023 made DCR the documented escape hatch** when a CIMD document cannot be fetched (#650), so a `false` default would *break* that advice — flipping only `CIMD_ENABLED=false` hits the both-disabled fail-fast and the gateway refuses to start. The original motivation was gone anyway: the store grew *because* clients were forced onto DCR, which F-015 fixed. Delivered as guidance rather than a bare verdict — a README section on when an operator *should* disable it, the re-decision beside F-003 in the then-separate `REQUIREMENTS.md` §6 (dissolved in F-026), and `SPEC.md` §4.1 updated because it still posed the question this task answered. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
 | F-024a | Enumerate and revoke in the repository layer → **the layer had no enumeration at all**, which is why F-017d needed a purpose-built bbolt tool to delete one record. New `InventoryStorage` (`ListClientGrants`, `RevokeClient`, `RevokeGrant`, `RevokeAll`) on both backends, fed by **one** shared aggregator so the two listings cannot drift. Built from **token records, not client records**: a CIMD client has no stored registration, so enumerating `client-*` would miss exactly the clients that matter. A revoke sweeps all five record kinds plus the registration in **one transaction**; an unreadable record **fails loudly** instead of being skipped, unlike the sweeper — skipping would report a kill that did not happen. `RevokeAll` spares the operator's account and passkeys. No schema change. 30 subtests, **non-vacuity proven by two mutations**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-22 |
 | F-024b | The settings surface and its wiring → `/.auth/settings` gained **Connected clients**: one row per client with its authorizations behind a `<details>`, actions per client and per grant, and the panic button behind a **server-rendered two-step** confirmation (no JS). Behind the page's existing gates; `authevent.Revoked` now carries an operator kill beside the client-initiated RFC 7009 ones. **A mutation caught a security test passing for the wrong reason** — a bare `&http.Client{}` followed the handler's redirect and scored the settings page's own 403, so the own-user gate could have been deleted unnoticed; fixed and re-proven. `Config.Clients` is **required** when `Users` is set rather than nil-checked, so no second visibility rule appears. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-024c | Verify against the running binary, then document → the substep no test suite could stand in for: `e2e_harness_test.go` builds its own router, so the wiring was proven against a **local binary** (full OAuth+PKCE flow, real token, revoke, immediate `401`) and then against the **live deployment** with the operator's own Claude connector. The measurement that matters: **44 seconds** from revoke to the client's `401`, against an `ACCESS_TOKEN_TTL` of one hour. Live-only findings: rotation history aggregated on real data (`1 access / 6 refresh` as one row), and a leftover DCR registration showing with `0 authorizations`. The operator asked what the two revoke buttons differ in — a fair question, so they were relabelled **Revoke client** / **Revoke this authorization** and pinned by a test. One acceptance criterion of mine was overstated and got corrected in the spec, not glossed over. F-017d's manual store-editing procedure is **gone** from the runbook. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
@@ -86,15 +90,15 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-025a | The label, end to end → a connection can be **named at consent time**; the name rides the gateway's own session, so it is server-set (no client can plant one), written with every token record, and deleted with the authorization — **no new entity, no cleanup path**. Sanitized once where it enters (control characters, 64 runes), shown as the row's primary identifier, and carried into `token_issued` and `revoked`. **Mutation testing found two of my own defective assertions:** the acceptance criterion claimed `Session.Clone` carries the label through the token exchange — it does not, the session is restored from stored JSON there, and `Clone` matters **only on refresh**; and the refresh test read an aggregate, so an older record answered for the newer one that had lost the name. Both fixed, then four mutations verified red. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-025b | The prefill, and the documentation → the consent field is prefilled with the `client_name` the client declares, which **closes the `SPEC.md` §1.5 identity requirement** unmet since F-004: both mechanisms parsed that name and threw it away. DCR stores it now (`RegisterClient` took an options struct, removing a §3 violation instead of growing it); CIMD reads it through the **same** resolver fosite uses, so its cache serves it. **The review caught a defect the tests could not:** the SQL backend never stored the name — invisible because the idp tests and the deployment are both bbolt. Fixed, with a two-backend contract test that goes red on exactly that. Live-verified: the prefill arrived as "Claude" from Claude's real document. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-025 | **Name a connection at consent time — complete** (a/b). The design came from the operator's pushback against a three-substep plan: their "a new data field, not a new storage structure" pointed at the gateway's own **session**, which is already persisted with every record of a grant — server-built, so no client can plant a label, and deleted with the authorization, so no cleanup path exists. Two substeps and the renaming UI fell away with it. Closed a §1.5 violation nobody had noticed, and spawned **F-026**. **Three defects found, none by a red suite:** two by mutation (a wrong acceptance criterion about `Session.Clone`, two assertions that could never fail) and one by review (SQL never stored the name). The first two are now rules in `CODING-STANDARDS.md`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
+| F-026 | **Dissolve `REQUIREMENTS.md` into SPEC, and strip the history out of SPEC — complete** (a/b/c). One document for rules, one for finished work, one for open work. The register is now `SPEC.md` §5 (appended — **no §0–§4 heading renumbered**, because 251 code references point there); the 15 Delta paragraphs and 108 F-number lines are gone, and the contract text is **645 lines instead of 763** while carrying the register. **The plan's own safety net was too weak, and the mutation proved it:** built to the specified prefix rule, renaming `§1.11` to `§1.14` left the suite green — every `1.x` resolves while §1 exists. The guard now counts the parent's list items; seven mutations verified red. **Four contract statements existed only inside a Delta** (`exp` MUST be present, the 4 MiB redirect-replay cap, the post-login redirect normalisation, the SQLite pragmas) and were lifted out before deleting; an audit confirmed 28/28 removed statements survive. **One plan decision reversed on evidence:** two "duplicated" NFR lines are *cited* from §2.2/§3.3, so deleting them would have aimed two pointers at nothing. Spawned **F-027**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
+| F-027 | **Retire the local skills and finish the documentation architecture — complete.** Came out of the operator's review of F-026, not from `/add-feature`. The four skills in `.claude/skills/` are dead — the workflow runs on the coding-kit plugin — so F-026b had politely *edited* files that should have been deleted; six documents pointed at them. `SPEC.md` is a **rules** document, measured (**325 code citations against 46 from docs**), and now says so in its own header: §3's option tables were a total duplicate of README (**−33 % characters**) and §4 was a verification record, moved to `docs/MCP-CONFORMANCE.md` behind a stub so append-only references keep resolving. **The tidy-up audit found five real faults, not zero:** a dead unlinked `docs/README.md`, `CLAUDE.md` two releases stale at `v0.1.0`, three live pointers at the moved §4, three competing document indexes, and a README index naming neither `CODING-STANDARDS.md` nor `CONTRIBUTING.md`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 
 ---
 
 ## Open tasks — work top to bottom
 
-_Empty._ Everything intaked so far is either done or still in the backlog below. Pick a backlog
-entry, run `/prep-step` on it, and it moves up here.
-
----
+*Nothing planned.* The next task is **F-022** in the backlog below; it needs
+`/coding-kit:prep-step` before it can be built.
 
 ## Feature ideas (backlog)
 
@@ -152,54 +156,6 @@ tag, or the release would ship code the verification never saw.
 
 ---
 
-### F-026 — Fold REQUIREMENTS into SPEC and strip the implementation history
-
-**Status:** BACKLOG
-
-**Problem:** `SPEC.md` does three jobs at once — normative contracts, a conformance record against
-the external MCP spec (§4), and implementation history: **104 of its 744 lines name an F-number**,
-47 of them read "done, F-0xx". The history already has a home in `PROGRESS-ARCHIVE.md`, in more
-detail. Its presence here is not cosmetic: whoever opens §1.12 reads mostly *what changed when*
-instead of *what must hold* — which is how the §1.5 client-identity MUST sat unread from F-004 until
-F-025 tripped over it. `REQUIREMENTS.md` is meanwhile smaller than it looks: of 120 lines, **74** are
-the FR/GR/SR/NFR core, 26 are background whose watch item closed with F-017, and 13 duplicate
-decisions the archive records with fuller rationale. Both documents still announce **"Status:
-draft"** although v0.3.0 is released, and the endpoint overview still carries a pre-implementation
-status column ("exists, thin", "new").
-
-**Idea:** One contract document instead of two. The requirements core moves into `SPEC.md` as its own
-section, the history moves out, the stale markers go. **The identifiers do not change** — FR/GR/SR
-numbers and §-numbering stay exactly as they are.
-
-**Possible implementation:**
-- Requirements core (FR/GR/SR/NFR) into SPEC, identifiers verbatim; background and decisions drop
-  out, since F-017 closed the one and the archive holds the other.
-- Strip the "Delta" paragraphs and "done, F-xxx" markers. Where such a paragraph records a *decision*
-  rather than a date, the decision text stays and only the bookkeeping goes.
-- Drop the endpoint-overview status column and "Status: draft" on both.
-- Update the pointers in `README.md`, `CLAUDE.md`, `THREAT-MODEL.md`; `REQUIREMENTS.md` is removed.
-- **373 references must survive**: 242 `SPEC §…` and 75 FR/GR/SR in Go code, 56 across the other
-  docs. A script proves none dangle afterwards — that is the acceptance criterion, not a reading.
-- **Walk §2.1 for fields that never existed.** The DCR client row promises `client_name`,
-  `created_at`, `expires_at` and **`last_used_at`**; F-025b made `client_name` real, and
-  `last_used_at` is now the only fiction left in that row — nothing in `models.Client` or either
-  backend has ever written it. Recommendation, to be confirmed at prep time: **correct the spec
-  rather than build the field.** F-024 settled that "last active" comes from the token records, and
-  §2.1 itself states the client list needs no new entity, so a second timestamp on the registration
-  would be a competing source of truth. The point generalises — a document that describes fields
-  nobody implemented is the same staleness this task exists to remove, one layer down.
-- No code change.
-
-**Still to analyse:** whether §4 (MCP conformance) belongs in the contract document at all — it is
-neither contract nor history but a record against an external moving target, and it may deserve its
-own file. Also whether the deleted `REQUIREMENTS.md` should leave a stub, since README links to it
-and external links may exist.
-
-**Dependencies:** none technically — but **F-025b writes to SPEC §1.5/§1.12**, so this should follow
-it rather than collide with it.
-
----
-
 <!-- FEATURE-INDEX
 next-feature: F-027
 F-001 Build vs fork evaluation (DONE)
@@ -227,5 +183,6 @@ F-022 Bring the remaining oversized files under the §2 limits (BACKLOG)
 F-023 CIMD documents rejected over a foreign grant type (DONE)
 F-024 Operator view of connected clients, with a kill switch (DONE)
 F-025 Name a connection at consent time, and show the client's own name (DONE)
-F-026 Fold REQUIREMENTS into SPEC and strip the implementation history (BACKLOG)
+F-026 Dissolve REQUIREMENTS.md into SPEC, and strip the history out of SPEC (DONE)
+F-027 Retire the local skills and finish the documentation architecture (DONE)
 -->

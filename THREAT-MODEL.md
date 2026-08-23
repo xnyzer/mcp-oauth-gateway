@@ -38,7 +38,7 @@
   changes — re-verify on each.
 - Spec is fast-moving (DCR vs CIMD; client behaviors). Verified against the **final MCP
   authorization spec 2026-07-28** (F-017), with per-requirement conformance recorded in
-  `SPEC.md` §4. Two results belong here rather than in a release note: the re-check found a
+  `docs/MCP-CONFORMANCE.md`. Two results belong here rather than in a release note: the re-check found a
   **spoofing path on the credential injection** — a client could shadow a configured
   `PROXY_HEADERS` value, fixed in F-017b — and one transport requirement the gateway **does not
   satisfy**: `Origin` is never validated (MUST since protocol 2025-03-26, missed by the F-006b

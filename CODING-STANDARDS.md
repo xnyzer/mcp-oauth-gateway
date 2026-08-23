@@ -118,7 +118,7 @@ Short, descriptive, visually set apart. No rambling block comments.
 
 - **Commit messages in English**, **Conventional Commits**, imperative mood; justify trade-offs briefly in the body (`Decision: X over Y because …`).
 - **`Co-Authored-By: Claude <noreply@anthropic.com>`** trailer.
-- **Commit email = GitHub noreply** (`12890660+xnyzer@users.noreply.github.com`) — never the private address. Verify before each commit (see `step-done` skill / `CONTRIBUTING.md`).
+- **Commit email = GitHub noreply** (`12890660+xnyzer@users.noreply.github.com`) — never the private address. Verify before each commit (see the `/coding-kit:step-done` skill / `CONTRIBUTING.md`).
 - **Never auto-commit** — always wait for the user's explicit "yes".
 - **Focused commits** — one concern per commit.
 

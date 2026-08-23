@@ -23,7 +23,7 @@ This repository's history is public. Commit emails must use the GitHub noreply a
 ```
 
 For the maintainer this is `12890660+xnyzer@users.noreply.github.com`. Do not use a private or
-corporate email address. See the `step-done` skill for verifying and correcting this before each
+corporate email address. See the `/coding-kit:step-done` skill for verifying and correcting this before each
 commit. If a real email slips into history, it has to be scrubbed with `git filter-repo` and
 force-pushed — preventing is far cheaper than cleaning.
 
@@ -49,7 +49,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 Never commit secrets, tokens, passwords, private keys, private email addresses, or deployment
 internals (IPs, hostnames, SSH key names, etc.). Operational internals belong in the gitignored
-`private/` directory, never in the public tree. The `step-done` skill runs a secrets scan before
+`private/` directory, never in the public tree. The `/coding-kit:step-done` skill runs a secrets scan before
 every commit.
 
 ## Code style

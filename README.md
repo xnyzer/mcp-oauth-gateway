@@ -8,7 +8,8 @@ connect, **without depending on a third-party identity provider**.
 > **Status:** feature-complete against [`SPEC.md`](SPEC.md), hardened by an adversarial
 > security audit (all critical/high/medium findings fixed), and verified live end to end
 > against **Claude web and iOS**. Verified against the **final MCP authorization spec
-> 2026-07-28** (conformance recorded in [`SPEC.md`](SPEC.md) §4); pre-1.0 while the project
+> 2026-07-28** (conformance recorded in [`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md));
+> pre-1.0 while the project
 > settles.
 
 ## Why
@@ -21,6 +22,11 @@ bearer token — which OAuth-only clients reject. Existing OAuth gateways either
 hosted identity provider, are unmaintained, or bundle a heavy stack. This project fills the
 gap: **maintained, self-hosted, no mandatory third party, lightweight, reverse-proxy- and
 upstream-agnostic.**
+
+**What it is not.** It does not modify the MCP server it fronts, and it is not a
+general-purpose identity provider or a multi-tenant SaaS. It authenticates a **single
+operator**; multi-user is not supported today, and the design deliberately does not preclude
+it later.
 
 ## Features
 
@@ -331,11 +337,21 @@ fixes are documented in [`PROGRESS-ARCHIVE.md`](PROGRESS-ARCHIVE.md) (F-006b).
 
 ## Documentation
 
-- [`REQUIREMENTS.md`](REQUIREMENTS.md) — functional, security, and non-functional requirements.
-- [`SPEC.md`](SPEC.md) — implementable contracts: endpoints, schemas, data model, config.
-- [`THREAT-MODEL.md`](THREAT-MODEL.md) — assets, threats, mitigations.
-- [`docs/VERIFICATION.md`](docs/VERIFICATION.md) — live end-to-end verification runbook.
+**The rules** — binding for anyone changing the gateway:
+
+- [`SPEC.md`](SPEC.md) — implementable contracts: endpoints, schemas, data model, config, plus
+  the functional, security, and non-functional requirement register (§5). *What must hold.*
+- [`CODING-STANDARDS.md`](CODING-STANDARDS.md) — binding coding rules. *How it is written.*
+- [`THREAT-MODEL.md`](THREAT-MODEL.md) — assets, threats, mitigations. *What it defends against.*
+
+**The records** — what was checked, when, and why:
+
+- [`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md) — requirement-by-requirement result of the
+  last check against the MCP spec. Walk it when a new spec revision lands.
+- [`docs/VERIFICATION.md`](docs/VERIFICATION.md) — runbook for verifying a *deployed* gateway
+  end to end against real clients. Walk it after deploying or before a release.
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes (incl. migrations).
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute, commit conventions, secrets hygiene.
 - [`PROGRESS.md`](PROGRESS.md) / [`PROGRESS-ARCHIVE.md`](PROGRESS-ARCHIVE.md) — roadmap and
   finished work with rationale.
 - [`HOW-TO-CODE-WITH-CLAUDE.md`](HOW-TO-CODE-WITH-CLAUDE.md) / [`AI-DISCLOSURE.md`](AI-DISCLOSURE.md)
