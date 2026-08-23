@@ -5,6 +5,36 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
+## [Unreleased]
+
+### Added
+
+- **Operator view of connected clients, with a kill switch (F-024).** `/.auth/settings` now lists
+  every client that holds access — its authorizations, token-record counts, redirect hosts and
+  activity times — and revokes it: one client, one authorization, or everything at once behind a
+  confirmation. This closes a gap `/.idp/revoke` cannot: RFC 7009 is client-authenticated, so it
+  lets a client drop its *own* token and never lets you drop someone else's. Before this, taking
+  access away meant stopping the gateway and editing its data store by hand.
+
+  **A revoke takes effect on the client's next request**, not after the access token's remaining
+  lifetime, because access is decided by the token record still existing (SPEC §2.4). Verified
+  live: a client whose access was revoked was refused **44 seconds later**, with
+  `ACCESS_TOKEN_TTL` at one hour.
+
+  Two properties worth knowing before you use it. **Entries are per client and per authorization,
+  never per device** — every device signed into the same client shares one client id, and token
+  records carry no IP or user agent, so "log out my old phone" is not expressible. And **a revoke
+  bans nobody**: a client identified by a metadata document (CIMD) keeps no server-side
+  registration, so revoking destroys its tokens and it may authorize again — which requires your
+  login. The operator's own account, passkeys and session are never touched, including by "revoke
+  everything".
+
+  New: `POST /.auth/settings/clients/revoke`, `.../clients/grants/revoke`,
+  `.../clients/revoke-all` (session-gated, CSRF-checked). Every revoke emits the `revoked` auth
+  event with actor, scope and record count, so an operator kill is distinguishable in the log from
+  the client-initiated ones. **No schema change** — the listing aggregates existing token records,
+  so a store from an earlier version needs no migration.
+
 ## [0.3.0] — 2026-08-22
 
 ### Added

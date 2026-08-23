@@ -2541,3 +2541,197 @@ construction sites in `e2e_harness_test.go`, `pkg/auth/abuse_test.go`,
 `PROGRESS-ARCHIVE.md`. Three new endpoints under `/.auth/settings/clients/`; no new config, no new
 dependency, no schema change. `SPEC.md` and `README.md` are deliberately untouched — documentation
 is F-024c.
+
+## F-024c — Verify against the running binary, then document — DONE 2026-08-23
+
+Third and final substep of F-024, and the one that had to answer a question no test suite in this
+repo can: **is the surface actually reachable in the running process?** `e2e_harness_test.go` builds
+its own gin router, so a green suite says nothing about route registration or middleware in
+`pkg/mcp-proxy/main.go` — the blind spot F-021 ran into and recorded.
+
+### Verified twice, deliberately
+
+**First against a locally built binary**, the way F-021 did, before anything reached a deployment:
+a real OAuth + PKCE flow (DCR registration → authorize → consent → token) produced a genuine access
+token; `POST /mcp` with it was proxied; the settings page listed the client with its grant; the
+page's own revoke POST returned `302 …?msg=revoked`; and the **same token was refused `401`
+immediately afterwards**. The guards were exercised against the production router rather than the
+test one: a revoke POST without a CSRF token and with a wrong one both got `403`, and without a
+session cookie the surface redirected to the login. The panic button proved two-step — the list
+offers only a link, the confirmation panel carries the POST — and after *Revoke everything* the
+operator was still logged in.
+
+**Then against the deployment**, with the operator's real Claude connector. The evidence came from
+the auth-event log and the access log, and it lines up to the second:
+
+| Time | Event |
+|---|---|
+| 11:55:12 | `revoked actor=operator scope=client` **records=7** — matching the page's "1 access / 6 refresh" |
+| **11:55:56 / 11:55:58** | `POST /mcp` → **401**, user agent `Claude-User` |
+| 11:56:17 | `POST /mcp` → `401` from the second client |
+| 11:57:53 | `revoked scope=client` **records=1** — the leftover DCR registration, exactly one record |
+| 11:58:17 | `login_ok method=passkey` |
+| 11:58:34 | `token_issued` with a **CIMD** client id |
+| from 11:58:35 | `/mcp` → `200`/`202` — the client works again |
+
+**The decisive number is 44 seconds.** `ACCESS_TOKEN_TTL` is one hour, so without the
+record-presence rule (SPEC §2.4) the revoked client would have kept working for up to sixty
+minutes. It was refused on its next request.
+
+**Two things only the live run could show.** The real client's row read **1 access / 6 refresh** as
+a *single* row — rotation history aggregated on real data, the case F-017d met as 58 records. And a
+**DCR registration left over from before the CIMD switch** appeared with `0 authorizations` and
+*never*: the "a registration without tokens must still be listed" branch, seen for the first time
+against something real rather than a fixture.
+
+### What the verification found
+
+**The two revoke buttons read as duplicates.** The operator asked what the difference was — a fair
+question, because a client with exactly one authorization makes "Revoke" and "Revoke this one" do
+the same thing, and a CIMD client has no registration for the client-level action to additionally
+remove. Only the wording distinguishes them, and the wording did not. Relabelled to **"Revoke
+client"** and **"Revoke this authorization"**, with a sentence in the expanded view stating what the
+client-level action additionally takes. A test pins the distinction; renaming both back to the same
+word turns it red. Fixed inside this substep rather than deferred, by the operator's decision and
+following F-023's precedent that a defect found by live verification is fixed, not filed.
+
+**One acceptance criterion was written too strongly by its own author.** "Re-authorization requires
+the passkey" holds only when no operator session is open. With a live session the **consent page**
+is what stands between a revoked client and a new token — which is the design (SPEC §1.5), and the
+anti-phishing property is the consent step, shown in both cases. The operator noticed this
+unprompted while testing and checked both paths. `SPEC.md` §1.12 and the runbook now state the
+actual contract instead of the overstated one.
+
+### Documentation
+
+- **`docs/VERIFICATION.md`** — the F-017d manual store-editing procedure is **gone**, not annotated:
+  the steps are replaced by "press Revoke client", with one sentence recording that hand-editing a
+  live auth store used to be the only way and is not a routine step to keep on file. A new
+  checklist group in §5 covers the client list, placed with the other manual checks rather than
+  after the close-out.
+- **`SPEC.md`** — §1.12 gains the three endpoints in the table and a contract paragraph (built from
+  token records, not registrations; per client and per authorization, never per device; a revoke
+  ends access at once and bans nobody); §2.1 records that the listing adds **no entity** and needs
+  no migration.
+- **`README.md`** — the settings paragraph and the endpoint table.
+- **`CHANGELOG.md`** — an `[Unreleased]` entry with the two properties an operator has to know
+  before using it, and the measured 44 seconds.
+
+**Verification of the docs themselves:** every relative link in the four changed files resolves;
+`gofmt`/`go vet`/`go test -race` green across 11 packages; `golangci-lint` 0 issues; GR-5 scan
+clean — no hostname, IP, path or personal detail from the live run reached the repository.
+
+**Operational state, recorded because it is easy to forget:** the deployment runs a **locally built,
+unreleased image** carrying this work, by the operator's decision, and the data directory and
+compose file were backed up before the swap. It is not reproducible from the registry until a
+release replaces it — and the operator has chosen to do **F-025 and F-022 first**, so that state
+persists for now.
+
+**Files:** `SPEC.md`, `README.md`, `CHANGELOG.md`, `docs/VERIFICATION.md`,
+`pkg/auth/templates/settings.html`, `pkg/auth/clients_test.go`; docs `PROGRESS.md`,
+`PROGRESS-ARCHIVE.md`. No behaviour change beyond the two button labels.
+
+## F-024 — Operator view of connected clients, with a kill switch — DONE 2026-08-23
+
+
+**Problem:** The operator cannot see which clients hold access, and cannot take it away. If a
+device or a session is compromised, the only remedy today is stopping the gateway and editing the
+bbolt store by hand — which is literally what F-017d had to do, with a purpose-built tool, to
+delete one client record. `/.idp/revoke` does not help: it is RFC 7009 and **client-authenticated**,
+so it lets a client drop its *own* token, never the operator drop someone else's.
+
+**Idea:** Extend `/.auth/settings` with a list of clients and their active authorizations, with
+timestamps, plus a per-entry action that deletes the client's registration and every token issued
+to it. Access dies at once; a CIMD client can only return through a fresh authorization, which
+needs the operator's passkey.
+
+**Possible implementation:**
+- The real work is **enumeration**, which the repository layer does not have — there is no `List`
+  or `All` on either backend. It has to be added for client records and token records, for bbolt
+  (cursor over the `client-` / `access_token-` / `refresh_token-` prefixes) and for SQL.
+- The UI slot already exists: `/.auth/settings` runs behind `RequireAuth` + `RequireCSRF`, and the
+  "delete passkey" POST is a working template for a destructive per-row action.
+- **Granularity is per client and per grant, never per device.** A token record carries
+  `RequestedAt`, `Client`, scopes and `RotatedAt` — no IP, no user agent. In the field Claude web
+  and iOS shared a single client id, so "log out my old phone" is not expressible. The UI should
+  say what it actually shows instead of implying device identity.
+- **CIMD and DCR revoke differently.** A DCR client has a stored registration to delete; a CIMD
+  client has none, because it is re-resolved from its URL on every use. Revoking it means
+  destroying its tokens, after which it may re-authorize — the right property for a compromised
+  device, since re-authorization requires the passkey, but the UI must not suggest a permanent
+  ban. A denylist was weighed at intake and deliberately left out of scope.
+- Revoking must cover **access and refresh tokens together**: a refresh token left behind mints a
+  new access token immediately. F-017d found **58** refresh-token records for one client, so
+  enumeration has to cope with rotation history rather than assuming a single row per client.
+- Emit an auth event (SR-8) when the operator revokes, so a kill is visible in the log next to the
+  existing `revoked` event.
+
+**Dependencies:** none. Would retire the manual store-editing procedure that F-017d had to write
+into `docs/VERIFICATION.md`.
+
+**Substeps (`/prep-step`, 2026-08-22) — Large: ~950 lines across ~11 files, of which ~380 are
+tests.** Reading the code moved three things the intake could not have known, and each one changes
+the design rather than merely detailing it:
+
+| # | Finding | Consequence |
+|---|---|---|
+| 1 | Since v0.3.0 Claude connects via **CIMD**, and a CIMD client has **no stored record at all** — `clientSource.lookupClient` re-resolves it from its URL on every lookup. An enumeration over `client-*` would therefore list precisely the clients the operator cares about **least**. | The list is built from **token records** grouped by `Request.Client.ID`; stored DCR registrations join as a second source, so a registration without tokens still shows. |
+| 2 | Recognisability needs **no new field**. A CIMD client's `client_id` *is* its URL (`https://claude.ai/oauth/mcp-oauth-client-metadata`, the one F-023 recorded live), and a DCR registration stores its `redirect_uris`, whose host names the client just as well. | Identity in the list = `client_id` + redirect-URI hosts. No client-supplied free text enters the operator UI here; the naming idea became **F-025** instead. |
+| 3 | "Last active" falls out of `RequestedAt`/`RotatedAt` on the token records. | The `last_used_at` that `SPEC.md` §2.1 lists for the DCR client entity, and that was never implemented, is not needed for this task. |
+
+Decisions taken at prep time: **the panic button is in** (operator-approved) — a "revoke
+everything" action with a confirmation step, cheap once enumeration exists and the thing the title
+promises. **No schema change**: SQL filtering decodes the request blobs in Go rather than gaining an
+indexed `client_id` column, so `SchemaVersion` stays 1 and a downgrade stays possible. **All new
+code lands in new files** — `kvs.go` (470) and `sql.go` (694) and `auth.go` (534) are already at or
+past the §2 limits that F-022 exists to fix, and this task must not make that worse.
+
+### Complete (a/b/c)
+
+The operator can now see who holds access and take it away — a capability the gateway simply did
+not have. `/.idp/revoke` never provided it: RFC 7009 is **client-authenticated**, so it lets a
+client drop its *own* token and never lets the operator drop someone else's. Before this, the
+remedy was to stop the gateway and edit the bbolt store by hand, which is literally what F-017d had
+to do with a purpose-built tool to delete a single record. That procedure has been removed from
+`docs/VERIFICATION.md`; a button replaces it.
+
+| Substep | Delivered |
+|---|---|
+| **F-024a** | `InventoryStorage` on the repository interface — `ListClientGrants`, `RevokeClient`, `RevokeGrant`, `RevokeAll` — for bbolt and SQLite, fed by one shared aggregator |
+| **F-024b** | The *Connected clients* section in `/.auth/settings`, behind the page's existing gates, with per-client, per-authorization and panic actions |
+| **F-024c** | Verification against a local binary **and** the live deployment, then the documentation |
+
+**The finding that shaped everything** came from reading the code at prep time and held up in the
+field: since v0.3.0 Claude connects via **CIMD**, and a CIMD client has **no stored registration**.
+The obvious implementation — enumerate the client records — would have listed precisely the clients
+the operator cares about least. The listing is therefore built from **token records**, with
+registrations joined as a second source. The live run confirmed both halves at once: the real
+Claude client appeared with no registration behind it, and a leftover DCR registration from before
+the CIMD switch appeared with zero authorizations.
+
+**What the design refuses to promise, deliberately:** granularity is per client and per
+authorization, **never per device** — token records carry no IP or user agent, and every device
+signed into the same client shares one client id, so "log out my old phone" is not expressible and
+the page says so. And a revoke **bans nobody**: a CIMD client keeps no server-side registration, so
+destroying its tokens is the whole of the action and it may authorize again. A denylist was weighed
+at intake and left out of scope.
+
+**Proof rather than assertion.** Three deliberate mutations were run against the finished code, and
+one of them earned its keep: a security test in F-024b was passing **for the wrong reason** — a bare
+`http.Client` follows redirects, so the handler's `302` was chased to the settings page and that
+page's own `403` satisfied the assertion. The own-user gate could have been deleted unnoticed. The
+generalisable lesson is recorded in F-024b: on this surface, any test asserting a status code
+against a handler that can redirect must use a non-following client. Live, the decisive measurement
+was **44 seconds** — the time between the operator's revoke and the real client's `401`, against an
+`ACCESS_TOKEN_TTL` of one hour.
+
+**Spawned:** **F-025** (naming a connection at consent time, which also closes a `SPEC.md` §1.5
+identity requirement that has been unmet since it was written — DCR and CIMD both parse
+`client_name` today and both discard it).
+
+**Left for F-022:** `pkg/auth/auth.go` grew to 558 lines, past a §2 hard limit it already exceeded.
+The config field and the routes belong there; the split does not belong in this task.
+
+**Not yet released.** The deployment runs a locally built image carrying this work, by the
+operator's decision, with the data directory and compose file backed up beforehand. The operator
+chose to complete **F-025 and F-022 before the next release**, so that state persists until then.

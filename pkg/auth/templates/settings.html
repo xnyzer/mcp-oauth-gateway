@@ -192,7 +192,7 @@
             >
               <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
               <input type="hidden" name="client_id" value="{{.ClientID}}" />
-              <button class="button secondary" type="submit">Revoke</button>
+              <button class="button secondary" type="submit">Revoke client</button>
             </form>
           </td>
         </tr>
@@ -201,6 +201,11 @@
           <td colspan="4">
             <details>
               <summary class="muted small">Show authorizations</summary>
+              <div class="muted small">
+                Revoking one authorization leaves the client's other
+                authorizations and its registration in place; “Revoke client”
+                above takes all of them.
+              </div>
               <table class="grants">
                 <tr>
                   <th>Authorized</th>
@@ -235,7 +240,7 @@
                         value="{{.RequestID}}"
                       />
                       <button class="button secondary" type="submit">
-                        Revoke this one
+                        Revoke this authorization
                       </button>
                     </form>
                   </td>

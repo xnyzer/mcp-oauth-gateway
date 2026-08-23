@@ -122,6 +122,21 @@ Record each row pass/fail with evidence in `private/`.
 - [ ] No token → `401`. Tampered token → `401`. A revoked token → `401`. (Replay of a consumed
   auth code → `invalid_grant`.)
 
+**Client list and kill switch (F-024)** — session-gated, so this is a browser check:
+- [ ] `/.auth/settings` lists every client that holds access. A **CIMD client appears even though
+  it has no stored registration** — the case an implementation built on client records gets wrong.
+- [ ] Rotation history is aggregated: a long-lived connection shows **one row with a refresh
+  count**, not one row per rotation.
+- [ ] A registration with no tokens is listed too, with `0 authorizations` and *never*.
+- [ ] **Revoke client** → the client's next request answers `401` within seconds, not after
+  `ACCESS_TOKEN_TTL`. Visible in the log: the `revoked` event carries the record count, and the
+  `/mcp` line right after it carries the client's user agent and `401`.
+- [ ] Re-connecting succeeds and goes through the consent page. It asks for the passkey when no
+  operator session is open; with a live session the consent step alone stands between the client
+  and a new token, by design (SPEC §1.5).
+- [ ] After a revoke the operator is **still logged in** and the passkey list is untouched —
+  including after *Revoke everything*.
+
 ## 6. Close-out
 
 - [ ] All rows recorded in `private/`.
@@ -131,9 +146,9 @@ Record each row pass/fail with evidence in `private/`.
   *Done 2026-08-21 for v0.2.0/v0.2.1 — every §4.1 and §4.2 row held except the one already
   recorded as unmet (`Origin`, F-021).*
 
-### Force a fresh client registration (learned in F-017d)
+### Force a fresh authorization (learned in F-017d, mechanised in F-024)
 
-Verifying that clients pick CIMD needs a **new** registration, and an already-connected client
+Verifying that clients pick CIMD needs a **new** authorization, and an already-connected client
 will not produce one. None of the obvious routes work:
 
 - Claude refuses a second connector for a URL it already has.
@@ -142,10 +157,14 @@ will not produce one. None of the obvious routes work:
 - Waiting for `DCR_CLIENT_TTL` never fires: the registration is refreshed on every token issuance
   (SPEC §2.1), so one in active use never expires.
 
-What does work is deleting the client's server-side record, which forces re-registration on the
-next token refresh. Take a data-dir backup first, stop the gateway (bbolt holds an exclusive
-lock), remove the `client-<id>` record, and restart. Deleting the `access_token-*` and
-`refresh_token-*` records as well makes it immediate instead of waiting out `ACCESS_TOKEN_TTL`.
+**What works: revoke the client in `/.auth/settings`.** Open the settings page, find the client
+under *Connected clients*, and press **Revoke client**. Its registration and every token it holds
+are deleted in one transaction, so the next request the client makes is rejected and the one after
+that starts a fresh authorization. Nothing has to be stopped, edited or restarted.
+
+> Until F-024 the only way was to stop the gateway and edit its data store by hand with a
+> purpose-built tool. That procedure has been removed from this runbook: the button replaces it,
+> and hand-editing a live auth store is not something to keep on file as a routine step.
 
 This matters because a verification that only exercises an **already-connected** client passes
 even when the gateway is broken for every new one — which is exactly what F-023 turned out to be.

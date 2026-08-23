@@ -157,6 +157,13 @@ Recommended hardening after the first login: open `https://<your-host>/.auth/set
 **enrol a passkey**, then disable the password fallback there (the `PASSWORD_HASH` env stays
 as a break-glass rescue; deleting all passkeys re-activates password login).
 
+The same page lists **connected clients** — who holds access, how many authorizations, when they
+were last active — and revokes it: one client, one authorization, or everything at once. A revoke
+takes effect on the client's next request rather than after the token's remaining lifetime. It does
+not ban anyone: a revoked client can authorize again, which needs your login. Entries are per
+client and per authorization, **not per device** — every device signed into the same client shares
+one client id, and the gateway stores no device identity.
+
 ## Fronting an MCP server
 
 The upstream target is the container command (a positional argument, not an env var):
@@ -303,7 +310,7 @@ The narrowing is yours to make, deployment by deployment.
 |---|---|
 | `/.well-known/oauth-protected-resource` · `/.well-known/oauth-authorization-server` · `/.well-known/jwks.json` | Discovery (public). |
 | `/.idp/auth` · `/.idp/token` · `/.idp/register` · `/.idp/revoke` · `/.idp/introspect` | OAuth endpoints. |
-| `/.auth/login` · `/.auth/settings` | Operator login and passkey/settings UI. |
+| `/.auth/login` · `/.auth/settings` | Operator login, passkey/settings UI, and the connected-clients list with its revoke actions. |
 | `/healthz` | Liveness (public). |
 | everything else | Proxied to the upstream — **bearer required, fail-closed**. |
 

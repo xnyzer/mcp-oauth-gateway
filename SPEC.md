@@ -418,14 +418,40 @@ only identity, passkeys, and the password-disabled flag.
 |---|---|---|
 | `POST /.auth/webauthn/login/begin` / `finish` | public (CSRF-checked) | **discoverable** (usernameless) assertion ceremony — empty allow-list, so the begin response never enumerates the operator's credential IDs to an anonymous caller (F-012c); `400`/`401` with a uniform error when unavailable or failed; a sign-count regression (clone warning) or a failed sign-count persist denies the login (fail-closed) |
 | `POST /.auth/webauthn/register/begin` / `finish` | session-gated (CSRF-checked) | enrollment (attestation) ceremony; existing credentials are excluded; a resident (discoverable) key is **required** so every new passkey supports discoverable login (F-012c) |
-| `GET /.auth/settings` | session-gated | passkey list/enroll/delete + password-fallback toggle |
+| `GET /.auth/settings` | session-gated | passkey list/enroll/delete + password-fallback toggle + **the client list** (F-024) |
 | `POST /.auth/settings/password`, `POST /.auth/settings/credentials/delete` | session-gated (CSRF-checked) | form posts (per-session CSRF token + `SameSite=Lax`, F-012c) |
+| `POST /.auth/settings/clients/revoke`, `.../clients/grants/revoke`, `.../clients/revoke-all` | session-gated (CSRF-checked) | operator revocation: one client, one authorization, or everything (F-024) |
 
 Settings and enrollment additionally require the session to belong to the persisted operator
 account (OIDC-provider sessions get `403`). **Password-fallback rule:** disabling requires ≥ 1
 passkey; the stored flag is only honoured while a passkey exists — deleting the last passkey
 re-activates the password login (lockout rescue). At startup, at least one usable backend
 (password, OIDC, or an enrolled passkey) MUST exist, otherwise fail-fast (§3.1).
+
+**Client list and operator revocation (F-024).** The settings page lists every client that holds
+access, with its authorizations, token-record counts and activity times, and revokes per client,
+per authorization, or all at once. It closes a gap `/.idp/revoke` cannot: RFC 7009 is
+**client-authenticated**, so it lets a client drop its *own* token and never lets the operator drop
+someone else's. Three properties define the contract:
+
+- **The listing is built from token records, not registrations.** A CIMD client has no stored
+  registration — it is re-resolved from its URL on every lookup (§1.3) — so enumerating client
+  records would miss exactly the clients that hold access. Non-expired registrations join as a
+  second source, so a registration without tokens still shows.
+- **Granularity is per client and per authorization, never per device.** Token records carry no IP
+  and no user agent, and every device signed into the same client shares one client ID. The page
+  says so rather than implying device identity.
+- **A revoke ends access at once and bans nobody.** Deleting the token records is what stops
+  `/mcp`, because access is decided by record presence (§2.4) rather than by the token's remaining
+  lifetime. A revoked client may authorize again, which requires an authenticated operator session
+  and the consent step (§1.5). Revoking sweeps access tokens, refresh tokens, authorization codes,
+  PKCE sessions and pending authorize requests together, plus the DCR registration where one
+  exists — a refresh token left behind would mint a new access token immediately. The operator's
+  own account, passkeys and session are never touched, including by the "revoke everything" action.
+
+Every revoke emits the SR-8 `revoked` auth event with actor, scope and record count, so an operator
+kill is distinguishable in the log from the client-initiated RFC 7009 revocations that share the
+event name.
 
 HTML pages (login/consent/error/unauthorized/settings) are the §1.5 "non-redirectable error"
 and login surfaces; they MUST NOT reflect unvalidated request input (XSS — settings messages
@@ -482,6 +508,11 @@ entity with a passed expiry; lookups MUST treat expired-but-not-yet-swept record
 | **PKCE session** | request signature; challenge + method | tied to auth-code lifetime | `pkce_request_sessions` / `pkce_request-` |
 | **User** (new, F-005e1) | `user_id`; `username`, `password_login_disabled`, `created_at` — **no password hash** (the env config stays authoritative; decision F-005e, replacing the originally drafted optional `password_hash`) | permanent (single record, FR-4) | `user_records` / `user-` |
 | **Passkey credential** (new, F-005e1) | WebAuthn credential ID (base64url); `user_id`, name, marshaled credential (COSE public key, sign count, transports, flags), `created_at`, `last_used_at` | permanent, user-revocable | `webauthn_credential_records` / `webauthn_credential-` |
+
+The operator's client list (§1.12, F-024) adds **no entity**: it aggregates the access- and
+refresh-token records above by the client snapshot each one carries, and joins the stored DCR
+registrations. `SchemaVersion` is therefore unchanged, and a store written before the feature reads
+without migration.
 
 Access tokens are JWTs (§1.7) **and** have a server-side record: `/mcp` validation stays
 stateless-first (signature/claims), then requires the token's **record to still exist**

@@ -138,6 +138,14 @@ func TestSettingsListsClientsWithoutTheirSecret(t *testing.T) {
 	require.Contains(t, body, "client.example.com", "the redirect host is what makes a DCR client recognisable")
 	require.NotContains(t, body, testClientSecret, "the client secret must never reach the page")
 	require.Contains(t, body, "not per device", "the page must say what an entry actually is")
+
+	// The two destructive actions must not read as duplicates. Live
+	// verification found them indistinguishable: a client with a single
+	// authorization makes both buttons do the same thing, so only the wording
+	// tells the operator that one also takes the registration and every other
+	// authorization.
+	require.Contains(t, body, "Revoke client")
+	require.Contains(t, body, "Revoke this authorization")
 }
 
 func TestSettingsSaysWhenNoClientHoldsAccess(t *testing.T) {
