@@ -3364,3 +3364,60 @@ move for no gain; if the project ever wants RFC 5737 placeholders throughout, th
 **Files:** `main.go`, `main_test.go`, `env.go` (new), `env_test.go` (new), `parse.go` (new),
 `parse_test.go` (new), `healthcheck.go` (new), `healthcheck_test.go` (new), `rotatekey.go` (new),
 `rotatekey_test.go` (new).
+
+
+---
+
+## F-022c — The proxy test file — DONE 2026-08-24
+
+**What:** Split `pkg/proxy/proxy_test.go` (1035) by theme — token validation, header mapping,
+discovery/PRM, reserved namespaces and streaming — with the shared helpers (lines 26–64) kept in
+one place.
+
+**Files:** `pkg/proxy/proxy_test.go` → several `proxy_*_test.go`
+
+**Acceptance:**
+- [x] Every file ≤ 500 lines
+- [x] `go test -list '.*'` identical before/after; no helper duplicated
+
+### What was actually done
+
+`pkg/proxy/proxy_test.go` (1035) became four files. Mirroring production, as F-022b did, was not
+available here: `pkg/proxy` has a **single** production file (`proxy.go`, 251 lines, already inside
+the limit). So the cut is thematic, along the seams `proxy.go` itself forms, and the names follow the
+package's existing convention — `transport_test.go` carries no `proxy_` prefix, so neither do these:
+
+| File | Lines | Covers |
+|---|---|---|
+| `token_test.go` | 343 | bearer validation: signature, `iss`/`aud`, missing `exp`, clock skew, multi-key JWKS, record presence |
+| `upstream_test.go` | 414 | what leaves toward the upstream: claim-to-header mapping, anti-spoofing, credential policy |
+| `metadata_test.go` | 116 | protected-resource metadata and the 401 challenge that points at it |
+| `proxy_test.go` | 203 | the shared helpers, reserved namespaces, SSE gating |
+
+**Deviation from F-022a and F-022b: two files stay above the 300-line target.** `token_test.go` (343)
+and `upstream_test.go` (414) are under the 500-line hard limit, which is the acceptance criterion,
+but not under the target that a and b both reached. §2 asks to *check* whether a file above 300 can
+be split, and the check was made: the finer cuts are artificial. Separating "is the token valid"
+from "is the token still active", or claim mapping from credential policy, tears apart tests that
+exercise the same contract line. Four coherent themes under the hard limit beat six invented ones
+under the target.
+
+**One line that is not a move, and is in scope precisely because of that.**
+`pkg/proxy/transport_test.go` opened with "They live apart from proxy_test.go because that file is
+already far past the 500-line hard limit in CODING-STANDARDS §2 (F-022 tracks the split)". This
+substep is that split, so the sentence became false the moment it landed. It now states what the
+file is delimited *against* — the ordinary proxy path's mapping and credential tests in
+`upstream_test.go` — instead of citing a limit that no longer applies.
+
+**All invariants held:** 35 AST declarations with identical body-line counts, `go test -list`
+identical at 17 tests, line multiset **0 lost / 0 gained** across 885 content lines, and each of the
+five shared helpers (`testKid`, `testKeyLookup`, `generateRSAKeyPair`, `createJWT`,
+`createDummyBackendServer`) has exactly **one** definition in the package — the criterion that
+matters most when a test file is split, because duplicating a helper compiles and then silently
+drifts. `go list` confirms every new file is in `TestGoFiles` and `IgnoredGoFiles` is empty.
+
+**Files:** `pkg/proxy/proxy_test.go`, `pkg/proxy/token_test.go` (new), `pkg/proxy/metadata_test.go`
+(new), `pkg/proxy/upstream_test.go` (new), `pkg/proxy/transport_test.go` (comment only).
+
+**One file remains past the hard limit:** `pkg/mcp-proxy/main.go` (949), for F-022d and F-022e — the
+part where these invariants stop applying, because `Run` is decomposed rather than relocated.

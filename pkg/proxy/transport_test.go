@@ -1,9 +1,9 @@
 package proxy
 
 // Tests for the transport surface the MCP 2026-07-28 revision defines: which
-// request headers reach the upstream, and the new server/discover RPC. They
-// live apart from proxy_test.go because that file is already far past the
-// 500-line hard limit in CODING-STANDARDS §2 (F-022 tracks the split).
+// request headers reach the upstream, and the new server/discover RPC. Kept
+// apart from upstream_test.go, which covers the claim-to-header mapping and the
+// credential policy of the ordinary proxy path.
 
 import (
 	"io"
