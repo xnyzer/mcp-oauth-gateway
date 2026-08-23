@@ -93,6 +93,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-025 | **Name a connection at consent time — complete** (a/b). The design came from the operator's pushback against a three-substep plan: their "a new data field, not a new storage structure" pointed at the gateway's own **session**, which is already persisted with every record of a grant — server-built, so no client can plant a label, and deleted with the authorization, so no cleanup path exists. Two substeps and the renaming UI fell away with it. Closed a §1.5 violation nobody had noticed, and spawned **F-026**. **Three defects found, none by a red suite:** two by mutation (a wrong acceptance criterion about `Session.Clone`, two assertions that could never fail) and one by review (SQL never stored the name). The first two are now rules in `CODING-STANDARDS.md`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-026 | **Dissolve `REQUIREMENTS.md` into SPEC, and strip the history out of SPEC — complete** (a/b/c). One document for rules, one for finished work, one for open work. The register is now `SPEC.md` §5 (appended — **no §0–§4 heading renumbered**, because 251 code references point there); the 15 Delta paragraphs and 108 F-number lines are gone, and the contract text is **645 lines instead of 763** while carrying the register. **The plan's own safety net was too weak, and the mutation proved it:** built to the specified prefix rule, renaming `§1.11` to `§1.14` left the suite green — every `1.x` resolves while §1 exists. The guard now counts the parent's list items; seven mutations verified red. **Four contract statements existed only inside a Delta** (`exp` MUST be present, the 4 MiB redirect-replay cap, the post-login redirect normalisation, the SQLite pragmas) and were lifted out before deleting; an audit confirmed 28/28 removed statements survive. **One plan decision reversed on evidence:** two "duplicated" NFR lines are *cited* from §2.2/§3.3, so deleting them would have aimed two pointers at nothing. Spawned **F-027**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-027 | **Retire the local skills and finish the documentation architecture — complete.** Came out of the operator's review of F-026, not from `/add-feature`. The four skills in `.claude/skills/` are dead — the workflow runs on the coding-kit plugin — so F-026b had politely *edited* files that should have been deleted; six documents pointed at them. `SPEC.md` is a **rules** document, measured (**325 code citations against 46 from docs**), and now says so in its own header: §3's option tables were a total duplicate of README (**−33 % characters**) and §4 was a verification record, moved to `docs/MCP-CONFORMANCE.md` behind a stub so append-only references keep resolving. **The tidy-up audit found five real faults, not zero:** a dead unlinked `docs/README.md`, `CLAUDE.md` two releases stale at `v0.1.0`, three live pointers at the moved §4, three competing document indexes, and a README index naming neither `CODING-STANDARDS.md` nor `CONTRIBUTING.md`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
+| F-022a | Persistence and auth glue split → `pkg/repository/sql.go` (712) into four files along its entity seams and `pkg/auth/auth.go` (558) into four along its concerns; **largest new file 275 lines**, under the 300-line target rather than merely under the 500 limit. Cut by script — whole declaration segments including their doc comments — because hand-editing 730 lines of seams is where a "pure move" quietly stops being one. **Proven, not asserted:** an AST parser reports the declaration set and per-declaration body-line counts identical (215 in `pkg/repository`, 197 in `pkg/auth`), and a line multiset shows **0 lost, 0 gained** — a check beyond the plan, because the declaration invariant cannot see a comment stranded between the imports and the first declaration. No test file touched, so the green suite is evidence. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 
 ---
 
@@ -108,14 +109,14 @@ hard limit**, the largest at 1035 lines, and fourteen more sit above the 300-lin
 straight into this — its new tests could not go into `pkg/proxy/proxy_test.go` without pushing a
 1035-line file to 1180, so they went into a new file and the underlying violation stayed untouched.
 
-| File | Lines | Kind |
-|---|---|---|
-| `pkg/proxy/proxy_test.go` | 1035 | tests |
-| `pkg/mcp-proxy/main.go` | 949 | production — assembly and config wiring |
-| `main_test.go` | 776 | tests |
-| `pkg/repository/sql.go` | 712 | production — SQL persistence |
-| `main.go` | 568 | production — CLI surface |
-| `pkg/auth/auth.go` | 558 | production — password/session/WebAuthn glue |
+| File | Lines | Kind | State |
+|---|---|---|---|
+| `pkg/proxy/proxy_test.go` | 1035 | tests | F-022c |
+| `pkg/mcp-proxy/main.go` | 949 | production — assembly and config wiring | F-022d/e |
+| `main_test.go` | 776 | tests | F-022b |
+| `pkg/repository/sql.go` | 712 | production — SQL persistence | **done (F-022a)** |
+| `main.go` | 568 | production — CLI surface | F-022b |
+| `pkg/auth/auth.go` | 558 | production — password/session/WebAuthn glue | **done (F-022a)** |
 
 Same origin as F-020's two files: they came over with the F-008 fork and grew through F-005 and
 everything after it. Size is not cosmetic in this repo — these are the files a reviewer has to hold
@@ -154,21 +155,13 @@ that also changed.
   afterwards for package symmetry — as its own task, not here.
 
 **Substeps** — the pure moves first, so the invariant harness is established before the one change
-it cannot prove.
+it cannot prove. **F-022a is done**; four files remain past the hard limit.
 
-#### F-022a — The persistence and auth glue
-
-**What:** Cut `pkg/repository/sql.go` along its entity seams (token sessions, schema version,
-clients, PKCE, authorize requests, user, WebAuthn, marshal helpers) and `pkg/auth/auth.go` along
-its three concerns (router + setup, login flow, template rendering). Pure move, no behaviour change.
-
-**Files:** `pkg/repository/sql.go` → several `sql_*.go`; `pkg/auth/auth.go` → several `*.go`
-
-**Acceptance:**
-- [ ] Every touched file ≤ 500 lines; no new file above the 300-line target
-- [ ] **Identical declaration set** before/after (compared, not assumed) and identical body-line
-      counts per declaration
-- [ ] `go test -race ./...` green with the test files untouched
+The verification harness F-022a established, to be reused by b and c: an AST parser prints
+`kind name bodyLines` per top-level declaration for the whole package (tests included) — identical
+before and after proves the declarations moved intact — plus a **line multiset** comparison, which
+catches what the declaration invariant cannot: a comment stranded between the import block and the
+first declaration would vanish without any declaration changing.
 
 #### F-022b — The CLI surface
 

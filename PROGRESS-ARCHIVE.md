@@ -3237,3 +3237,74 @@ from README or `CLAUDE.md`, and no live pointer aims at a moved or deleted targe
 `docs/MCP-CONFORMANCE.md` (new), `SPEC.md`, `README.md`, `CLAUDE.md`,
 `HOW-TO-CODE-WITH-CLAUDE.md`, `CODING-STANDARDS.md`, `CONTRIBUTING.md`, `THREAT-MODEL.md`,
 `docs/VERIFICATION.md`, `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.
+
+
+---
+
+## F-022a — The persistence and auth glue — DONE 2026-08-24
+
+**What:** Cut `pkg/repository/sql.go` along its entity seams (token sessions, schema version,
+clients, PKCE, authorize requests, user, WebAuthn, marshal helpers) and `pkg/auth/auth.go` along
+its three concerns (router + setup, login flow, template rendering). Pure move, no behaviour change.
+
+**Files:** `pkg/repository/sql.go` → several `sql_*.go`; `pkg/auth/auth.go` → several `*.go`
+
+**Acceptance:**
+- [x] Every touched file ≤ 500 lines; no new file above the 300-line target
+- [x] **Identical declaration set** before/after (compared, not assumed) and identical body-line
+      counts per declaration
+- [x] `go test -race ./...` green with the test files untouched
+
+### What was actually done
+
+`pkg/repository/sql.go` (712) became four files, following the `sql_*.go` convention the package
+already used for `sql_inventory.go`:
+
+| File | Lines | Holds |
+|---|---|---|
+| `sql.go` | 173 | connection, `configureSQLite`, schema version, marshal helpers |
+| `sql_sessions.go` | 275 | authorization codes, access/refresh tokens, PKCE, authorize requests |
+| `sql_clients.go` | 197 | DCR registrations including the atomic cap check |
+| `sql_users.go` | 106 | the operator account and passkey credentials |
+
+`pkg/auth/auth.go` (558) became four files with concern names, as `pkg/idp` got them in F-020:
+
+| File | Lines | Holds |
+|---|---|---|
+| `auth.go` | 176 | `AuthRouter`, `Config`, constructor, template constants |
+| `routes.go` | 98 | `SetupRoutes`, `withRateLimit` |
+| `login.go` | 206 | login/logout, lockout, redirect normalisation, `RequireAuth` |
+| `render.go` | 105 | template data types and the three render functions |
+
+**The cut was mechanical, not hand-edited.** A script assigned whole declaration segments — each
+declaration extended upward over its contiguous doc comment — so every line after the import block
+landed in exactly one output file. `goimports` then fixed the per-file import sets. Hand-editing
+730 lines of seams is where a "pure move" quietly stops being one.
+
+**The plan's invariant was proven with an AST parser, not with text patterns.** A throwaway tool
+(`go/parser`) printed `kind name bodyLines` per top-level declaration, sorted, for the whole
+package including its tests. `pkg/repository`: **215 declarations identical**. `pkg/auth`: **197
+identical**. Body-line counts come from the AST, so comments and formatting cannot shift them.
+
+**One check beyond the plan.** The declaration invariant cannot see a comment stranded between the
+import block and the first declaration — it would simply vanish with no declaration changing. A
+multiset comparison of every content line, original against the union of the new files, reported
+**0 lost and 0 gained** for both files. Worth keeping for F-022b and F-022c: the AST invariant
+proves declarations moved intact, the line multiset proves nothing fell out between them.
+
+**A first attempt failed and was reverted before it could mislead.** The assignment patterns were
+written against the tool's `Type.Method` output form while the source reads `) Method(`, so almost
+nothing matched and `sql.go` stayed at 496 lines with three near-empty siblings. `git checkout` on
+the original, corrected patterns, re-run.
+
+**Not fixed here, deliberately: import grouping.** CODING-STANDARDS §4 asks for stdlib →
+third-party → local, and the new files put the local imports in the third-party group. That is not
+a regression — measured, **46 of 46** files in the repository carrying a local import do the same,
+including the originals of both split files and files this task never touched. Fixing it here would
+break the pure move and leave four files unlike the other ninety. Worth its own task; noted rather
+than silently built.
+
+**Files:** `pkg/repository/sql.go`, `pkg/repository/sql_sessions.go` (new),
+`pkg/repository/sql_clients.go` (new), `pkg/repository/sql_users.go` (new), `pkg/auth/auth.go`,
+`pkg/auth/routes.go` (new), `pkg/auth/login.go` (new), `pkg/auth/render.go` (new). No test file was
+touched, which is what makes the green suite evidence rather than decoration.
