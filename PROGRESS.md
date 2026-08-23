@@ -20,8 +20,9 @@ name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIR
 over it; **F-027** retired the project's local skills and settled the documentation architecture —
 rules (`SPEC.md`, `CODING-STANDARDS.md`, `THREAT-MODEL.md`) apart from records (`docs/`). A
 reference guard (`docs_refs_test.go`) now keeps every `SPEC §…` and FR/GR/SR pointer honest in CI.
-**F-022** (six files past the §2 hard limit) waits in the backlog and needs
-`/coding-kit:prep-step` first. It is wanted **before the next release**.
+**F-022** is planned and ready to build (a–e): six files sit past the §2 hard limit, and one of
+them — `pkg/mcp-proxy/main.go` — cannot be fixed by moving declarations at all, because a single
+650-line function fills it. It is wanted **before the next release**.
 
 **Released: v0.3.0 — but the deployment is ahead of it.** It runs a locally built image carrying
 F-024 **and F-025**, by the operator's decision, and is not reproducible from the registry until a
@@ -97,29 +98,24 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 
 ## Open tasks — work top to bottom
 
-*Nothing planned.* The next task is **F-022** in the backlog below; it needs
-`/coding-kit:prep-step` before it can be built.
-
-## Feature ideas (backlog)
-
 ### F-022 — Bring the remaining oversized files under the §2 limits
 
-**Status:** BACKLOG
+**Status:** PLANNED
 
 **Problem:** CODING-STANDARDS §2 sets a 300-line target and a **500-line hard limit**. F-020 brought
 `pkg/idp` under it, but nothing ever surveyed the rest of the tree: **six files are still past the
-hard limit**, the largest at 1035 lines, and twelve more sit above the 300-line target. F-017b ran
+hard limit**, the largest at 1035 lines, and fourteen more sit above the 300-line target. F-017b ran
 straight into this — its new tests could not go into `pkg/proxy/proxy_test.go` without pushing a
 1035-line file to 1180, so they went into a new file and the underlying violation stayed untouched.
 
 | File | Lines | Kind |
 |---|---|---|
 | `pkg/proxy/proxy_test.go` | 1035 | tests |
-| `pkg/mcp-proxy/main.go` | 934 | production — assembly and config wiring |
+| `pkg/mcp-proxy/main.go` | 949 | production — assembly and config wiring |
 | `main_test.go` | 776 | tests |
-| `pkg/repository/sql.go` | 694 | production — SQL persistence |
-| `main.go` | 565 | production — CLI surface |
-| `pkg/auth/auth.go` | 534 | production — password/session/WebAuthn glue |
+| `pkg/repository/sql.go` | 712 | production — SQL persistence |
+| `main.go` | 568 | production — CLI surface |
+| `pkg/auth/auth.go` | 558 | production — password/session/WebAuthn glue |
 
 Same origin as F-020's two files: they came over with the F-008 fork and grew through F-005 and
 everything after it. Size is not cosmetic in this repo — these are the files a reviewer has to hold
@@ -129,35 +125,120 @@ in their head to reason about the auth boundary.
 **pure move** with no behaviour change, so the existing tests are the proof rather than something
 that also changed.
 
-**Possible implementation:**
-- Sequence by value rather than by size: `pkg/mcp-proxy/main.go` (934) is the gateway's assembly and
-  config wiring — the file most often opened to answer "what does this deployment actually do" — and
-  is worth more than the larger test file.
-- `main.go` and `main_test.go` are one CLI surface and want a single cut.
-- `pkg/repository/sql.go` and `pkg/auth/auth.go` each carry several concerns already (persistence per
-  entity; password, session and WebAuthn glue).
-- **Carry F-020's verification lesson over:** `git diff -M` cannot see a one-into-many split as a
-  move, because rename detection works on whole-file similarity. The proof has to come from
-  invariants instead — identical declaration sets, identical body-line counts, identical test sets
-  via `go test -list`. Run the move first and any content change strictly second, or those
-  invariants stop proving anything.
-- The twelve files above the 300-line target are **out of scope** unless a cut makes them fall out
-  naturally; §2 only asks to "check whether it can be split" at 300, and the hard limit is the
-  actual violation.
+**Decided at `/prep-step` (2026-08-23), with the measurements behind each decision:**
 
-**Still to analyse:** whether this is one F-number with a substep per file, or several — six files
-is a good deal more than F-020's single package. Also open: whether `handleRegister` (103 lines,
-against the 50-line hard limit and the ~80-line orchestration exception in §3), which F-020
-explicitly recorded as a non-goal, belongs here or stays its own task; splitting it restructures the
-DCR endpoint rather than relocating a file, which is a different kind of change.
+- **Five of the six files are pure moves. One is not, and that governs the shape of this task.**
+  `pkg/mcp-proxy/main.go` holds a **single 650-line function**, `Run` (lines 217–866). Moving out
+  everything else — the `Config` struct with its validation (~170 lines) and the small helpers
+  below `Run` (~83 lines) — still leaves ~690 lines around one 650-line function. The file cannot
+  reach the limit by relocation; `Run` has to be decomposed, which is restructuring, not moving.
+- **The invariant proof does not transfer to `Run`.** F-020's method rests on identical declaration
+  sets and identical body-line counts, which only prove anything while nothing changes. Worse,
+  measured: `Run` has **35.0 % statement coverage**, it is called from exactly one place
+  (`main.go:189`), and the e2e suite does **not** exercise it — `e2e_harness_test.go` says so
+  itself ("builds the gateway exactly as `Run()` mounts it"), i.e. it is a parallel implementation.
+  This is the same gap F-021 found. The proof there has to be the running binary, including the
+  fail-fast paths (no auth backend, both registration mechanisms disabled, malformed values) that
+  live in `Run` and that no test covers today.
+- **Splitting `Run` is therefore two substeps, not one**, cut at the seam its own phases already
+  form: configuration and dependencies (218–485) against wiring and server lifecycle (486–866).
+- **A by-product worth having:** once the wiring phase is a named function, `e2e_harness_test.go`
+  can call it instead of rebuilding it, which retires the parallel implementation F-021 flagged.
+  Not a goal of this task, but the reason to prefer this cut over an arbitrary one.
+- **§3 violations stay out of scope.** `handleRegister` (109 lines), `newRootCommand` (232) and
+  `handleProxy` (118) are function-length problems, not file-length ones. `Run` is the sole
+  exception, because §2 is unreachable there without §3.
+- **The fourteen files between 300 and 500 stay out of scope** unless a cut makes them fall out
+  naturally; §2 only asks to "check whether it can be split" at 300, and the hard limit is the
+  actual violation. `pkg/repository/kvs.go` (487) mirrors `sql.go` and would be worth the same cut
+  afterwards for package symmetry — as its own task, not here.
+
+**Substeps** — the pure moves first, so the invariant harness is established before the one change
+it cannot prove.
+
+#### F-022a — The persistence and auth glue
+
+**What:** Cut `pkg/repository/sql.go` along its entity seams (token sessions, schema version,
+clients, PKCE, authorize requests, user, WebAuthn, marshal helpers) and `pkg/auth/auth.go` along
+its three concerns (router + setup, login flow, template rendering). Pure move, no behaviour change.
+
+**Files:** `pkg/repository/sql.go` → several `sql_*.go`; `pkg/auth/auth.go` → several `*.go`
+
+**Acceptance:**
+- [ ] Every touched file ≤ 500 lines; no new file above the 300-line target
+- [ ] **Identical declaration set** before/after (compared, not assumed) and identical body-line
+      counts per declaration
+- [ ] `go test -race ./...` green with the test files untouched
+
+#### F-022b — The CLI surface
+
+**What:** `main.go` (env helpers vs. the three Cobra commands) and `main_test.go` (parsing tests vs.
+command tests) are one surface and get one cut, so the test layout mirrors the production layout.
+
+**Files:** `main.go`, `main_test.go` → `env.go`/`env_test.go` + command files
+
+**Acceptance:**
+- [ ] Both files ≤ 500 lines
+- [ ] Identical declaration sets and body-line counts
+- [ ] **`go test -list '.*'` returns the identical test set** before/after
+
+#### F-022c — The proxy test file
+
+**What:** Split `pkg/proxy/proxy_test.go` (1035) by theme — token validation, header mapping,
+discovery/PRM, reserved namespaces and streaming — with the shared helpers (lines 26–64) kept in
+one place.
+
+**Files:** `pkg/proxy/proxy_test.go` → several `proxy_*_test.go`
+
+**Acceptance:**
+- [ ] Every file ≤ 500 lines
+- [ ] `go test -list '.*'` identical before/after; no helper duplicated
+
+#### F-022d — `Run`, part 1: configuration and dependencies
+
+**What:** Extract phases 1–4 of `Run` (lines 218–485) into named functions that take configuration
+and return values: issuer normalisation and TTL/proxy validation, data directory + logger,
+repository open and schema check, key manager, abuse-protection limiters and the expiry sweeper.
+Because each becomes a function with inputs and a returned error, **the fail-fast paths become unit
+testable for the first time** — that is the point, not the line count.
+
+**Files:** `pkg/mcp-proxy/main.go`, plus new files in `pkg/mcp-proxy/`; new `*_test.go`
+
+**Acceptance:**
+- [ ] `Run` no longer performs any of the extracted work directly
+- [ ] New tests cover the fail-fast paths that had none: missing auth backend, both CIMD and DCR
+      disabled, malformed TTL, invalid `TRUSTED_PROXIES` entry
+- [ ] Coverage of `pkg/mcp-proxy` rises from its current **46.9 %** — recorded, not estimated
+- [ ] `go test -race ./...` green
+
+#### F-022e — `Run`, part 2: wiring and lifecycle
+
+**What:** Extract phases 5–7 (lines 486–866): auth/IDP/proxy router construction, the gin assembly
+(trusted proxies, `/healthz`, logging, origin check, session store) and the server lifecycle
+(listeners, TLS/ACME, shutdown). `Run` ends up a readable sequence of named steps.
+
+**Files:** `pkg/mcp-proxy/main.go`, plus new files in `pkg/mcp-proxy/`
+
+**Acceptance:**
+- [ ] `pkg/mcp-proxy/main.go` ≤ 500 lines and `Run` within the §3 orchestration exception (~80)
+- [ ] **Verified against the running binary**, not only the suite: the gateway starts against the
+      deployment configuration, serves discovery, completes a login, and each fail-fast path still
+      aborts startup with its message
+- [ ] `go test -race ./...` green
+- [ ] Recorded either way: whether `e2e_harness_test.go` can now call the wiring function instead
+      of rebuilding it, or why not
 
 **Dependencies:** none — but like F-020 it must not land between F-017's verification and the v0.2.0
 tag, or the release would ship code the verification never saw.
 
 ---
 
+## Feature ideas (backlog)
+
+*Empty.* Everything raised so far is either done or planned above.
+
 <!-- FEATURE-INDEX
-next-feature: F-027
+next-feature: F-028
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -179,7 +260,7 @@ F-018 Build the container image in CI (DONE)
 F-019 Evaluate whether DCR can be switched off (DONE)
 F-020 Split pkg/idp/idp.go along its seams (DONE)
 F-021 Validate the Origin header (DNS rebinding, SR-9) (DONE)
-F-022 Bring the remaining oversized files under the §2 limits (BACKLOG)
+F-022 Bring the remaining oversized files under the §2 limits (PLANNED)
 F-023 CIMD documents rejected over a foreign grant type (DONE)
 F-024 Operator view of connected clients, with a kill switch (DONE)
 F-025 Name a connection at consent time, and show the client's own name (DONE)
