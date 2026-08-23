@@ -53,6 +53,21 @@ type Session struct {
 	*fosite.DefaultSession
 	JWTClaims *jwt.JWTClaims
 	JWTHeader *jwt.Headers
+	// Label is the operator's name for this connection, taken at consent time
+	// (F-025). It rides the session because the session is server-built and
+	// persisted with every record of the grant, so the name is deleted with
+	// the authorization and no client can set it. It is **not** a JWT claim:
+	// only JWTClaims reaches the token.
+	Label string `json:",omitempty"`
+}
+
+// GetLabel returns the operator's name for this connection, satisfying
+// models.Labeled so the persistence layer can lift it onto the stored request.
+func (s *Session) GetLabel() string {
+	if s == nil {
+		return ""
+	}
+	return s.Label
 }
 
 // GetJWTClaims satisfies fosite's JWT session interface.
@@ -75,6 +90,12 @@ func (s *Session) Clone() fosite.Session {
 	}
 
 	clone := &Session{
+		// Label must be copied here or a refresh silently loses the
+		// operator's name. Measured, not assumed: dropping this line leaves
+		// the authorize→token exchange intact — there the session is restored
+		// from its stored JSON — and breaks only the refresh grant, which
+		// clones the loaded session in memory and persists the clone.
+		Label: s.Label,
 		DefaultSession: &fosite.DefaultSession{
 			Username:  s.Username,
 			Subject:   s.Subject,

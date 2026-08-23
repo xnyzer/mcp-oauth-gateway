@@ -23,6 +23,8 @@ import (
 	"github.com/ory/fosite"
 	"github.com/stretchr/testify/require"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -37,6 +39,13 @@ const (
 // Passing a clients store overrides the inventory the page reads, which is how
 // the fail-closed path is reached.
 func newClientsTestServer(t *testing.T, clients repository.InventoryStorage) (*httptest.Server, repository.Repository) {
+	t.Helper()
+	return newClientsTestServerWith(t, clients, nil)
+}
+
+// newClientsTestServerWith adds a logger, so the SR-8 auth events this surface
+// emits can be asserted (mirrors setupTestServerWith in pkg/idp).
+func newClientsTestServerWith(t *testing.T, clients repository.InventoryStorage, logger *zap.Logger) (*httptest.Server, repository.Repository) {
 	t.Helper()
 
 	repo, err := repository.NewKVSRepository(filepath.Join(t.TempDir(), "test.db"), "test")
@@ -54,6 +63,7 @@ func newClientsTestServer(t *testing.T, clients repository.InventoryStorage) (*h
 		Users:          repo,
 		Clients:        clients,
 		ExternalURL:    testExternalURL,
+		Logger:         logger,
 	})
 	require.NoError(t, err)
 
@@ -85,6 +95,31 @@ func seedGrant(t *testing.T, repo repository.Repository, clientID, requestID str
 	ctx := t.Context()
 	require.NoError(t, repo.CreateAccessTokenSession(ctx, requestID+"-access", req))
 	require.NoError(t, repo.CreateRefreshTokenSession(ctx, requestID+"-refresh", requestID+"-access", req))
+}
+
+// labeledSession mirrors the shape pkg/idp's session has: it carries the
+// operator's name, which models.FromFositeReq lifts onto the stored request.
+type labeledSession struct {
+	*fosite.DefaultSession
+	label string
+}
+
+func (s *labeledSession) GetLabel() string { return s.label }
+
+// seedNamedGrant writes one authorization that carries the operator's name.
+func seedNamedGrant(t *testing.T, repo repository.Repository, clientID, requestID, label string) {
+	t.Helper()
+	req := &fosite.Request{
+		ID:          requestID,
+		RequestedAt: time.Now().UTC(),
+		Client: &fosite.DefaultClient{
+			ID:           clientID,
+			RedirectURIs: []string{testRedirectURI},
+		},
+		GrantedScope: fosite.Arguments{"mcp"},
+	}
+	req.SetSession(&labeledSession{DefaultSession: &fosite.DefaultSession{}, label: label})
+	require.NoError(t, repo.CreateAccessTokenSession(t.Context(), requestID+"-access", req))
 }
 
 func getBody(t *testing.T, client *http.Client, rawURL string) (int, string) {
@@ -155,6 +190,42 @@ func TestSettingsSaysWhenNoClientHoldsAccess(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, status)
 	require.Contains(t, body, "No client currently holds access.")
+}
+
+// The name the operator gave at consent time (F-025) is what identifies the row;
+// the client id stays visible beneath it, because the name is a label and the id
+// is the verifiable identity.
+func TestSettingsShowsTheOperatorsName(t *testing.T) {
+	server, repo := newClientsTestServer(t, nil)
+	seedNamedGrant(t, repo, testCIMDClient, "named-grant", "Claude web")
+
+	status, body := getBody(t, loggedInOperator(t, server), server.URL+SettingsEndpoint)
+
+	require.Equal(t, http.StatusOK, status)
+	// The row's *primary* rendering, not merely the name somewhere on the page:
+	// the name also appears in the per-authorization table, so a loose Contains
+	// would pass even if the row fell back to the bare client id.
+	require.Contains(t, body, "<strong>Claude web</strong>",
+		"the operator's name identifies the row")
+	require.Contains(t, body, testCIMDClient, "the verifiable client id stays visible")
+}
+
+// SR-8: an operator kill reads in the operator's own words.
+func TestRevokeEventCarriesTheOperatorsName(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	server, repo := newClientsTestServerWith(t, nil, zap.New(core))
+	seedNamedGrant(t, repo, testCIMDClient, "named-grant", "Claude web")
+
+	client := loggedInOperator(t, server)
+	token := fetchCSRFToken(t, client, server.URL+SettingsEndpoint)
+	resp := postFormWithCSRF(t, client, server.URL+SettingsClientRevokeEndpoint, token,
+		url.Values{"client_id": {testCIMDClient}})
+	resp.Body.Close()
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+
+	entries := logs.FilterField(zap.String("event", "revoked")).All()
+	require.NotEmpty(t, entries, "a revoked event must be emitted")
+	require.Equal(t, "Claude web", entries[len(entries)-1].ContextMap()["label"])
 }
 
 // -- Revocation ---------------------------------------------------------

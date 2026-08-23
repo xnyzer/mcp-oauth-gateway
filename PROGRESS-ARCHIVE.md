@@ -2735,3 +2735,80 @@ The config field and the routes belong there; the split does not belong in this 
 **Not yet released.** The deployment runs a locally built image carrying this work, by the
 operator's decision, with the data directory and compose file backed up beforehand. The operator
 chose to complete **F-025 and F-022 before the next release**, so that state persists until then.
+
+## F-025a — The label, end to end — DONE 2026-08-23
+
+First substep of F-025. A connection can now be given a name at consent time; the name is stored
+with the authorization, shown wherever that authorization appears, and deleted with it.
+
+### What was done
+
+The name rides the gateway's **own session type** (`pkg/idp/session.go`), which fosite already
+persists as `SessionData` with every record of the grant. That location decides three properties at
+once, which is why it was chosen over the request `Form` the first sketch proposed: the session is
+**server-built**, so no client can plant a label; it is written with every token record, so the name
+travels; and it is deleted with those records, so there is **no cleanup path to forget**.
+`models.Request` gains a `Label` lifted out of the session through a new `models.Labeled` interface,
+so the repository and F-024's client list read it directly instead of decoding session JSON.
+
+The consent page gains an optional text field. Its value is sanitized **once, where it enters**:
+control characters dropped, trimmed, capped at 64 runes. One write point means one place to get it
+right — and the log needs it as much as the page does, because `html/template` escaping does not
+reach a structured log field. The list shows the name as the row's primary identifier with the
+client id beneath it, and both `token_issued` and `revoked` carry it, so the auth log reads in the
+operator's words.
+
+### The mutations found two of my own test defects
+
+The suite was green, and **two of its assertions did not test what they claimed.**
+
+**First: the acceptance criterion itself was wrong.** It read "the label survives the token exchange
+and every refresh — `Session.Clone` copies it, and the test goes red when that one line is removed."
+Removing the line left everything green. The reason is worth recording, because it contradicts the
+plan's mental model: at the authorize→token exchange the session is restored **from its stored
+JSON**, so `Clone` is not on that path at all. `Clone` carries the name only on the **refresh**
+grant, where fosite clones the loaded session in memory and persists the clone. The code comment
+now states that, measured rather than assumed.
+
+**Second: the refresh test could not see the difference.** It read the name through
+`ListClientGrants`, which aggregates every record of a grant — so the *first* token's record, which
+still had the name, answered for the refreshed one that had lost it. Both tests now look up the
+record of **that specific token** by its signature. With that fix the mutation behaves correctly:
+dropping the `Clone` line leaves the token exchange green and turns the refresh red.
+
+A third assertion had the same shape: "the name identifies the row" was checked with a loose
+`Contains`, which also matched the name in the per-authorization table below. Removing the row's
+rendering left it green. It now asserts the row's own markup and fails as it should.
+
+**Four mutations in total, each red after the fixes:** the `Clone` line, the label lift in
+`models.FromFositeReq`, the row rendering in the template, and the `label` field on the `revoked`
+event.
+
+### Decisions and deviations
+
+- **The label is set after `NewJWTSession`, not passed to it.** The constructor already takes four
+  parameters where §3 allows three; the value comes from the consent form, so the assignment belongs
+  at the call site rather than in a fifth parameter.
+- **`logRevoke` now takes a `revokeEvent` struct** instead of four parameters — the label would have
+  been a fifth. This removes a §3 violation that existed before this substep rather than growing it.
+- **`handleToken` was already past the 50-line limit** and would have grown to 59; the event context
+  moved into `tokenIssuedFields`, leaving the handler shorter than it was.
+- The label is deliberately **not a JWT claim**: only `JWTClaims` reaches the token, and the
+  operator's private note about a connection has no business travelling to the client.
+
+### Verification
+
+- 22 passing (sub)tests across `pkg/idp`, `pkg/repository` and `pkg/auth`, covering the flow, both
+  storage backends and the rendered page.
+- `gofmt -l` empty; `go vet` clean; `go test -race ./...` green across 11 packages;
+  `golangci-lint` 2.12.2 **0 issues**. No dependency change.
+
+**Noted for F-025b, not fixed here:** `pkg/auth/clients_test.go` reached 426 lines (§2 target 300,
+hard limit 500) and F-025b adds prefill tests to it — the split belongs there.
+`handleAuthorizationReturn` is at 71 lines, inside §3's orchestration exception, and the plan
+already earmarks its split for F-025b.
+
+**Files:** `pkg/idp/session.go`, `pkg/idp/consent.go`, `pkg/idp/token.go`, `pkg/models/models.go`,
+`pkg/repository/inventory.go`, `pkg/auth/clients.go`, `pkg/auth/templates/settings.html`; new
+`pkg/idp/label_test.go`; extended `pkg/repository/inventory_test.go`, `pkg/auth/clients_test.go`;
+docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`. No new endpoint, config, dependency or schema change.

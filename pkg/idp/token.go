@@ -57,11 +57,24 @@ func (a *IDPRouter) handleToken(c *gin.Context) {
 		}
 	}
 
-	authevent.Log(a.logger, authevent.TokenIssued,
-		zap.String("client_id", accessRequest.GetClient().GetID()),
-		zap.Strings("grant_types", accessRequest.GetGrantTypes()),
-		zap.String("client_ip", c.ClientIP()))
+	authevent.Log(a.logger, authevent.TokenIssued, tokenIssuedFields(c, accessRequest)...)
 	a.provider.WriteAccessResponse(ctx, c.Writer, accessRequest, response)
+}
+
+// tokenIssuedFields builds the SR-8 event context. The operator's name for the
+// connection rides the session, so the log reads in their words rather than in
+// client ids (F-025); it was sanitized where it entered and is omitted when the
+// connection was never named.
+func tokenIssuedFields(c *gin.Context, request fosite.AccessRequester) []zap.Field {
+	fields := []zap.Field{
+		zap.String("client_id", request.GetClient().GetID()),
+		zap.Strings("grant_types", request.GetGrantTypes()),
+		zap.String("client_ip", c.ClientIP()),
+	}
+	if sess, ok := request.GetSession().(*Session); ok && sess.Label != "" {
+		fields = append(fields, zap.String("label", sess.Label))
+	}
+	return fields
 }
 
 func (a *IDPRouter) handleIntrospect(c *gin.Context) {

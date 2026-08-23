@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"strings"
+	"unicode"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -24,6 +26,9 @@ type consentTemplateData struct {
 	// form and checked on the consent POST (SPEC §1.5/§1.12), defence-in-depth
 	// on top of the ar_id session binding.
 	CSRFToken string
+	// ConnectionName prefills the operator's name for this connection (F-025).
+	// Empty in F-025a; F-025b fills it from the name the client declares.
+	ConnectionName string
 	// LoopbackOnly marks a client whose every registered redirect URI points
 	// at this machine. A Client ID Metadata Document proves who published it,
 	// but not which local process is listening on the port — any program on
@@ -48,9 +53,39 @@ var consentTemplate = template.Must(template.New("consent").Parse(`<!doctype htm
 <dt>Redirect to</dt><dd>{{.RedirectURI}}</dd>
 <dt>Requested scopes</dt><dd>{{if .Scopes}}{{range .Scopes}}<code>{{.}}</code> {{end}}{{else}}(none){{end}}</dd>
 </dl>
-<form method="post"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">Authorize</button></form>
+<form method="post">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<p><label for="connection_name">Name for this connection (optional)</label><br>
+<input type="text" id="connection_name" name="connection_name" maxlength="64" value="{{.ConnectionName}}"></p>
+<button type="submit">Authorize</button>
+</form>
 </body>
 </html>`))
+
+// maxLabelLength bounds the operator's connection name. It is displayed on the
+// settings page and repeated in the auth log, so it is capped where it enters
+// rather than at each place that renders it.
+const maxLabelLength = 64
+
+// sanitizeLabel trims the submitted name, drops control characters and caps the
+// length. `html/template` escapes on output, but a control character would
+// still travel into the structured log, where escaping is not the renderer's
+// job — so the value is cleaned once, at the only place that writes it.
+func sanitizeLabel(raw string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, raw)
+	cleaned = strings.TrimSpace(cleaned)
+
+	runes := []rune(cleaned)
+	if len(runes) > maxLabelLength {
+		cleaned = strings.TrimSpace(string(runes[:maxLabelLength]))
+	}
+	return cleaned
+}
 
 func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
 	arID := c.Param("ar_id")
@@ -144,6 +179,13 @@ func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 		a.writeAuthorizeError(ctx, c.Writer, ar, err)
 		return
 	}
+
+	// The operator's name for this connection rides the session, so it is
+	// stored with every record of the grant and deleted with it (F-025). Set
+	// here rather than passed to NewJWTSession: the value comes from this
+	// form, and the constructor already carries as many parameters as §3
+	// allows.
+	jwtSession.Label = sanitizeLabel(c.PostForm("connection_name"))
 
 	response, err := a.provider.NewAuthorizeResponse(ctx, ar, jwtSession)
 	if err != nil {

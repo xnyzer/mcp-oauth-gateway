@@ -11,11 +11,12 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned.** Every roadmap task F-001–F-024 is done — **F-024** added the operator's client
-list with its kill switch, live-verified on 2026-08-23 (a revoke reached the real client in **44
-seconds**, against a one-hour token TTL). **F-025** is planned and ready to build: a name for each
-connection, taken at consent time, which also closes a `SPEC.md` §1.5 identity requirement unmet
-since it was written. Two entries wait in the backlog, both needing `/prep-step` first:
+**One task in flight.** Every roadmap task F-001–F-024 is done — **F-024** added the operator's
+client list with its kill switch, live-verified on 2026-08-23 (a revoke reached the real client in
+**44 seconds**, against a one-hour token TTL). **F-025** is half built: a connection can be **named
+at consent time** (F-025a), and the name shows in that list. Open is **F-025b**, the prefill from
+the name the client declares — which also closes a `SPEC.md` §1.5 identity requirement unmet since
+it was written. Two entries wait in the backlog, both needing `/prep-step` first:
 **F-022** (six files past the §2 hard limit — `pkg/auth/auth.go` reached 558 through F-024), wanted
 **before the next release**, and **F-026** (fold `REQUIREMENTS.md` into `SPEC.md` and strip the
 implementation history that buried a MUST for seven weeks).
@@ -84,6 +85,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-024b | The settings surface and its wiring → `/.auth/settings` gained **Connected clients**: one row per client with its authorizations behind a `<details>`, actions per client and per grant, and the panic button behind a **server-rendered two-step** confirmation (no JS). Behind the page's existing gates; `authevent.Revoked` now carries an operator kill beside the client-initiated RFC 7009 ones. **A mutation caught a security test passing for the wrong reason** — a bare `&http.Client{}` followed the handler's redirect and scored the settings page's own 403, so the own-user gate could have been deleted unnoticed; fixed and re-proven. `Config.Clients` is **required** when `Users` is set rather than nil-checked, so no second visibility rule appears. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-024c | Verify against the running binary, then document → the substep no test suite could stand in for: `e2e_harness_test.go` builds its own router, so the wiring was proven against a **local binary** (full OAuth+PKCE flow, real token, revoke, immediate `401`) and then against the **live deployment** with the operator's own Claude connector. The measurement that matters: **44 seconds** from revoke to the client's `401`, against an `ACCESS_TOKEN_TTL` of one hour. Live-only findings: rotation history aggregated on real data (`1 access / 6 refresh` as one row), and a leftover DCR registration showing with `0 authorizations`. The operator asked what the two revoke buttons differ in — a fair question, so they were relabelled **Revoke client** / **Revoke this authorization** and pinned by a test. One acceptance criterion of mine was overstated and got corrected in the spec, not glossed over. F-017d's manual store-editing procedure is **gone** from the runbook. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-024 | **Operator view of connected clients, with a kill switch — complete** (a/b/c). The gateway can now show who holds access and take it away; `/.idp/revoke` never could, being client-authenticated. Built from **token records, not registrations**, because a CIMD client has no stored registration — the obvious implementation would have missed exactly the clients that matter, and the live run confirmed it. Per client and per authorization, **never per device**, and a revoke bans nobody. Three mutations were run against the finished code; one caught a security test **passing for the wrong reason**. Retires the manual bbolt procedure F-017d had to write. Spawned **F-025**. Not yet released. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
+| F-025a | The label, end to end → a connection can be **named at consent time**; the name rides the gateway's own session, so it is server-set (no client can plant one), written with every token record, and deleted with the authorization — **no new entity, no cleanup path**. Sanitized once where it enters (control characters, 64 runes), shown as the row's primary identifier, and carried into `token_issued` and `revoked`. **Mutation testing found two of my own defective assertions:** the acceptance criterion claimed `Session.Clone` carries the label through the token exchange — it does not, the session is restored from stored JSON there, and `Clone` matters **only on refresh**; and the refresh test read an aggregate, so an older record answered for the newer one that had lost the name. Both fixed, then four mutations verified red. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 
 ---
 
@@ -125,25 +127,6 @@ appears. Everything already on the consent page stays exactly as it is.
 - **Renaming later is out of scope**: re-authorizing asks again, and the field is right there.
 
 **Dependencies:** F-024 (done) — its list is where the name pays off.
-
-#### F-025a — The label, end to end
-
-**What:** `idp.Session` gains `Label`; `models.Request` gains it too, filled in `FromFositeReq` when
-the session offers it. The consent page gains the text field and the approval POST stores the value,
-capped at 64 characters with control characters stripped. F-024's client list shows it as the row's
-primary identifier with the `client_id` beneath, and the auth events carry it.
-
-**Files:** `pkg/idp/session.go`, `pkg/idp/consent.go`, `pkg/models/models.go`,
-`pkg/repository/inventory.go`, `pkg/auth/clients.go`, `pkg/auth/templates/settings.html`, plus tests
-
-**Acceptance:**
-- [ ] The label survives the token exchange **and every refresh** — `Session.Clone` copies it, and
-      the test goes red when that one line is removed
-- [ ] It appears in the client list as the row's primary identifier, `client_id` still visible
-- [ ] It vanishes with the authorization when that is revoked — no separate cleanup path exists
-- [ ] Over-long input is capped and control characters stripped, in the store and in the log alike
-- [ ] `token_issued` and `revoked` carry it
-- [ ] `gofmt -l .` empty, `go vet ./...` clean, `go test -race ./...` and `golangci-lint` green
 
 #### F-025b — The prefill, and the documentation
 

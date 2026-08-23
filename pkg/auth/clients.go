@@ -22,7 +22,9 @@ import (
 
 // grantView is one authorization as the settings page shows it.
 type grantView struct {
-	RequestID     string
+	RequestID string
+	// Label is the operator's name for this authorization (F-025).
+	Label         string
 	RequestedAt   time.Time
 	LastActivity  time.Time
 	Scopes        []string
@@ -35,6 +37,10 @@ type grantView struct {
 // type has nowhere to put it, so no later template change can leak one.
 type clientView struct {
 	ClientID string
+	// Label is the operator's name for the connection, taken at consent time
+	// (F-025). Empty for a client authorized before the field existed, or for
+	// one the operator chose not to name.
+	Label string
 	// IsCIMD marks a client identified by a metadata document URL. It decides
 	// the wording rather than the layout: a CIMD client keeps no registration,
 	// so revoking destroys its tokens and it may return through a fresh
@@ -69,6 +75,7 @@ func (a *AuthRouter) clientViews(ctx context.Context) ([]clientView, error) {
 	for _, row := range rows {
 		views = append(views, clientView{
 			ClientID:      row.ClientID,
+			Label:         row.Label,
 			IsCIMD:        row.Origin == repository.OriginCIMD,
 			Registered:    row.Registered,
 			ExpiresAt:     row.ExpiresAt,
@@ -89,6 +96,7 @@ func grantViews(grants []repository.Grant) []grantView {
 	for _, grant := range grants {
 		views = append(views, grantView{
 			RequestID:     grant.RequestID,
+			Label:         grant.Label,
 			RequestedAt:   grant.RequestedAt,
 			LastActivity:  grant.LastActivity,
 			Scopes:        grant.Scopes,
@@ -137,13 +145,15 @@ func (a *AuthRouter) handleSettingsClientRevoke(c *gin.Context) {
 		c.Redirect(http.StatusFound, SettingsEndpoint)
 		return
 	}
+	// Read the name before the records go, since that is where it lives.
+	label := a.labelOf(c.Request.Context(), clientID, "")
 	deleted, err := a.clients.RevokeClient(c.Request.Context(), clientID)
 	if err != nil {
 		a.logger.Error("Failed to revoke client", zap.Error(err))
 		c.Redirect(http.StatusFound, SettingsEndpoint+"?msg=revoke_failed")
 		return
 	}
-	a.logRevoke(c, "client", clientID, deleted)
+	a.logRevoke(c, revokeEvent{scope: "client", subject: clientID, label: label, records: deleted})
 	// The same answer whether or not the client existed: the operator's own
 	// page gains nothing from an existence oracle, and a mistyped ID should
 	// not read differently from a successful kill.
@@ -161,13 +171,14 @@ func (a *AuthRouter) handleSettingsGrantRevoke(c *gin.Context) {
 		c.Redirect(http.StatusFound, SettingsEndpoint)
 		return
 	}
+	label := a.labelOf(c.Request.Context(), "", requestID)
 	deleted, err := a.clients.RevokeGrant(c.Request.Context(), requestID)
 	if err != nil {
 		a.logger.Error("Failed to revoke grant", zap.Error(err))
 		c.Redirect(http.StatusFound, SettingsEndpoint+"?msg=revoke_failed")
 		return
 	}
-	a.logRevoke(c, "grant", requestID, deleted)
+	a.logRevoke(c, revokeEvent{scope: "grant", subject: requestID, label: label, records: deleted})
 	c.Redirect(http.StatusFound, SettingsEndpoint+"?msg=revoked")
 }
 
@@ -190,22 +201,62 @@ func (a *AuthRouter) handleSettingsRevokeAll(c *gin.Context) {
 		c.Redirect(http.StatusFound, SettingsEndpoint+"?msg=revoke_failed")
 		return
 	}
-	a.logRevoke(c, "all", "", deleted)
+	a.logRevoke(c, revokeEvent{scope: "all", records: deleted})
 	c.Redirect(http.StatusFound, SettingsEndpoint+"?msg=revoked_all")
+}
+
+// revokeEvent is what the auth log records about one operator revocation.
+// A struct rather than four parameters (§3), which also makes the optional
+// fields optional at the call site.
+type revokeEvent struct {
+	// scope is "client", "grant" or "all".
+	scope string
+	// subject is the client or request ID the revoke named; empty for "all".
+	subject string
+	// label is the operator's own name for the connection (F-025), when it
+	// has one.
+	label   string
+	records int
 }
 
 // logRevoke emits the SR-8 auth event, so an operator kill is visible in the
 // log next to the client-initiated RFC 7009 revocations that share its name.
-// Only non-secret context travels: a client or request ID, never a token.
-func (a *AuthRouter) logRevoke(c *gin.Context, scope, subject string, records int) {
+// Only non-secret context travels: a client or request ID and the operator's
+// own label, never a token.
+func (a *AuthRouter) logRevoke(c *gin.Context, event revokeEvent) {
 	fields := []zap.Field{
 		zap.String("actor", "operator"),
-		zap.String("scope", scope),
-		zap.Int("records", records),
+		zap.String("scope", event.scope),
+		zap.Int("records", event.records),
 		zap.String("client_ip", c.ClientIP()),
 	}
-	if subject != "" {
-		fields = append(fields, zap.String("subject", subject))
+	if event.subject != "" {
+		fields = append(fields, zap.String("subject", event.subject))
+	}
+	if event.label != "" {
+		fields = append(fields, zap.String("label", event.label))
 	}
 	authevent.Log(a.logger, authevent.Revoked, fields...)
+}
+
+// labelOf resolves the operator's name for a client or a grant so the auth
+// event can carry it. Best-effort by design: a revoke must never fail because
+// a display name could not be read, so an error yields no label rather than an
+// aborted kill.
+func (a *AuthRouter) labelOf(ctx context.Context, clientID, requestID string) string {
+	rows, err := a.clients.ListClientGrants(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, row := range rows {
+		if clientID != "" && row.ClientID == clientID {
+			return row.Label
+		}
+		for _, grant := range row.Grants {
+			if requestID != "" && grant.RequestID == requestID {
+				return grant.Label
+			}
+		}
+	}
+	return ""
 }

@@ -165,7 +165,12 @@
         {{range .Clients}}
         <tr>
           <td>
+            {{if .Label}}
+            <div><strong>{{.Label}}</strong></div>
+            <div class="client-id muted small">{{.ClientID}}</div>
+            {{else}}
             <div class="client-id">{{.ClientID}}</div>
+            {{end}}
             <div class="muted small">
               {{if .IsCIMD}}metadata document{{else}}dynamic registration{{end}}{{if
               .RedirectHosts}} · redirects to {{range $i, $host :=
@@ -208,6 +213,7 @@
               </div>
               <table class="grants">
                 <tr>
+                  <th>Name</th>
                   <th>Authorized</th>
                   <th>Last active</th>
                   <th>Scopes</th>
@@ -215,6 +221,9 @@
                 </tr>
                 {{range .Grants}}
                 <tr>
+                  <td>
+                    {{if .Label}}{{.Label}}{{else}}<span class="muted">unnamed</span>{{end}}
+                  </td>
                   <td>{{.RequestedAt.Format "2006-01-02 15:04"}}</td>
                   <td>{{.LastActivity.Format "2006-01-02 15:04"}}</td>
                   <td>

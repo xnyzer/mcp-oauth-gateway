@@ -30,7 +30,11 @@ const (
 // carries in its client snapshot stays in the store.
 type ClientGrants struct {
 	ClientID string
-	Origin   ClientOrigin
+	// Label is the operator's name for the connection, taken at consent time
+	// (F-025) — the newest authorization's name when several disagree, since
+	// that is the one the operator typed last.
+	Label  string
+	Origin ClientOrigin
 	// Registered reports whether a DCR registration is stored. A CIMD client
 	// never has one, and an expired DCR registration can still have live
 	// tokens — the access check is record presence, not the registration
@@ -59,7 +63,9 @@ type ClientGrants struct {
 // Grant is one authorization a client holds — what the operator revokes when
 // they want to cut one authorization rather than the client itself.
 type Grant struct {
-	RequestID   string
+	RequestID string
+	// Label is the operator's name for this authorization (F-025).
+	Label       string
 	RequestedAt time.Time
 	// LastActivity is the newest timestamp on the grant's records: the
 	// request time, or the rotation time where a refresh token was rotated.
@@ -138,6 +144,7 @@ func (i *inventory) addToken(kind tokenKind, req *models.Request) {
 	for _, scope := range grantedScopes(req) {
 		acc.scopes[scope] = struct{}{}
 	}
+	acc.nameGrant(grant, req)
 	acc.count(kind, grant)
 	acc.recordActivity(grant, req)
 }
@@ -167,6 +174,14 @@ func (acc *clientAccumulator) grantFor(req *models.Request) *Grant {
 		grant.RequestedAt = req.RequestedAt
 	}
 	return grant
+}
+
+// nameGrant records the operator's name for the grant. Every record of one
+// grant carries the same name, so the first non-empty one settles it.
+func (acc *clientAccumulator) nameGrant(grant *Grant, req *models.Request) {
+	if grant.Label == "" && req.Label != "" {
+		grant.Label = req.Label
+	}
 }
 
 // count adds one record of the kind to the grant and to the row.
@@ -227,6 +242,14 @@ func (i *inventory) rows(now time.Time) []ClientGrants {
 		row := acc.row
 		row.Grants = sortedGrants(acc.grants)
 		row.Scopes = sortedKeys(acc.scopes)
+		// Grants are newest first, so the row's name is the one the operator
+		// typed most recently — a re-authorization renames the connection.
+		for _, grant := range row.Grants {
+			if grant.Label != "" {
+				row.Label = grant.Label
+				break
+			}
+		}
 		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(a, b int) bool {

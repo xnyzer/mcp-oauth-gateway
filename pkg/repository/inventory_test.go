@@ -119,6 +119,23 @@ func rowFor(rows []ClientGrants, clientID string) (ClientGrants, bool) {
 	return ClientGrants{}, false
 }
 
+// labeledSession is a session carrying the operator's name for its grant, the
+// way pkg/idp's real session does. models.FromFositeReq lifts the name onto the
+// stored request through the models.Labeled interface.
+type labeledSession struct {
+	*fosite.DefaultSession
+	label string
+}
+
+func (s *labeledSession) GetLabel() string { return s.label }
+
+func writeNamedGrant(t *testing.T, ctx context.Context, repo Repository, clientID, requestID, label string, at time.Time) {
+	t.Helper()
+	req := grantRequest(requestID, clientID, at)
+	req.SetSession(&labeledSession{DefaultSession: &fosite.DefaultSession{}, label: label})
+	require.NoError(t, repo.CreateAccessTokenSession(ctx, requestID+"-access", req))
+}
+
 // -- Listing ------------------------------------------------------------
 
 // A CIMD client has no stored registration at all — it is re-resolved from its
@@ -150,6 +167,54 @@ func TestListClientGrantsFindsCIMDClientWithoutRegistration(t *testing.T) {
 // Rotation leaves one refresh-token record per rotation. F-017d found 58 for a
 // single client, so the listing has to aggregate rather than show a row per
 // record.
+// The operator's name (F-025) rides the grant's session, so the listing must
+// surface it per grant and per row without a separate store.
+func TestListClientGrantsCarriesTheOperatorsName(t *testing.T) {
+	for name, repo := range testRepos(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			older := time.Now().UTC().Add(-time.Hour)
+			writeNamedGrant(t, ctx, repo, cimdClientID, "older-grant", "Claude web", older)
+			writeNamedGrant(t, ctx, repo, cimdClientID, "newer-grant", "Claude iOS", time.Now().UTC())
+
+			rows, err := repo.ListClientGrants(ctx)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.Len(t, rows[0].Grants, 2)
+
+			// Grants come newest first, and the row takes that one's name:
+			// re-authorizing renames the connection.
+			require.Equal(t, "Claude iOS", rows[0].Grants[0].Label)
+			require.Equal(t, "Claude web", rows[0].Grants[1].Label)
+			require.Equal(t, "Claude iOS", rows[0].Label)
+		})
+	}
+}
+
+// The name has no store of its own, so revoking the authorization takes it —
+// there is no cleanup path to forget.
+func TestRevokeTakesTheOperatorsNameWithIt(t *testing.T) {
+	for name, repo := range testRepos(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			writeNamedGrant(t, ctx, repo, cimdClientID, "grant", "Claude web", time.Now().UTC())
+			require.Equal(t, "Claude web", func() string {
+				rows, err := repo.ListClientGrants(ctx)
+				require.NoError(t, err)
+				require.Len(t, rows, 1)
+				return rows[0].Label
+			}())
+
+			_, err := repo.RevokeClient(ctx, cimdClientID)
+			require.NoError(t, err)
+
+			rows, err := repo.ListClientGrants(ctx)
+			require.NoError(t, err)
+			require.Empty(t, rows, "the name goes with the records that carried it")
+		})
+	}
+}
+
 func TestListClientGrantsAggregatesRotationHistory(t *testing.T) {
 	const rotations = 58
 	for name, repo := range testRepos(t) {

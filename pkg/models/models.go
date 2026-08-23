@@ -19,6 +19,17 @@ type Request struct {
 	GrantedAudience   []string
 	RotatedAt         time.Time
 	SessionData       json.RawMessage `json:",omitempty"`
+	// Label is the operator's name for the authorization (F-025), lifted out
+	// of the session so the store and the operator's client list can read it
+	// without decoding SessionData. The session stays the source of truth.
+	Label string `json:",omitempty"`
+}
+
+// Labeled is implemented by a session that carries the operator's name for its
+// authorization. Kept as an interface so this package does not depend on the
+// idp package that defines the session type.
+type Labeled interface {
+	GetLabel() string
 }
 
 type Client struct {
@@ -89,6 +100,9 @@ func FromFositeReq(reqester fosite.Requester) *Request {
 	if sess := req.GetSession(); sess != nil {
 		if data, err := json.Marshal(sess); err == nil {
 			r.SessionData = data
+		}
+		if labeled, ok := sess.(Labeled); ok {
+			r.Label = labeled.GetLabel()
 		}
 	}
 	return r
