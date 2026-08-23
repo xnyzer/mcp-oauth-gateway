@@ -3308,3 +3308,59 @@ than silently built.
 `pkg/repository/sql_clients.go` (new), `pkg/repository/sql_users.go` (new), `pkg/auth/auth.go`,
 `pkg/auth/routes.go` (new), `pkg/auth/login.go` (new), `pkg/auth/render.go` (new). No test file was
 touched, which is what makes the green suite evidence rather than decoration.
+
+
+---
+
+## F-022b — The CLI surface — DONE 2026-08-24
+
+**What:** `main.go` (env helpers vs. the three Cobra commands) and `main_test.go` (parsing tests vs.
+command tests) are one surface and get one cut, so the test layout mirrors the production layout.
+
+**Files:** `main.go`, `main_test.go` → `env.go`/`env_test.go` + command files
+
+**Acceptance:**
+- [x] Both files ≤ 500 lines
+- [x] Identical declaration sets and body-line counts
+- [x] **`go test -list '.*'` returns the identical test set** before/after
+
+### What was actually done
+
+`main.go` (568) and `main_test.go` (776) were cut together into **five pairs**, each production file
+carrying a test file of the same name:
+
+| Production | Lines | Test | Lines | Holds |
+|---|---|---|---|---|
+| `main.go` | 248 | `main_test.go` | 204 | `main`, `newRootCommand`, flag wiring |
+| `env.go` | 73 | `env_test.go` | 154 | the five `getEnv*WithDefault` readers |
+| `parse.go` | 106 | `parse_test.go` | 260 | `splitCSV`, `splitWithEscapes`, attribute and header mapping |
+| `healthcheck.go` | 73 | `healthcheck_test.go` | 88 | the `healthcheck` command, `probeHealth`, `healthURL` |
+| `rotatekey.go` | 96 | `rotatekey_test.go` | 96 | the `rotate-key` command and its options |
+
+**Deviation from the plan: five pairs instead of the planned two or three files.** The plan said
+"env helpers vs. the three Cobra commands". Reading environment variables and splitting strings are
+different jobs, and separating them is what keeps `parse_test.go` at 260 lines instead of ~415 —
+otherwise one file would have stayed above the 300-line target while still satisfying the ≤ 500
+criterion. The exact mirroring is the second reason: five names, five twins, so the test for a
+function is always in the file named after the file that holds it.
+
+**All three invariants held, each compared rather than asserted:** the AST declaration set including
+body-line counts (**94 declarations**, unchanged), `go test -list '.*'` (**29 tests**, identical
+set), and the line multiset (**0 lost, 0 gained** for both files). The multiset check earns its
+place here more than in F-022a: this substep *does* touch test files, so a green suite no longer
+proves on its own that nothing was dropped.
+
+**One check specific to splitting a Go file by name.** A file whose name ends in something Go reads
+as a build constraint is silently excluded from the build rather than rejected. `go list` confirms
+all five production files land in `GoFiles`, all five test files in `TestGoFiles`, and
+`IgnoredGoFiles` is empty.
+
+**Two pre-existing test fixtures tripped the secrets scan and were deliberately left alone:**
+`user@domain.com` (a placeholder in a string-splitting table) and `10.0.0.5:8080` (an example of a
+wildcard listen address in `healthURL`'s doc comment). Both are in `HEAD` unchanged — generic
+examples, not deployment internals or a real address. Rewriting them would have broken the pure
+move for no gain; if the project ever wants RFC 5737 placeholders throughout, that is its own task.
+
+**Files:** `main.go`, `main_test.go`, `env.go` (new), `env_test.go` (new), `parse.go` (new),
+`parse_test.go` (new), `healthcheck.go` (new), `healthcheck_test.go` (new), `rotatekey.go` (new),
+`rotatekey_test.go` (new).

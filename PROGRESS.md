@@ -94,6 +94,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-026 | **Dissolve `REQUIREMENTS.md` into SPEC, and strip the history out of SPEC — complete** (a/b/c). One document for rules, one for finished work, one for open work. The register is now `SPEC.md` §5 (appended — **no §0–§4 heading renumbered**, because 251 code references point there); the 15 Delta paragraphs and 108 F-number lines are gone, and the contract text is **645 lines instead of 763** while carrying the register. **The plan's own safety net was too weak, and the mutation proved it:** built to the specified prefix rule, renaming `§1.11` to `§1.14` left the suite green — every `1.x` resolves while §1 exists. The guard now counts the parent's list items; seven mutations verified red. **Four contract statements existed only inside a Delta** (`exp` MUST be present, the 4 MiB redirect-replay cap, the post-login redirect normalisation, the SQLite pragmas) and were lifted out before deleting; an audit confirmed 28/28 removed statements survive. **One plan decision reversed on evidence:** two "duplicated" NFR lines are *cited* from §2.2/§3.3, so deleting them would have aimed two pointers at nothing. Spawned **F-027**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-027 | **Retire the local skills and finish the documentation architecture — complete.** Came out of the operator's review of F-026, not from `/add-feature`. The four skills in `.claude/skills/` are dead — the workflow runs on the coding-kit plugin — so F-026b had politely *edited* files that should have been deleted; six documents pointed at them. `SPEC.md` is a **rules** document, measured (**325 code citations against 46 from docs**), and now says so in its own header: §3's option tables were a total duplicate of README (**−33 % characters**) and §4 was a verification record, moved to `docs/MCP-CONFORMANCE.md` behind a stub so append-only references keep resolving. **The tidy-up audit found five real faults, not zero:** a dead unlinked `docs/README.md`, `CLAUDE.md` two releases stale at `v0.1.0`, three live pointers at the moved §4, three competing document indexes, and a README index naming neither `CODING-STANDARDS.md` nor `CONTRIBUTING.md`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-23 |
 | F-022a | Persistence and auth glue split → `pkg/repository/sql.go` (712) into four files along its entity seams and `pkg/auth/auth.go` (558) into four along its concerns; **largest new file 275 lines**, under the 300-line target rather than merely under the 500 limit. Cut by script — whole declaration segments including their doc comments — because hand-editing 730 lines of seams is where a "pure move" quietly stops being one. **Proven, not asserted:** an AST parser reports the declaration set and per-declaration body-line counts identical (215 in `pkg/repository`, 197 in `pkg/auth`), and a line multiset shows **0 lost, 0 gained** — a check beyond the plan, because the declaration invariant cannot see a comment stranded between the imports and the first declaration. No test file touched, so the green suite is evidence. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
+| F-022b | CLI surface split → `main.go` (568) and `main_test.go` (776) cut **together** into five pairs, each production file with a test file of the same name; largest is 260 lines. Deviated from the plan's two-or-three files: separating environment reading from string parsing is what keeps every file under the 300-line target rather than merely under the 500 limit, and it makes the mirroring exact. **Three invariants compared, not asserted:** 94 AST declarations with identical body-line counts, `go test -list` identical at 29 tests, line multiset 0 lost / 0 gained — the last one matters more here than in F-022a, because this substep touches test files, so a green suite alone no longer proves nothing fell out. Also verified that no file name accidentally reads as a build constraint (`IgnoredGoFiles` empty). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 
 ---
 
@@ -113,9 +114,9 @@ straight into this — its new tests could not go into `pkg/proxy/proxy_test.go`
 |---|---|---|---|
 | `pkg/proxy/proxy_test.go` | 1035 | tests | F-022c |
 | `pkg/mcp-proxy/main.go` | 949 | production — assembly and config wiring | F-022d/e |
-| `main_test.go` | 776 | tests | F-022b |
+| `main_test.go` | 776 | tests | **done (F-022b)** |
 | `pkg/repository/sql.go` | 712 | production — SQL persistence | **done (F-022a)** |
-| `main.go` | 568 | production — CLI surface | F-022b |
+| `main.go` | 568 | production — CLI surface | **done (F-022b)** |
 | `pkg/auth/auth.go` | 558 | production — password/session/WebAuthn glue | **done (F-022a)** |
 
 Same origin as F-020's two files: they came over with the F-008 fork and grew through F-005 and
@@ -155,25 +156,13 @@ that also changed.
   afterwards for package symmetry — as its own task, not here.
 
 **Substeps** — the pure moves first, so the invariant harness is established before the one change
-it cannot prove. **F-022a is done**; four files remain past the hard limit.
+it cannot prove. **F-022a and F-022b are done**; two files remain past the hard limit.
 
 The verification harness F-022a established, to be reused by b and c: an AST parser prints
 `kind name bodyLines` per top-level declaration for the whole package (tests included) — identical
 before and after proves the declarations moved intact — plus a **line multiset** comparison, which
 catches what the declaration invariant cannot: a comment stranded between the import block and the
 first declaration would vanish without any declaration changing.
-
-#### F-022b — The CLI surface
-
-**What:** `main.go` (env helpers vs. the three Cobra commands) and `main_test.go` (parsing tests vs.
-command tests) are one surface and get one cut, so the test layout mirrors the production layout.
-
-**Files:** `main.go`, `main_test.go` → `env.go`/`env_test.go` + command files
-
-**Acceptance:**
-- [ ] Both files ≤ 500 lines
-- [ ] Identical declaration sets and body-line counts
-- [ ] **`go test -list '.*'` returns the identical test set** before/after
 
 #### F-022c — The proxy test file
 
