@@ -136,18 +136,33 @@ that also changed.
   below `Run` (~83 lines) — still leaves ~690 lines around one 650-line function. The file cannot
   reach the limit by relocation; `Run` has to be decomposed, which is restructuring, not moving.
 - **The invariant proof does not transfer to `Run`.** F-020's method rests on identical declaration
-  sets and identical body-line counts, which only prove anything while nothing changes. Worse,
-  measured: `Run` has **35.0 % statement coverage**, it is called from exactly one place
-  (`main.go:189`), and the e2e suite does **not** exercise it — `e2e_harness_test.go` says so
-  itself ("builds the gateway exactly as `Run()` mounts it"), i.e. it is a parallel implementation.
-  This is the same gap F-021 found. The proof there has to be the running binary, including the
-  fail-fast paths (no auth backend, both registration mechanisms disabled, malformed values) that
-  live in `Run` and that no test covers today.
-- **Splitting `Run` is therefore two substeps, not one**, cut at the seam its own phases already
-  form: configuration and dependencies (218–485) against wiring and server lifecycle (486–866).
-- **A by-product worth having:** once the wiring phase is a named function, `e2e_harness_test.go`
-  can call it instead of rebuilding it, which retires the parallel implementation F-021 flagged.
-  Not a goal of this task, but the reason to prefer this cut over an arbitrary one.
+  sets and identical body-line counts, which only prove anything while nothing changes. `Run` is
+  called from exactly one place (`main.go:189`) and the e2e suite does **not** exercise it —
+  `e2e_harness_test.go` says so itself ("builds the gateway exactly as `Run()` mounts it"), i.e. it
+  is a parallel implementation. This is the same gap F-021 found, so the proof for the wiring has
+  to be the running binary.
+- **Correction, re-planned 2026-08-24: the fail-fast paths are *not* untested.** The first plan
+  claimed they were and made "tests for the paths that had none" the point of F-022d. Measured
+  instead of inferred: `TestRun_ValidatesTTLs` (11 cases), `TestRun_RequiresAuthBackend` and
+  `TestRun_NormalizesTrustedProxies` already cover three of the four, all through `Run` itself.
+  Exactly one branch is genuinely uncovered — **both CIMD and DCR disabled**, `main.go:167.41,169.3`
+  with execution count 0, and no test sets both flags to `false`. Two of the checks do not even sit
+  in `Run`'s body but in `validateTTLs`, which is already extracted. The claim came from reading
+  `Run`'s **35.0 % statement coverage** as if it described its branches: the figure is low because
+  the tests return at the fail-fast and never reach the ~500 lines of router construction and server
+  start — the fail-fast paths are the part that *is* covered. `CODING-STANDARDS.md` §9 lists that
+  trap first: "Reading an aggregate where one record was meant."
+- **Splitting `Run` is still two substeps, not one** — that decision rested on size and risk, which
+  are unchanged — cut at the seam its own phases already form: configuration and dependencies
+  (218–485) against wiring and server lifecycle (486–861).
+- **The real testing gain is retiring the parallel implementation, and it has already drifted.**
+  `newE2EGateway` (76 lines) rebuilds what `Run` mounts, and a helper beside it says it "mirrors
+  Run's construction". The two have diverged where it matters: `Run` builds the operator session
+  cookie with HKDF-derived subkeys so it is signed **and** encrypted and sets `HttpOnly`, `Secure`,
+  `SameSite=Lax` and `MaxAge 600`; the harness calls `cookie.NewStore(secret[:])` and never calls
+  `store.Options` at all. The e2e suite therefore cannot catch a regression in any of those §1.12
+  properties. Once the wiring is a named function the harness can call it, which closes this by
+  construction rather than by vigilance.
 - **§3 violations stay out of scope.** `handleRegister` (109 lines), `newRootCommand` (232) and
   `handleProxy` (118) are function-length problems, not file-length ones. `Run` is the sole
   exception, because §2 is unreachable there without §3.
@@ -169,36 +184,49 @@ first declaration would vanish without any declaration changing.
 #### F-022d — `Run`, part 1: configuration and dependencies
 
 **What:** Extract phases 1–4 of `Run` (lines 218–485) into named functions that take configuration
-and return values: issuer normalisation and TTL/proxy validation, data directory + logger,
-repository open and schema check, key manager, abuse-protection limiters and the expiry sweeper.
-Because each becomes a function with inputs and a returned error, **the fail-fast paths become unit
-testable for the first time** — that is the point, not the line count.
+and return values: issuer normalisation, TTL and proxy validation, data directory and logger,
+repository open plus schema check, key manager, abuse-protection limiters and the expiry sweeper.
+New files follow the package's existing concern-file convention (`cookie.go`, `origin.go`).
 
-**Files:** `pkg/mcp-proxy/main.go`, plus new files in `pkg/mcp-proxy/`; new `*_test.go`
+**Files:** `pkg/mcp-proxy/main.go`, new `pkg/mcp-proxy/config.go` and `pkg/mcp-proxy/deps.go`,
+new/extended `pkg/mcp-proxy/*_test.go`
 
 **Acceptance:**
-- [ ] `Run` no longer performs any of the extracted work directly
-- [ ] New tests cover the fail-fast paths that had none: missing auth backend, both CIMD and DCR
-      disabled, malformed TTL, invalid `TRUSTED_PROXIES` entry
-- [ ] Coverage of `pkg/mcp-proxy` rises from its current **46.9 %** — recorded, not estimated
+- [ ] `Run` no longer performs configuration normalisation, validation, data-directory, logger,
+      repository, key-manager, limiter or sweeper setup inline
+- [ ] The one genuinely uncovered fail-fast branch gets a test: **CIMD and DCR both disabled**
+      (`main.go:167.41,169.3`, execution count 0 today)
+- [ ] The 13 existing `Run`-level fail-fast cases stay green **unchanged** — they are the
+      regression net for this refactor, not something to be replaced by finer tests
+- [ ] Coverage of `pkg/mcp-proxy` **recorded before and after** (46.9 % today). No target number is
+      promised: most uncovered statements are the router and server code that F-022e moves, so a
+      large rise here would be surprising rather than good
 - [ ] `go test -race ./...` green
 
 #### F-022e — `Run`, part 2: wiring and lifecycle
 
-**What:** Extract phases 5–7 (lines 486–866): auth/IDP/proxy router construction, the gin assembly
+**What:** Extract phases 5–7 (lines 486–861): auth/IDP/proxy router construction, the gin assembly
 (trusted proxies, `/healthz`, logging, origin check, session store) and the server lifecycle
-(listeners, TLS/ACME, shutdown). `Run` ends up a readable sequence of named steps.
+(listeners, TLS/ACME, shutdown). The extraction must yield a function that builds and returns the
+`*gin.Engine` **without** starting a listener — otherwise `e2e_harness_test.go`, which needs
+`httptest`, still cannot call it. That is the design decision of this substep.
 
-**Files:** `pkg/mcp-proxy/main.go`, plus new files in `pkg/mcp-proxy/`
+**Files:** `pkg/mcp-proxy/main.go`, new `pkg/mcp-proxy/router.go` and `pkg/mcp-proxy/server.go`,
+`e2e_harness_test.go`
 
 **Acceptance:**
 - [ ] `pkg/mcp-proxy/main.go` ≤ 500 lines and `Run` within the §3 orchestration exception (~80)
-- [ ] **Verified against the running binary**, not only the suite: the gateway starts against the
-      deployment configuration, serves discovery, completes a login, and each fail-fast path still
-      aborts startup with its message
+- [ ] `e2e_harness_test.go` calls the extracted wiring instead of rebuilding it — **or** the reason
+      it cannot is recorded in the step-done entry, in which case the drift below is raised as its
+      own task rather than left implicit
+- [ ] The known divergence is closed or explicitly recorded: the harness builds the session cookie
+      with `cookie.NewStore(secret[:])` and never calls `store.Options`, so it runs without
+      encryption, `HttpOnly`, `Secure` or `SameSite` — unlike `Run`
+- [ ] **Verified against the running binary**, not only the suite: the gateway starts against a
+      deployment-like configuration, serves the three discovery documents, and answers `/mcp`
+      without a token with `401` plus the `WWW-Authenticate` challenge
+- [ ] Each fail-fast path still aborts startup with its message, checked against the built binary
 - [ ] `go test -race ./...` green
-- [ ] Recorded either way: whether `e2e_harness_test.go` can now call the wiring function instead
-      of rebuilding it, or why not
 
 **Dependencies:** none — but like F-020 it must not land between F-017's verification and the v0.2.0
 tag, or the release would ship code the verification never saw.
