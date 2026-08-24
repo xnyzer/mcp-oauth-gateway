@@ -4,8 +4,8 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/coding-kit:add-feature` intakes new tasks (F-number), `/coding-kit:prep-step` prepares and decomposes, `/coding-kit:build-step` implements, `/coding-kit:step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State: released and live.** **v0.3.0 is public** — repo public, multi-arch image on GHCR
-(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.3.0`/`0.3`), verified against the **final MCP spec
+**State: released and live.** **v0.4.0 is public** — repo public, multi-arch image on GHCR
+(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.4.0`/`0.4`), verified against the **final MCP spec
 2026-07-28** (F-017; conformance recorded requirement by requirement in
 `docs/MCP-CONFORMANCE.md`). Feature-
 complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
@@ -26,9 +26,11 @@ function filled it — so `Run` was decomposed and verified against the running 
 the invariants the four pure moves used. It spawned **F-028**, which retires the parallel gateway
 the end-to-end harness still builds.
 
-**Released: v0.3.0 — but the deployment is ahead of it.** It runs a locally built image carrying
-F-024 **and F-025**, by the operator's decision, and is not reproducible from the registry until a
-release replaces it. `CHANGELOG.md` carries the work under `[Unreleased]`.
+**Released: v0.4.0.** It carries the operator's client list with its kill switch (F-024), the name
+a connection gets at consent time (F-025), and the documentation and structural work behind them
+(F-022, F-026, F-027, F-028). The deployment ran ahead of the registry on a locally built image
+since 2026-08-23; **pulling `0.4.0` makes it reproducible again**, which is the point of the
+release.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 

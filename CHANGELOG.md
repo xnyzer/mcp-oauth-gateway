@@ -5,7 +5,7 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
-## [Unreleased]
+## [0.4.0] — 2026-08-24
 
 ### Added
 
@@ -64,6 +64,15 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   `README.md` now separates the **rules** (`SPEC.md`, `CODING-STANDARDS.md`, `THREAT-MODEL.md`)
   from the **records**, and names `CODING-STANDARDS.md` and `CONTRIBUTING.md`, which its index had
   omitted.
+
+- **Internal restructuring, no behaviour change (F-022, F-028).** Six files were past the
+  project's 500-line limit, the largest at 1035; none is now. `pkg/mcp-proxy/main.go` went from
+  949 lines to 312 and its `Run` from 645 to 27, split into configuration, dependencies, wiring
+  and server lifecycle. The end-to-end suite no longer assembles a second gateway of its own — it
+  drives the binary's startup path, so it now covers the session cookie's encryption, `HttpOnly`
+  and `SameSite` (SPEC §1.12), which the parallel construction had silently stopped matching. A
+  diff between this tag and the last shows a large amount of moved code for that reason;
+  the moves were verified by comparing declaration sets and test sets rather than by review alone.
 
 - **A reference guard runs in CI.** `docs_refs_test.go` resolves every `SPEC §…` /
   `CODING-STANDARDS §…` pointer, every FR/GR/SR identifier and every relative documentation link
