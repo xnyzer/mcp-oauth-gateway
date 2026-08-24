@@ -12,6 +12,8 @@ import (
 	"github.com/blendle/zapdriver"
 	"github.com/gin-gonic/gin"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/backend"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/keys"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/utils"
@@ -29,6 +31,10 @@ type dependencies struct {
 	limiters     limiters
 	proxyHeaders http.Header
 
+	// cimdResolver is nil when CIMD is disabled — a typed-nil in the interface
+	// would defeat the nil check in the client source (SPEC §1.3).
+	cimdResolver idp.CIMDResolver
+
 	// upstream serves the proxied traffic; upstreamBackend is the process
 	// behind it, kept because shutdown waits on it.
 	upstream        http.Handler
@@ -39,6 +45,17 @@ type dependencies struct {
 // exists: the data directory, the session secret, the logger, the upstream
 // backend, the store, and the signing keys.
 func openDependencies(ctx context.Context, rc resolvedConfig) (*dependencies, error) {
+	logger, err := buildLogger()
+	if err != nil {
+		return nil, err
+	}
+	return openDependenciesWithLogger(ctx, rc, logger)
+}
+
+// openDependenciesWithLogger is openDependencies with the logger supplied. It
+// exists so the end-to-end tests can drive the real startup path without a
+// production logger writing JSON across their output.
+func openDependenciesWithLogger(ctx context.Context, rc resolvedConfig, logger *zap.Logger) (*dependencies, error) {
 	// 0700: the data directory holds keys and the token store (SPEC §2.2).
 	if err := os.MkdirAll(rc.DataPath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
@@ -49,10 +66,6 @@ func openDependencies(ctx context.Context, rc resolvedConfig) (*dependencies, er
 		return nil, err
 	}
 
-	logger, err := buildLogger()
-	if err != nil {
-		return nil, err
-	}
 	warnPlainHTTPIssuer(logger, rc.issuerURL)
 
 	upstreamBackend, upstream, err := openUpstream(ctx, rc, logger)
@@ -87,6 +100,7 @@ func openDependencies(ctx context.Context, rc resolvedConfig) (*dependencies, er
 		keys:         keyManager,
 		limiters:     newLimiters(rc.Config),
 		proxyHeaders: proxyHeaders,
+		cimdResolver: newCIMDResolver(rc),
 
 		upstream:        upstream,
 		upstreamBackend: upstreamBackend,
@@ -108,6 +122,20 @@ func loadSessionSecret(dataPath string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to load or generate secret: %w", err)
 	}
 	return secret, nil
+}
+
+// newCIMDResolver builds the Client ID Metadata Document resolver (SPEC §1.3),
+// or nil when CIMD is disabled. Returning the interface's nil rather than a
+// typed-nil pointer is deliberate: the client source checks it for nil.
+func newCIMDResolver(rc resolvedConfig) idp.CIMDResolver {
+	if !rc.CIMDEnabled {
+		return nil
+	}
+	return cimd.NewResolver(cimd.Config{
+		FetchTimeout: rc.CIMDFetchTimeout,
+		MaxSize:      rc.CIMDMaxSize,
+		CacheTTL:     rc.CIMDCacheTTL,
+	})
 }
 
 // buildLogger returns the structured stdout logger (GR-4) and puts gin into

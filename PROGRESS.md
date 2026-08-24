@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned.** Every roadmap task F-001–F-027 is done. **F-024** added the operator's client
+**Nothing open.** Every roadmap task F-001–F-028 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -102,75 +102,15 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-022e | `Run` part 2 → phases 5–7 into `router.go` and `server.go`; **`Run` 645 → 27 lines**, `main.go` 949 → 312, and **no file in the repository is past the 500-line hard limit any more**. The server phase was three near-identical blocks — ~150 lines of listen/shutdown goroutine duplication — now one `serverGroup.serve` that decides TLS from the server's own `TLSConfig`. **Verified against the running binary, not the suite**, which provably does not exercise this path: five fail-fast paths abort with their message; live, the three discovery documents answer 200 and are self-consistent, `/mcp` without a token gives 401 with `WWW-Authenticate`, a foreign `Origin` gets 403. The design constraint was met — the wiring returns the engine without listening — but the harness still cannot call it, because the parameter types are package-private and it lives in package `main`. Recorded as **F-028**, which also owns the retrofit: `BuildRouter` was exported for a caller that cannot exist. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-022 | **Bring the remaining oversized files under the §2 limits — complete** (a–e). Six files were past the hard limit, the largest at 1035 lines; **none is now**. Four substeps were pure moves proven by invariants — identical AST declaration sets with body-line counts, identical `go test -list`, and a line multiset showing nothing lost or gained; the fifth decomposed a 645-line function and was verified behaviourally instead, because those invariants only prove while nothing changes. **Two lessons outlast the line counts.** The planned safety net was too weak and only a mutation showed it: built to the specified prefix rule, renaming a heading left the suite green. And the task had to be **re-planned mid-flight** because F-022d's stated purpose rested on reading `Run`'s 35 % coverage as if it described its branches — three of four fail-fast paths were already covered. Spawned **F-028**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-028a | End-to-end tests moved into `pkg/mcp-proxy` (794 lines, by `git mv`) so they can reach the gateway's own assembly instead of rebuilding it. **The compiler proved the duplication:** the move produced exactly one error, `tokenActiveChecker redeclared`, and the two implementations were identical line for line — the harness copy even said "copied from Run". **Deviated from the plan for the better:** it called for renaming the copy and deleting it in F-028b, which would have left two identical functions under two names; the harness now calls the production one, so `tokenActiveChecker` exists exactly once already. Identical test set of **240** across the repository, verified by `go test -list`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
+| F-028b | Harness onto the real startup path → `newE2EGateway` runs `resolveConfig` → `openDependenciesWithLogger` → `buildRouter` and **assembles nothing itself**; the mock upstream runs as a real HTTP server behind `ProxyTargets`, so the transparent backend is exercised too. **The gap that motivated the task is closed and was measured, not argued:** a throwaway probe against the real login printed `Path=/; Max-Age=600; HttpOnly; SameSite=Lax` with a signed-and-encrypted value, where the old harness had none of it. Two package-internal seams, one of them a structural fix — the CIMD resolver moved to `deps.go`, where collaborators are built. **Retrofit from F-022e done:** `BuildRouter` is unexported again, so `pkg/mcp-proxy` exports exactly what it did before F-022e. Beyond the plan: `OriginCheckEnabled: true`, because leaving it off would have created a fresh divergence in the task that exists to end divergence. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
+| F-028 | **Retire the parallel gateway in the end-to-end harness — complete** (a/b). The suite tested a gateway it built itself, and the two had drifted where it mattered most: the session cookie ran without encryption, `HttpOnly`, `Secure` or `SameSite`, so a regression in any of those SPEC §1.12 properties was invisible to it. Now the suite drives the binary's own startup path and constructs nothing — by construction rather than by vigilance, which is what F-021 could not achieve by fixing the symptom once by hand. **The compiler proved the duplication** during the move: exactly one redeclaration error, and the two `tokenActiveChecker` bodies were identical line for line. Carried its predecessor's correction too: F-022e had exported a function for a caller that could never exist. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 
 ---
 
 ## Open tasks — work top to bottom
 
-### F-028 — Retire the parallel gateway in the end-to-end harness
-
-**Status:** PLANNED
-
-**Problem:** `e2e_harness_test.go` builds the gateway a second time instead of using the one `Run`
-builds, and the two have already drifted apart. Three findings, all measured during F-022e. The
-harness creates the operator session cookie with `cookie.NewStore(secret[:])` and never calls
-`store.Options`, so it runs **without encryption, `HttpOnly`, `Secure` or `SameSite`** — the
-end-to-end suite therefore cannot catch a regression in any of those SPEC §1.12 properties, which
-makes this a testing gap with a security edge rather than tidiness. The revocation check
-`tokenActiveChecker` exists there a **third** time, beside the production copy. And although F-022e
-turned the wiring into a callable function, the harness still cannot call it: it lives in package
-`main` while the parameter types are package-private. This is the same gap F-021 found once and
-closed by hand — by hand does not hold.
-
-**Idee:** Let the end-to-end tests drive the real wiring through `httptest` and delete the parallel
-construction rather than keep it in sync. The suite then exercises what the binary runs by
-construction instead of by vigilance.
-
-**Decided at `/coding-kit:prep-step` (2026-08-24), with the measurements behind each decision:**
-
-- **The move is feasible and cycle-free.** The two test files import only packages `pkg/mcp-proxy`
-  already imports (`auth`, `cimd`, `idp`, `keys`, `proxy`, `ratelimit`, `repository`), and they
-  reference nothing from package `main`.
-- **The intake sketch overstated the seams.** Of the four options the harness injects, **three map
-  onto real configuration fields** — `oidcMirror` → `OIDCDiscoveryMirror`, `registerLimit` /
-  `tokenLimit` → `RateLimitRegister` / `RateLimitToken`. Only the CIMD stub genuinely needs one.
-- **Drive the real startup path, not a hand-assembled one.** `resolveConfig` → `openDependencies` →
-  `BuildRouter` covers everything except `serve`. The mock upstream is an `http.Handler`, so putting
-  it behind `httptest.NewServer` and passing that URL as `ProxyTargets` runs it through the **real
-  transparent backend** — more faithful, not more complicated.
-- **The logger is the second seam.** Without `MODE=debug`, `openDependencies` builds a production
-  logger that floods the test output. The three direct `os.Getenv` reads in the startup path
-  (`AUTH_HMAC_SECRET`, `MODE`, `JWT_PRIVATE_KEY`) are safe to set per test, because no end-to-end
-  test uses `t.Parallel()`.
-- **Move first, rewire second — the reverse does not compile clean.** A package-private seam with no
-  caller is removed by the `unused` linter on sight. That happened in this project during F-022d,
-  when `servesTLS()` was written one substep ahead of its user.
-
-**Substeps**
-
-#### F-028b — Drive the real wiring and delete the second gateway
-
-**What:** Add the two package-internal seams (CIMD resolver, logger), rewire `newE2EGateway` to run
-`resolveConfig` → `openDependencies` → `BuildRouter`, serve the mock upstream through `httptest` as
-a real `ProxyTargets` URL, and delete the parallel construction along with the duplicate revocation
-check. **Retrofit from F-022e:** `BuildRouter` goes back to unexported, because its caller now lives
-in the same package — it was exported for a caller that could never exist, its parameter types being
-package-private.
-
-**Files:** `pkg/mcp-proxy/e2e_harness_test.go`, `pkg/mcp-proxy/router.go`, `pkg/mcp-proxy/deps.go`
-
-**Acceptance:**
-- [ ] No second gateway construction remains — verified by searching, not by memory
-- [ ] The harness session cookie comes from `newSessionStore`, so the tests run **with** encryption,
-      `HttpOnly`, `Secure` and `SameSite` — the gap that motivated this task
-- [ ] `tokenActiveChecker` exists exactly once in the repository
-- [ ] `BuildRouter` is unexported and nothing outside the package references it
-- [ ] Same test set, `go test -race ./...` green, and the seams are package-internal — the public
-      API is unchanged
-
-**Abhängigkeiten:** F-022e (done — it produced the callable wiring this task builds on).
-
----
+*Nothing planned and nothing in the backlog.* Every roadmap task is done; new work starts
+with `/coding-kit:add-feature`.
 
 ## Feature ideas (backlog)
 
@@ -205,5 +145,5 @@ F-024 Operator view of connected clients, with a kill switch (DONE)
 F-025 Name a connection at consent time, and show the client's own name (DONE)
 F-026 Dissolve REQUIREMENTS.md into SPEC, and strip the history out of SPEC (DONE)
 F-027 Retire the local skills and finish the documentation architecture (DONE)
-F-028 Retire the parallel gateway in the end-to-end harness (PLANNED)
+F-028 Retire the parallel gateway in the end-to-end harness (DONE)
 -->

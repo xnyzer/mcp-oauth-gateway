@@ -105,7 +105,7 @@ func (g *serverGroup) wait(stop context.CancelFunc) error {
 }
 
 // gateway is the assembled gateway, ready to serve. It constructs nothing:
-// everything it serves came from BuildRouter, which is what keeps that wiring
+// everything it serves came from buildRouter, which is what keeps that wiring
 // testable without a listener.
 type gateway struct {
 	rc     resolvedConfig

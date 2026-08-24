@@ -1,17 +1,19 @@
 package mcpproxy
 
 // End-to-end harness (F-006a). Unlike the per-package tests — which exercise
-// idp, auth, proxy, keys and cimd in isolation — this assembles the whole
-// gateway the way Run() mounts it (session store + auth + idp + proxy on one
-// gin engine, real signing keys, a real KVS repository) in front of a mock
-// upstream, and drives it over HTTP through httptest. It is the only test that
-// verifies a token minted by /.idp/token is accepted by the proxy and
-// forwarded upstream, that the real password login gates the authorize flow,
-// and that revocation / key rotation are honoured through the full stack.
+// idp, auth, proxy, keys and cimd in isolation — this drives the **whole
+// gateway**: it runs the binary's own startup path (resolveConfig →
+// openDependencies → buildRouter) against a mock upstream and speaks to the
+// result over HTTP through httptest. It is the only test that verifies a token
+// minted by /.idp/token is accepted by the proxy and forwarded upstream, that
+// the real password login gates the authorize flow, and that revocation and key
+// rotation are honoured through the full stack.
 //
-// It lives in this package rather than at the repository root so that it can
-// reach the gateway's own assembly instead of rebuilding it (F-028). The
-// rebuild below is what F-028b replaces.
+// It assembles nothing of its own, which is the point (F-028). Until then it
+// built a second gateway "the way Run() mounts it", and the two had drifted: its
+// session cookie carried neither encryption nor HttpOnly, Secure or SameSite, so
+// this suite could not have caught a regression in any of those SPEC §1.12
+// properties. What the gateway wires is now wired once.
 //
 // Coverage note: CIMD's HTTP fetch layer (SSRF guards, size/time limits,
 // caching) can only be reached in-package because the private-host bypass is
@@ -34,15 +36,12 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
@@ -50,8 +49,6 @@ import (
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/keys"
-	"github.com/xnyzer/mcp-oauth-gateway/pkg/proxy"
-	"github.com/xnyzer/mcp-oauth-gateway/pkg/ratelimit"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -125,97 +122,70 @@ type e2eOpts struct {
 	tokenLimit    string
 }
 
-// newE2EGateway builds the gateway exactly as Run() mounts it and starts an
-// httptest server for it.
+// newE2EGateway starts the gateway the way the binary does — resolveConfig,
+// openDependencies, buildRouter — and serves the resulting engine through
+// httptest. Nothing here re-implements the assembly, so what these tests
+// exercise is what `Run` runs; the only thing left out is the listener.
 func newE2EGateway(t *testing.T, opts e2eOpts) *e2eGateway {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	dir := t.TempDir()
-	repo, err := repository.NewKVSRepository(filepath.Join(dir, "db"), "e2e")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = repo.Close() })
+	// Neutralise the three environment variables the startup path reads, so a
+	// developer's shell cannot change what the tests exercise.
+	t.Setenv("AUTH_HMAC_SECRET", "")
+	t.Setenv("JWT_PRIVATE_KEY", "")
+	t.Setenv("MODE", "")
 
-	keyManager, err := keys.NewManager(keys.Config{
-		Dir:          filepath.Join(dir, "keys"),
-		Alg:          keys.AlgRS256,
-		RetireWindow: time.Hour,
-	})
-	require.NoError(t, err)
-
-	secret := sha256.Sum256([]byte("e2e-secret"))
-	logger := zap.NewNop()
+	upstream := &upstreamRecorder{}
+	upstreamServer := httptest.NewServer(upstream.handler())
+	t.Cleanup(upstreamServer.Close)
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(e2ePassword), bcrypt.DefaultCost)
 	require.NoError(t, err)
 
-	authRouter, err := auth.NewAuthRouter(auth.Config{
-		PasswordHashes: []string{string(hash)},
-		Users:          repo,
-		Clients:        repo,
-		ExternalURL:    e2eIssuer,
-		Logger:         logger,
-		Lockout:        ratelimit.NewLockout(0, 0), // disabled but nil-safe
-	})
-	require.NoError(t, err)
-
-	idpRouter, err := idp.NewIDPRouter(idp.Config{
-		Repo:                repo,
-		Keys:                keyManager,
-		Logger:              logger,
-		ExternalURL:         e2eIssuer,
-		Secret:              secret[:],
-		AuthRouter:          authRouter,
+	rc, err := resolveConfig(Config{
+		Listen:            ":0",
+		TLSListen:         ":0",
+		DataPath:          t.TempDir(),
+		RepositoryBackend: "local",
+		ExternalURL:       e2eIssuer,
+		PasswordHash:      string(hash),
+		// Host-only, so the gateway joins the inbound path onto it and the
+		// upstream sees the path the client asked for (SPEC §3.1).
+		ProxyTargets:      []string{upstreamServer.URL},
+		ProxyBearerToken:  upstreamSecret,
+		HeaderMappingBase: "/userinfo",
+		// On, as it is in production: these tests send no Origin header, and an
+		// absent one passes by design (SPEC §0).
+		OriginCheckEnabled:  true,
 		OIDCDiscoveryMirror: opts.oidcMirror,
 		AccessTokenTTL:      time.Hour,
 		AuthCodeTTL:         10 * time.Minute,
 		RefreshTokenTTL:     30 * 24 * time.Hour,
-		CIMDResolver:        opts.cimd,
 		DCREnabled:          true,
 		DCRClientTTL:        30 * 24 * time.Hour,
-		TokenRateLimit:      limiterMiddleware(t, opts.tokenLimit, "token", logger),
-		RegisterRateLimit:   limiterMiddleware(t, opts.registerLimit, "register", logger),
+		RateLimitToken:      opts.tokenLimit,
+		RateLimitRegister:   opts.registerLimit,
 	})
 	require.NoError(t, err)
 
-	upstream := &upstreamRecorder{}
-	proxyHeaders := http.Header{}
-	proxyHeaders.Set("Authorization", "Bearer "+upstreamSecret)
-
-	proxyRouter, err := proxy.NewProxyRouter(proxy.Config{
-		ExternalURL:     e2eIssuer,
-		Proxy:           upstream.handler(),
-		VerificationKey: keyManager.VerificationKey,
-		ProxyHeaders:    proxyHeaders,
-		// The production revocation hook (SPEC §2.4) rather than a copy of it,
-		// which is what sharing a package with the gateway now allows.
-		TokenActive: tokenActiveChecker(&dependencies{repo: repo}),
-	})
+	deps, err := openDependenciesWithLogger(t.Context(), rc, zap.NewNop())
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = deps.repo.Close() })
 
-	router := gin.New()
-	store := cookie.NewStore(secret[:])
-	router.Use(sessions.Sessions("session", store))
-	authRouter.SetupRoutes(router)
-	idpRouter.SetupRoutes(router)
-	proxyRouter.SetupRoutes(router)
+	// The one collaborator a test may replace: CIMD resolution reaches the
+	// network, and the fetch layer itself is covered in pkg/cimd.
+	if opts.cimd != nil {
+		deps.cimdResolver = opts.cimd
+	}
+
+	router, err := buildRouter(t.Context(), rc, deps)
+	require.NoError(t, err)
 
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 
-	return &e2eGateway{server: server, issuer: e2eIssuer, repo: repo, keys: keyManager, upstream: upstream}
-}
-
-// limiterMiddleware mirrors Run's construction; an empty expression yields a
-// nil (disabled) middleware, which idp tolerates.
-func limiterMiddleware(t *testing.T, expr, endpoint string, logger *zap.Logger) gin.HandlerFunc {
-	t.Helper()
-	if expr == "" {
-		return ratelimit.Middleware(nil, endpoint, logger)
-	}
-	limit, err := ratelimit.ParseLimit(expr)
-	require.NoError(t, err)
-	return ratelimit.Middleware(ratelimit.NewLimiter(limit), endpoint, logger)
+	return &e2eGateway{server: server, issuer: e2eIssuer, repo: deps.repo, keys: deps.keys, upstream: upstream}
 }
 
 // -- HTTP helpers ------------------------------------------------------------

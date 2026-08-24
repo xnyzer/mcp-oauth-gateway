@@ -14,14 +14,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ory/fosite"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
-	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/proxy"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/ratelimit"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// BuildRouter assembles the whole gateway onto one gin engine and returns it
+// buildRouter assembles the whole gateway onto one gin engine and returns it
 // **without listening**. Serving is the caller's business, which is what lets
 // the end-to-end tests drive the real wiring through httptest instead of
 // rebuilding it — a second construction of the same thing drifts, and this one
@@ -31,7 +30,7 @@ import (
 // before the origin check so a health probe stays reachable, and the origin
 // check sits ahead of the session store so a rebinding attempt is turned away
 // before it can touch session or auth state (SPEC §0).
-func BuildRouter(ctx context.Context, rc resolvedConfig, deps *dependencies) (*gin.Engine, error) {
+func buildRouter(ctx context.Context, rc resolvedConfig, deps *dependencies) (*gin.Engine, error) {
 	authRouter, err := newAuthRouter(ctx, rc, deps)
 	if err != nil {
 		return nil, err
@@ -189,17 +188,6 @@ func buildPasswordHashes(rc resolvedConfig) ([]string, error) {
 
 // newIDPRouter builds the OAuth surface (SPEC §1.1–§1.10).
 func newIDPRouter(rc resolvedConfig, deps *dependencies, authRouter *auth.AuthRouter) (*idp.IDPRouter, error) {
-	// Assigned only when enabled: a typed-nil *cimd.Resolver in the
-	// interface field would defeat the nil check in the client source.
-	var cimdResolver idp.CIMDResolver
-	if rc.CIMDEnabled {
-		cimdResolver = cimd.NewResolver(cimd.Config{
-			FetchTimeout: rc.CIMDFetchTimeout,
-			MaxSize:      rc.CIMDMaxSize,
-			CacheTTL:     rc.CIMDCacheTTL,
-		})
-	}
-
 	router, err := idp.NewIDPRouter(idp.Config{
 		Repo:                deps.repo,
 		Keys:                deps.keys,
@@ -211,7 +199,7 @@ func newIDPRouter(rc resolvedConfig, deps *dependencies, authRouter *auth.AuthRo
 		AccessTokenTTL:      rc.AccessTokenTTL,
 		AuthCodeTTL:         rc.AuthCodeTTL,
 		RefreshTokenTTL:     rc.RefreshTokenTTL,
-		CIMDResolver:        cimdResolver,
+		CIMDResolver:        deps.cimdResolver,
 		DCREnabled:          rc.DCREnabled,
 		DCRClientTTL:        rc.DCRClientTTL,
 		DCRMaxClients:       rc.DCRMaxClients,

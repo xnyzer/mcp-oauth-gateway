@@ -215,7 +215,7 @@ func Run(cfg Config) error {
 	}()
 	deps.startSweeper(ctx, rc)
 
-	router, err := BuildRouter(ctx, rc, deps)
+	router, err := buildRouter(ctx, rc, deps)
 	if err != nil {
 		return err
 	}
