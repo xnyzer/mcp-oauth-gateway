@@ -15,14 +15,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blendle/zapdriver"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/ory/fosite"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
-	"github.com/xnyzer/mcp-oauth-gateway/pkg/backend"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/keys"
@@ -30,7 +28,6 @@ import (
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/ratelimit"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/repository"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/tlsreload"
-	"github.com/xnyzer/mcp-oauth-gateway/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
@@ -215,271 +212,41 @@ func parseLimit(value string) ratelimit.Limit {
 }
 
 func Run(cfg Config) error {
-	listen := cfg.Listen
-	tlsListen := cfg.TLSListen
-	autoTLS := cfg.AutoTLS
-	tlsHost := cfg.TLSHost
-	tlsDirectoryURL := cfg.TLSDirectoryURL
-	tlsAcceptTOS := cfg.TLSAcceptTOS
-	tlsCertFile := cfg.TLSCertFile
-	tlsKeyFile := cfg.TLSKeyFile
-	dataPath := cfg.DataPath
-	repositoryBackend := cfg.RepositoryBackend
-	repositoryDSN := cfg.RepositoryDSN
-	externalURL := cfg.ExternalURL
-	trustedProxy := cfg.TrustedProxies
-	proxyHeaders := cfg.ProxyHeaders
-	proxyBearerToken := cfg.ProxyBearerToken
-	proxyTarget := cfg.ProxyTargets
-	headerMapping := cfg.HeaderMapping
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	parsedExternalURL, err := url.Parse(externalURL)
+	rc, err := resolveConfig(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to parse external URL: %w", err)
-	}
-	if parsedExternalURL.Scheme != "http" && parsedExternalURL.Scheme != "https" {
-		return fmt.Errorf("external URL must use http or https, got: %q", parsedExternalURL.Scheme)
-	}
-	if parsedExternalURL.Host == "" {
-		return fmt.Errorf("external URL must be absolute, got: %s", externalURL)
-	}
-	if parsedExternalURL.Path != "" && parsedExternalURL.Path != "/" {
-		return fmt.Errorf("external URL must not have a path, got: %s", parsedExternalURL.Path)
-	}
-	if parsedExternalURL.RawQuery != "" || parsedExternalURL.Fragment != "" {
-		return fmt.Errorf("external URL must not have a query or fragment, got: %s", externalURL)
-	}
-	// SPEC §0: the issuer is the external URL without a trailing slash; the
-	// same form is used in metadata, token iss/aud, and the RFC 9207 iss.
-	parsedExternalURL.Path = ""
-	externalURL = parsedExternalURL.String()
-
-	if cfg.ClockSkew < 0 || cfg.ClockSkew > maxClockSkew {
-		return fmt.Errorf("clock skew must be between 0 and %s, got: %s", maxClockSkew, cfg.ClockSkew)
-	}
-	// Zero TTLs (programmatic use) fall back to the SPEC defaults;
-	// RefreshTokenTTL 0 means "refresh grant disabled" and stays as is.
-	if cfg.AccessTokenTTL == 0 {
-		cfg.AccessTokenTTL = time.Hour
-	}
-	if cfg.AuthCodeTTL == 0 {
-		cfg.AuthCodeTTL = 10 * time.Minute
-	}
-	if cfg.KeyAlg == "" {
-		cfg.KeyAlg = string(keys.AlgRS256)
-	}
-	if err := validateTTLs(cfg); err != nil {
 		return err
 	}
+	cfg = rc.Config
 
-	// TRUSTED_PROXIES accepts bare IPs and CIDR ranges (SPEC §3.1, audit
-	// M8); normalise once so gin and the transparent backend see the same
-	// list and an invalid entry fails fast here.
-	trustedProxy, err = backend.NormalizeTrustedProxies(trustedProxy)
+	deps, err := openDependencies(ctx, rc)
 	if err != nil {
-		return fmt.Errorf("invalid TRUSTED_PROXIES: %w", err)
-	}
-
-	if (tlsCertFile == "") != (tlsKeyFile == "") {
-		return fmt.Errorf("both TLS certificate and key files must be provided together")
-	}
-	var manualTLS bool
-	if tlsCertFile != "" && tlsKeyFile != "" {
-		manualTLS = true
-	}
-	if manualTLS && tlsHost != "" {
-		return fmt.Errorf("tlsHost cannot be used when TLS certificate and key files are provided")
-	}
-	if !manualTLS && !autoTLS && tlsHost != "" {
-		return fmt.Errorf("tlsHost requires automatic TLS; remove noAutoTLS or provide certificate files instead")
-	}
-
-	// 0700: the data directory holds keys and the token store (SPEC §2.2).
-	if err := os.MkdirAll(dataPath, 0700); err != nil {
-		return fmt.Errorf("failed to create data directory: %w", err)
-	}
-
-	var secret []byte
-	if envSecret := os.Getenv("AUTH_HMAC_SECRET"); envSecret != "" {
-		secret, err = utils.SecretFromBase64(envSecret)
-		if err != nil {
-			return fmt.Errorf("failed to parse AUTH_HMAC_SECRET environment variable: %w", err)
-		}
-	} else {
-		secret, err = utils.LoadOrGenerateSecret(path.Join(dataPath, "secret"))
-		if err != nil {
-			return fmt.Errorf("failed to load or generate secret: %w", err)
-		}
-	}
-
-	var config zap.Config
-	if os.Getenv("MODE") == "debug" {
-		gin.SetMode(gin.DebugMode)
-		config = zap.NewDevelopmentConfig()
-	} else {
-		gin.SetMode(gin.ReleaseMode)
-		config = zapdriver.NewProductionConfig()
-	}
-	logger, err := config.Build()
-	if err != nil {
-		return fmt.Errorf("failed to build logger: %w", err)
-	}
-	warnPlainHTTPIssuer(logger, parsedExternalURL)
-
-	if len(proxyTarget) == 0 {
-		return fmt.Errorf("proxy target must be specified")
-	}
-	var be backend.Backend
-	var beHandler http.Handler
-	if proxyURL, err := url.Parse(proxyTarget[0]); err == nil && (proxyURL.Scheme == "http" || proxyURL.Scheme == "https") {
-		var err error
-		be, err = backend.NewTransparentBackend(logger, proxyURL, trustedProxy)
-		if err != nil {
-			return fmt.Errorf("failed to create transparent backend: %w", err)
-		}
-		beHandler, err = be.Run(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to create transparent backend: %w", err)
-		}
-	} else {
-		be = backend.NewProxyBackend(logger, proxyTarget)
-		beHandler, err = be.Run(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to create proxy backend: %w", err)
-		}
-	}
-
-	// Convert headers slice to map and integrate bearer token
-	proxyHeadersMap := http.Header{}
-	for _, header := range proxyHeaders {
-		parts := strings.SplitN(header, ":", 2)
-		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-			return fmt.Errorf("invalid proxy header format: %s", header)
-		}
-		proxyHeadersMap.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-	}
-
-	// Add bearer token as Authorization header if provided
-	if proxyBearerToken != "" {
-		if proxyHeadersMap.Get("Authorization") != "" {
-			logger.Warn("Authorization header already set, overwriting with bearer token")
-		}
-		proxyHeadersMap.Set("Authorization", "Bearer "+proxyBearerToken)
-	}
-
-	var repo repository.Repository
-	switch backend := strings.ToLower(repositoryBackend); backend {
-	case "", "local":
-		repo, err = repository.NewKVSRepository(path.Join(dataPath, "db"), "mcp-oauth-gateway")
-		if err != nil {
-			return fmt.Errorf("failed to create repository: %w", err)
-		}
-	case "sqlite":
-		if repositoryDSN == "" {
-			return fmt.Errorf("repository DSN must be provided for sqlite backend")
-		}
-		repo, err = repository.NewSQLRepository("sqlite", repositoryDSN)
-		if err != nil {
-			return fmt.Errorf("failed to create repository: %w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported repository backend: %s", repositoryBackend)
+		return err
 	}
 	defer func() {
-		if err := repo.Close(); err != nil {
-			logger.Warn("failed to close repository", zap.Error(err))
+		if err := deps.repo.Close(); err != nil {
+			deps.logger.Warn("failed to close repository", zap.Error(err))
 		}
 	}()
+	deps.startSweeper(ctx, rc)
 
-	// Fail fast when the store stems from a newer gateway (SPEC §2.5).
-	if err := repo.EnsureSchemaVersion(ctx, repository.SchemaVersion); err != nil {
-		return fmt.Errorf("schema version check failed: %w", err)
-	}
-
-	// Signing keys (SPEC §2.2/§2.3): key directory + manifest with
-	// rotation, adopting the legacy single-key file on first start. A key
-	// from the environment stays static (no directory, no rotation).
-	keyAlg, err := keys.ParseAlg(cfg.KeyAlg) // validated in validateTTLs
-	if err != nil {
-		return err
-	}
-	var keyManager *keys.Manager
-	if envKey := os.Getenv("JWT_PRIVATE_KEY"); envKey != "" {
-		envSigner, err := keys.ParsePrivateKeyPEM(envKey)
-		if err != nil {
-			return fmt.Errorf("failed to parse JWT_PRIVATE_KEY environment variable: %w", err)
-		}
-		keyManager, err = keys.NewStaticManager(envSigner, keyAlg)
-		if err != nil {
-			return err
-		}
-		if cfg.KeyRotationInterval > 0 {
-			logger.Warn("JWT_PRIVATE_KEY is set; automatic key rotation is disabled")
-		}
-	} else {
-		keyManager, err = keys.NewManager(keys.Config{
-			Dir:              path.Join(dataPath, "keys"),
-			Alg:              keyAlg,
-			LegacyKeyPath:    path.Join(dataPath, "private_key.pem"),
-			RotationInterval: cfg.KeyRotationInterval,
-			RetireWindow:     cfg.AccessTokenTTL + 2*cfg.ClockSkew,
-			Logger:           logger,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to initialize signing keys: %w", err)
-		}
-	}
-
-	// Abuse protection (SR-5/SR-6): per-IP token buckets on the public
-	// endpoints and the login lockout. In-memory by design (GR-3).
-	registerLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitRegister))
-	tokenLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitToken))
-	loginLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitLogin))
-	authorizeLimiter := ratelimit.NewLimiter(parseLimit(cfg.RateLimitAuthorize))
-	loginLockout := ratelimit.NewLockout(cfg.LoginLockoutThreshold, cfg.LoginLockoutDuration)
-
-	// Expiry sweeper: garbage-collect session records past their TTL
-	// (SPEC §2.1) and run key maintenance — interval rotation + retiring-
-	// key cleanup (SPEC §2.3). Lookups already treat expired records as
-	// invalid; the record sweep only reclaims storage.
-	refreshSweepTTL := cfg.RefreshTokenTTL
-	if refreshSweepTTL == 0 {
-		refreshSweepTTL = cfg.AccessTokenTTL
-	}
-	go func() {
-		ticker := time.NewTicker(sweepInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				now := time.Now().UTC()
-				margin := cfg.ClockSkew
-				if err := repo.DeleteExpiredSessions(ctx,
-					now.Add(-cfg.AccessTokenTTL-margin),
-					now.Add(-refreshSweepTTL-margin),
-					now.Add(-cfg.AuthCodeTTL-margin),
-				); err != nil {
-					logger.Warn("failed to sweep expired session records", zap.Error(err))
-				}
-				if err := repo.DeleteExpiredClients(ctx, now); err != nil {
-					logger.Warn("failed to sweep expired client registrations", zap.Error(err))
-				}
-				if err := keyManager.Maintain(now); err != nil {
-					logger.Warn("failed to maintain signing keys", zap.Error(err))
-				}
-				registerLimiter.Sweep(now)
-				tokenLimiter.Sweep(now)
-				loginLimiter.Sweep(now)
-				authorizeLimiter.Sweep(now)
-				loginLockout.Sweep(now)
-			}
-		}
-	}()
+	// Names the wiring below still reads. F-022e extracts that wiring next
+	// and these go with it.
+	listen, tlsListen := rc.Listen, rc.TLSListen
+	autoTLS, tlsHost := rc.AutoTLS, rc.TLSHost
+	tlsDirectoryURL, tlsAcceptTOS := rc.TLSDirectoryURL, rc.TLSAcceptTOS
+	tlsCertFile, tlsKeyFile := rc.TLSCertFile, rc.TLSKeyFile
+	dataPath, headerMapping := rc.DataPath, rc.HeaderMapping
+	parsedExternalURL, externalURL := rc.issuerURL, rc.issuer
+	trustedProxy, manualTLS := rc.trustedProxies, rc.manualTLS
+	logger, secret, repo, keyManager := deps.logger, deps.secret, deps.repo, deps.keys
+	beHandler, proxyHeadersMap := deps.upstream, deps.proxyHeaders
+	be := deps.upstreamBackend
+	registerLimiter, tokenLimiter := deps.limiters.register, deps.limiters.token
+	loginLimiter, authorizeLimiter := deps.limiters.login, deps.limiters.authorize
+	loginLockout := deps.limiters.lockout
 
 	var providers []auth.Provider
 

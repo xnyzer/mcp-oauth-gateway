@@ -96,6 +96,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-022a | Persistence and auth glue split → `pkg/repository/sql.go` (712) into four files along its entity seams and `pkg/auth/auth.go` (558) into four along its concerns; **largest new file 275 lines**, under the 300-line target rather than merely under the 500 limit. Cut by script — whole declaration segments including their doc comments — because hand-editing 730 lines of seams is where a "pure move" quietly stops being one. **Proven, not asserted:** an AST parser reports the declaration set and per-declaration body-line counts identical (215 in `pkg/repository`, 197 in `pkg/auth`), and a line multiset shows **0 lost, 0 gained** — a check beyond the plan, because the declaration invariant cannot see a comment stranded between the imports and the first declaration. No test file touched, so the green suite is evidence. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-022b | CLI surface split → `main.go` (568) and `main_test.go` (776) cut **together** into five pairs, each production file with a test file of the same name; largest is 260 lines. Deviated from the plan's two-or-three files: separating environment reading from string parsing is what keeps every file under the 300-line target rather than merely under the 500 limit, and it makes the mirroring exact. **Three invariants compared, not asserted:** 94 AST declarations with identical body-line counts, `go test -list` identical at 29 tests, line multiset 0 lost / 0 gained — the last one matters more here than in F-022a, because this substep touches test files, so a green suite alone no longer proves nothing fell out. Also verified that no file name accidentally reads as a build constraint (`IgnoredGoFiles` empty). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-022c | Proxy test file split → `pkg/proxy/proxy_test.go` (1035) into four thematic files; mirroring production was unavailable because the package has a **single** production file, so the cut follows the seams `proxy.go` itself forms. **Deviation from a and b:** two files stay above the 300-line target (343, 414) though under the 500 limit — the finer cuts would separate "is the token valid" from "is it still active", tearing apart tests of the same contract line. **The criterion that matters when splitting a test file:** each of the five shared helpers has exactly one definition — a duplicated helper compiles and then silently drifts. 35 declarations, 17 tests, 0 lines lost. Also corrected `transport_test.go`, whose opening comment justified its existence by the limit this substep removed. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
+| F-022d | `Run` part 1 → phases 1–4 (config normalisation, validation, data directory, logger, upstream, store, keys, limiters, sweeper) extracted into `config.go`, `deps.go` and `sweeper.go`; **`Run` 645 → 415 lines**, `main.go` 949 → 716. The check order is contract — a misconfigured deployment sees the *first* problem — so it was reproduced exactly, and the **13 existing fail-fast cases stayed green with no test touched**, which is what makes them evidence. Closed the one genuinely uncovered branch (CIMD and DCR both disabled: execution count 0 → 1); coverage **46.9 % → 48.1 %**, measured, the modest rise predicted because the uncovered remainder is what F-022e moves. Three new assertions each proven able to fail. **Review caught a §3 violation no linter checks:** `sweep` had four parameters against the maximum of three. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 
 ---
 
@@ -172,36 +173,14 @@ that also changed.
   afterwards for package symmetry — as its own task, not here.
 
 **Substeps** — the pure moves first, so the invariant harness is established before the one change
-it cannot prove. **F-022a, F-022b and F-022c are done** — every pure move is in. One file
-remains past the hard limit, and it is the one that cannot be fixed by moving.
+it cannot prove. **F-022a–d are done.** `pkg/mcp-proxy/main.go` is down from 949 to 716 lines;
+F-022e's phases 5–7 are the remaining ~380 that bring it under the limit.
 
 The verification harness F-022a established, to be reused by b and c: an AST parser prints
 `kind name bodyLines` per top-level declaration for the whole package (tests included) — identical
 before and after proves the declarations moved intact — plus a **line multiset** comparison, which
 catches what the declaration invariant cannot: a comment stranded between the import block and the
 first declaration would vanish without any declaration changing.
-
-#### F-022d — `Run`, part 1: configuration and dependencies
-
-**What:** Extract phases 1–4 of `Run` (lines 218–485) into named functions that take configuration
-and return values: issuer normalisation, TTL and proxy validation, data directory and logger,
-repository open plus schema check, key manager, abuse-protection limiters and the expiry sweeper.
-New files follow the package's existing concern-file convention (`cookie.go`, `origin.go`).
-
-**Files:** `pkg/mcp-proxy/main.go`, new `pkg/mcp-proxy/config.go` and `pkg/mcp-proxy/deps.go`,
-new/extended `pkg/mcp-proxy/*_test.go`
-
-**Acceptance:**
-- [ ] `Run` no longer performs configuration normalisation, validation, data-directory, logger,
-      repository, key-manager, limiter or sweeper setup inline
-- [ ] The one genuinely uncovered fail-fast branch gets a test: **CIMD and DCR both disabled**
-      (`main.go:167.41,169.3`, execution count 0 today)
-- [ ] The 13 existing `Run`-level fail-fast cases stay green **unchanged** — they are the
-      regression net for this refactor, not something to be replaced by finer tests
-- [ ] Coverage of `pkg/mcp-proxy` **recorded before and after** (46.9 % today). No target number is
-      promised: most uncovered statements are the router and server code that F-022e moves, so a
-      large rise here would be surprising rather than good
-- [ ] `go test -race ./...` green
 
 #### F-022e — `Run`, part 2: wiring and lifecycle
 

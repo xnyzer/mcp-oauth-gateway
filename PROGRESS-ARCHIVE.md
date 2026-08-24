@@ -3421,3 +3421,77 @@ drifts. `go list` confirms every new file is in `TestGoFiles` and `IgnoredGoFile
 
 **One file remains past the hard limit:** `pkg/mcp-proxy/main.go` (949), for F-022d and F-022e — the
 part where these invariants stop applying, because `Run` is decomposed rather than relocated.
+
+
+---
+
+## F-022d — `Run`, part 1: configuration and dependencies — DONE 2026-08-24
+
+**What:** Extract phases 1–4 of `Run` (lines 218–485) into named functions that take configuration
+and return values: issuer normalisation, TTL and proxy validation, data directory and logger,
+repository open plus schema check, key manager, abuse-protection limiters and the expiry sweeper.
+New files follow the package's existing concern-file convention (`cookie.go`, `origin.go`).
+
+**Files:** `pkg/mcp-proxy/main.go`, new `pkg/mcp-proxy/config.go` and `pkg/mcp-proxy/deps.go`,
+new/extended `pkg/mcp-proxy/*_test.go`
+
+**Acceptance:**
+- [x] `Run` no longer performs configuration normalisation, validation, data-directory, logger,
+      repository, key-manager, limiter or sweeper setup inline
+- [x] The one genuinely uncovered fail-fast branch gets a test: **CIMD and DCR both disabled**
+      (`main.go:167.41,169.3`, execution count 0 today)
+- [x] The 13 existing `Run`-level fail-fast cases stay green **unchanged** — they are the
+      regression net for this refactor, not something to be replaced by finer tests
+- [x] Coverage of `pkg/mcp-proxy` **recorded before and after** (46.9 % today). No target number is
+      promised: most uncovered statements are the router and server code that F-022e moves, so a
+      large rise here would be surprising rather than good
+- [x] `go test -race ./...` green
+
+### What was actually done
+
+`Run` went from **645 to 415 lines**, `pkg/mcp-proxy/main.go` from 949 to 716. Not under the limit
+yet — phases 5–7 are F-022e's ~380 lines.
+
+| File | Lines | Holds |
+|---|---|---|
+| `config.go` | 124 | `resolveConfig`: issuer normalisation, TTL defaults, `validateTTLs`, `TRUSTED_PROXIES`, TLS flag combinations |
+| `deps.go` | 249 | `openDependencies`: data directory, session secret, logger, upstream backend, proxy headers, repository + schema check, key manager |
+| `sweeper.go` | 78 | `limiters`, `newLimiters`, `startSweeper`, `sweep` |
+| `config_test.go` | 119 | the new tests |
+
+**The order of the checks is contract, and it was preserved deliberately.** A misconfigured
+deployment sees the *first* problem found, and the 13 existing fail-fast cases assert on those
+messages. `resolveConfig` reproduces the original sequence exactly; all 13 stayed green without a
+single test being touched, which is what makes them evidence here rather than decoration.
+
+**Three deviations from the plan, each for a reason:**
+
+- **Three new files, not two.** `deps.go` came out at 324 lines, above the 300-line target. The
+  sweeper is a background maintenance loop rather than startup work, so it moved to `sweeper.go`;
+  both are now comfortably under.
+- **`servesTLS()` was written and then deleted.** It was speculative, for F-022e. `golangci-lint`
+  flagged it as unused and was right — it returns when it has a caller.
+- **`sweep` had four parameters, against §3's maximum of three.** Caught in review, not by a tool:
+  `golangci-lint` does not check that. Fixed by moving the refresh-window fallback onto
+  `resolvedConfig` as `refreshSweepTTL()`, which is where it belongs anyway — it is a property of
+  the configuration, not an argument to a sweep.
+
+**Coverage 46.9 % → 48.1 %, measured.** The modest rise was predicted in the plan: most uncovered
+statements are the router and server code F-022e moves. The one branch this substep was supposed to
+close — CIMD and DCR both disabled — now shows execution count **1** in the profile where it showed
+0.
+
+**Three new assertions, each proven able to fail** (CODING-STANDARDS §9): removing the
+both-disabled check makes the new test fail; removing `issuerURL.Path = ""` makes the issuer test
+report the trailing slash; forcing the TLS-combination branch to `false` makes the table fail.
+
+**One behaviour that changed shape without changing outcome.** `Run` used to register
+`defer repo.Close()` immediately after opening the store, so any later failure closed it. Now
+`openRepository` closes it on a schema-version failure and `openDependencies` closes it when the key
+manager fails; the caller only takes ownership on success. Same guarantee, stated explicitly
+instead of relying on the defer frame — and documented on the `dependencies` type, because a
+half-built gateway leaving an open store is exactly the kind of thing that is invisible until it
+is not.
+
+**Files:** `pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/config.go` (new), `pkg/mcp-proxy/deps.go` (new),
+`pkg/mcp-proxy/sweeper.go` (new), `pkg/mcp-proxy/config_test.go` (new). No existing test touched.
