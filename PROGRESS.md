@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task in the backlog.** Every roadmap task F-001–F-027 is done. **F-024** added the operator's client
+**One task planned.** Every roadmap task F-001–F-027 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -106,14 +106,9 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 
 ## Open tasks — work top to bottom
 
-*Nothing planned.* The next task is **F-028** in the backlog below; it needs
-`/coding-kit:prep-step` before it can be built.
-
-## Feature ideas (backlog)
-
 ### F-028 — Retire the parallel gateway in the end-to-end harness
 
-**Status:** BACKLOG
+**Status:** PLANNED
 
 **Problem:** `e2e_harness_test.go` builds the gateway a second time instead of using the one `Run`
 builds, and the two have already drifted apart. Three findings, all measured during F-022e. The
@@ -127,28 +122,72 @@ turned the wiring into a callable function, the harness still cannot call it: it
 closed by hand — by hand does not hold.
 
 **Idee:** Let the end-to-end tests drive the real wiring through `httptest` and delete the parallel
-construction rather than keep it in sync. The suite would then exercise what the binary runs by
+construction rather than keep it in sync. The suite then exercises what the binary runs by
 construction instead of by vigilance.
 
-**Lösungsskizze:**
-- The end-to-end tests reference nothing from package `main`, so relocating them is mechanical; the
-  question is where they end up and how much of the real startup path they should drive.
-- Driving `resolveConfig`/`openDependencies` is the faithful option; assembling the pieces directly
-  gives the tests control over the upstream and the store. That trade-off is the design decision.
-- A seam is needed for the CIMD stub, because the wiring builds the real resolver from the
-  configuration. Keeping that seam package-internal would avoid widening the public API.
-- No new dependencies, no new configuration, no change to the served surface.
+**Decided at `/coding-kit:prep-step` (2026-08-24), with the measurements behind each decision:**
 
-**Nachzug aus F-022e (ausdrücklich Teil dieser Aufgabe):** F-022e exported `BuildRouter` in
-anticipation of this task. The export does not work as intended — its parameter types are
-package-private, so **nothing outside the package can call it at all**, and its only caller is
-`Run`, two files away. Whatever F-028 decides, it owns the correction: unexport it if the tests end
-up in the same package, or design a seam that is actually callable if they do not. Any other loose
-end F-022e left behind for the same reason is this task's to clean up as well.
+- **The move is feasible and cycle-free.** The two test files import only packages `pkg/mcp-proxy`
+  already imports (`auth`, `cimd`, `idp`, `keys`, `proxy`, `ratelimit`, `repository`), and they
+  reference nothing from package `main`.
+- **The intake sketch overstated the seams.** Of the four options the harness injects, **three map
+  onto real configuration fields** — `oidcMirror` → `OIDCDiscoveryMirror`, `registerLimit` /
+  `tokenLimit` → `RateLimitRegister` / `RateLimitToken`. Only the CIMD stub genuinely needs one.
+- **Drive the real startup path, not a hand-assembled one.** `resolveConfig` → `openDependencies` →
+  `BuildRouter` covers everything except `serve`. The mock upstream is an `http.Handler`, so putting
+  it behind `httptest.NewServer` and passing that URL as `ProxyTargets` runs it through the **real
+  transparent backend** — more faithful, not more complicated.
+- **The logger is the second seam.** Without `MODE=debug`, `openDependencies` builds a production
+  logger that floods the test output. The three direct `os.Getenv` reads in the startup path
+  (`AUTH_HMAC_SECRET`, `MODE`, `JWT_PRIVATE_KEY`) are safe to set per test, because no end-to-end
+  test uses `t.Parallel()`.
+- **Move first, rewire second — the reverse does not compile clean.** A package-private seam with no
+  caller is removed by the `unused` linter on sight. That happened in this project during F-022d,
+  when `servesTLS()` was written one substep ahead of its user.
+
+**Substeps**
+
+#### F-028a — Move the end-to-end tests into the package
+
+**What:** Relocate `e2e_harness_test.go` and `e2e_test.go` (794 lines) to `pkg/mcp-proxy`, otherwise
+unchanged — they keep building the gateway themselves for now. One change is forced: the harness's
+`tokenActiveChecker` collides with the production copy in `router.go`, so **the compiler proves the
+duplication** the moment they share a package.
+
+**Files:** `e2e_harness_test.go`, `e2e_test.go` (both moved)
+
+**Acceptance:**
+- [ ] `go test -list '.*'` returns the same test set across the repository as before the move
+- [ ] `go test -race ./...` green; the root package keeps its other tests
+- [ ] The collision is resolved by renaming the harness copy, not by keeping two implementations
+
+#### F-028b — Drive the real wiring and delete the second gateway
+
+**What:** Add the two package-internal seams (CIMD resolver, logger), rewire `newE2EGateway` to run
+`resolveConfig` → `openDependencies` → `BuildRouter`, serve the mock upstream through `httptest` as
+a real `ProxyTargets` URL, and delete the parallel construction along with the duplicate revocation
+check. **Retrofit from F-022e:** `BuildRouter` goes back to unexported, because its caller now lives
+in the same package — it was exported for a caller that could never exist, its parameter types being
+package-private.
+
+**Files:** `pkg/mcp-proxy/e2e_harness_test.go`, `pkg/mcp-proxy/router.go`, `pkg/mcp-proxy/deps.go`
+
+**Acceptance:**
+- [ ] No second gateway construction remains — verified by searching, not by memory
+- [ ] The harness session cookie comes from `newSessionStore`, so the tests run **with** encryption,
+      `HttpOnly`, `Secure` and `SameSite` — the gap that motivated this task
+- [ ] `tokenActiveChecker` exists exactly once in the repository
+- [ ] `BuildRouter` is unexported and nothing outside the package references it
+- [ ] Same test set, `go test -race ./...` green, and the seams are package-internal — the public
+      API is unchanged
 
 **Abhängigkeiten:** F-022e (done — it produced the callable wiring this task builds on).
 
 ---
+
+## Feature ideas (backlog)
+
+*Empty.* Everything raised so far is either done or planned above.
 
 <!-- FEATURE-INDEX
 next-feature: F-029
@@ -179,5 +218,5 @@ F-024 Operator view of connected clients, with a kill switch (DONE)
 F-025 Name a connection at consent time, and show the client's own name (DONE)
 F-026 Dissolve REQUIREMENTS.md into SPEC, and strip the history out of SPEC (DONE)
 F-027 Retire the local skills and finish the documentation architecture (DONE)
-F-028 Retire the parallel gateway in the end-to-end harness (BACKLOG)
+F-028 Retire the parallel gateway in the end-to-end harness (PLANNED)
 -->
