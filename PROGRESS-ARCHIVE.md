@@ -3495,3 +3495,178 @@ is not.
 
 **Files:** `pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/config.go` (new), `pkg/mcp-proxy/deps.go` (new),
 `pkg/mcp-proxy/sweeper.go` (new), `pkg/mcp-proxy/config_test.go` (new). No existing test touched.
+
+
+---
+
+## F-022 — Bring the remaining oversized files under the §2 limits — DONE 2026-08-24
+
+**Problem:** CODING-STANDARDS §2 sets a 300-line target and a **500-line hard limit**. F-020 brought
+`pkg/idp` under it, but nothing ever surveyed the rest of the tree: **six files are still past the
+hard limit**, the largest at 1035 lines, and fourteen more sit above the 300-line target. F-017b ran
+straight into this — its new tests could not go into `pkg/proxy/proxy_test.go` without pushing a
+1035-line file to 1180, so they went into a new file and the underlying violation stayed untouched.
+
+| File | Lines | Kind | State |
+|---|---|---|---|
+| `pkg/proxy/proxy_test.go` | 1035 | tests | **done (F-022c)** |
+| `pkg/mcp-proxy/main.go` | 949 | production — assembly and config wiring | F-022d/e |
+| `main_test.go` | 776 | tests | **done (F-022b)** |
+| `pkg/repository/sql.go` | 712 | production — SQL persistence | **done (F-022a)** |
+| `main.go` | 568 | production — CLI surface | **done (F-022b)** |
+| `pkg/auth/auth.go` | 558 | production — password/session/WebAuthn glue | **done (F-022a)** |
+
+Same origin as F-020's two files: they came over with the F-008 fork and grew through F-005 and
+everything after it. Size is not cosmetic in this repo — these are the files a reviewer has to hold
+in their head to reason about the auth boundary.
+
+**Idea:** Repeat the F-020 method. Cut each file along the seams its declarations already form, as a
+**pure move** with no behaviour change, so the existing tests are the proof rather than something
+that also changed.
+
+**Decided at `/prep-step` (2026-08-23), with the measurements behind each decision:**
+
+- **Five of the six files are pure moves. One is not, and that governs the shape of this task.**
+  `pkg/mcp-proxy/main.go` holds a **single 650-line function**, `Run` (lines 217–866). Moving out
+  everything else — the `Config` struct with its validation (~170 lines) and the small helpers
+  below `Run` (~83 lines) — still leaves ~690 lines around one 650-line function. The file cannot
+  reach the limit by relocation; `Run` has to be decomposed, which is restructuring, not moving.
+- **The invariant proof does not transfer to `Run`.** F-020's method rests on identical declaration
+  sets and identical body-line counts, which only prove anything while nothing changes. `Run` is
+  called from exactly one place (`main.go:189`) and the e2e suite does **not** exercise it —
+  `e2e_harness_test.go` says so itself ("builds the gateway exactly as `Run()` mounts it"), i.e. it
+  is a parallel implementation. This is the same gap F-021 found, so the proof for the wiring has
+  to be the running binary.
+- **Correction, re-planned 2026-08-24: the fail-fast paths are *not* untested.** The first plan
+  claimed they were and made "tests for the paths that had none" the point of F-022d. Measured
+  instead of inferred: `TestRun_ValidatesTTLs` (11 cases), `TestRun_RequiresAuthBackend` and
+  `TestRun_NormalizesTrustedProxies` already cover three of the four, all through `Run` itself.
+  Exactly one branch is genuinely uncovered — **both CIMD and DCR disabled**, `main.go:167.41,169.3`
+  with execution count 0, and no test sets both flags to `false`. Two of the checks do not even sit
+  in `Run`'s body but in `validateTTLs`, which is already extracted. The claim came from reading
+  `Run`'s **35.0 % statement coverage** as if it described its branches: the figure is low because
+  the tests return at the fail-fast and never reach the ~500 lines of router construction and server
+  start — the fail-fast paths are the part that *is* covered. `CODING-STANDARDS.md` §9 lists that
+  trap first: "Reading an aggregate where one record was meant."
+- **Splitting `Run` is still two substeps, not one** — that decision rested on size and risk, which
+  are unchanged — cut at the seam its own phases already form: configuration and dependencies
+  (218–485) against wiring and server lifecycle (486–861).
+- **The real testing gain is retiring the parallel implementation, and it has already drifted.**
+  `newE2EGateway` (76 lines) rebuilds what `Run` mounts, and a helper beside it says it "mirrors
+  Run's construction". The two have diverged where it matters: `Run` builds the operator session
+  cookie with HKDF-derived subkeys so it is signed **and** encrypted and sets `HttpOnly`, `Secure`,
+  `SameSite=Lax` and `MaxAge 600`; the harness calls `cookie.NewStore(secret[:])` and never calls
+  `store.Options` at all. The e2e suite therefore cannot catch a regression in any of those §1.12
+  properties. Once the wiring is a named function the harness can call it, which closes this by
+  construction rather than by vigilance.
+- **§3 violations stay out of scope.** `handleRegister` (109 lines), `newRootCommand` (232) and
+  `handleProxy` (118) are function-length problems, not file-length ones. `Run` is the sole
+  exception, because §2 is unreachable there without §3.
+- **The fourteen files between 300 and 500 stay out of scope** unless a cut makes them fall out
+  naturally; §2 only asks to "check whether it can be split" at 300, and the hard limit is the
+  actual violation. `pkg/repository/kvs.go` (487) mirrors `sql.go` and would be worth the same cut
+  afterwards for package symmetry — as its own task, not here.
+
+**Substeps** — the pure moves first, so the invariant harness is established before the one change
+it cannot prove. **F-022a–d are done.** `pkg/mcp-proxy/main.go` is down from 949 to 716 lines;
+F-022e's phases 5–7 are the remaining ~380 that bring it under the limit.
+
+The verification harness F-022a established, to be reused by b and c: an AST parser prints
+`kind name bodyLines` per top-level declaration for the whole package (tests included) — identical
+before and after proves the declarations moved intact — plus a **line multiset** comparison, which
+catches what the declaration invariant cannot: a comment stranded between the import block and the
+first declaration would vanish without any declaration changing.
+
+### F-022e — `Run`, part 2: wiring and lifecycle
+
+**What:** Extract phases 5–7 (lines 486–861): auth/IDP/proxy router construction, the gin assembly
+(trusted proxies, `/healthz`, logging, origin check, session store) and the server lifecycle
+(listeners, TLS/ACME, shutdown). The extraction must yield a function that builds and returns the
+`*gin.Engine` **without** starting a listener — otherwise `e2e_harness_test.go`, which needs
+`httptest`, still cannot call it. That is the design decision of this substep.
+
+**Files:** `pkg/mcp-proxy/main.go`, new `pkg/mcp-proxy/router.go` and `pkg/mcp-proxy/server.go`,
+`e2e_harness_test.go`
+
+**Acceptance:**
+- [x] `pkg/mcp-proxy/main.go` ≤ 500 lines and `Run` within the §3 orchestration exception (~80)
+- [x] `e2e_harness_test.go` calls the extracted wiring instead of rebuilding it — **or** the reason
+      it cannot is recorded in the step-done entry, in which case the drift below is raised as its
+      own task rather than left implicit
+- [x] The known divergence is closed or explicitly recorded: the harness builds the session cookie
+      with `cookie.NewStore(secret[:])` and never calls `store.Options`, so it runs without
+      encryption, `HttpOnly`, `Secure` or `SameSite` — unlike `Run`
+- [x] **Verified against the running binary**, not only the suite: the gateway starts against a
+      deployment-like configuration, serves the three discovery documents, and answers `/mcp`
+      without a token with `401` plus the `WWW-Authenticate` challenge
+- [x] Each fail-fast path still aborts startup with its message, checked against the built binary
+- [x] `go test -race ./...` green
+
+**Dependencies:** none — but like F-020 it must not land between F-017's verification and the v0.2.0
+tag, or the release would ship code the verification never saw.
+
+---
+
+### F-022e — what was actually done
+
+`Run` went from 415 to **27 lines** and `pkg/mcp-proxy/main.go` from 716 to **312**. Counting the
+whole task: `main.go` 949 → 312, `Run` 645 → 27. **No file in the repository exceeds the 500-line
+hard limit any more** — the goal F-022 was raised for.
+
+| File | Lines | Holds |
+|---|---|---|
+| `router.go` | 265 | `BuildRouter` plus the auth/IDP/proxy constructors, the session store and the revocation check |
+| `server.go` | 223 | `serverGroup`, `gateway`, the three TLS modes, `acmeHost` |
+| `main.go` | 312 | `Run` and the small helpers |
+
+**The server phase was three near-identical blocks.** Each TLS mode carried its own copy of the
+listen goroutine plus the shutdown goroutine — roughly 150 lines of duplication. They collapse into
+`serverGroup.serve`, which decides TLS from the server's own `TLSConfig`. One consequence worth
+naming: the plain-HTTP branch previously logged no "server closed" debug line where the other two
+did; unifying them gives it one.
+
+**The design constraint was met.** `BuildRouter` returns the assembled `*gin.Engine` **without
+listening**, which is what the plan required so the end-to-end tests could drive the real wiring.
+
+**But the harness still cannot call it, and that was not foreseen.** `resolvedConfig` and
+`*dependencies` are package-private while `e2e_harness_test.go` lives in package `main`. The
+package boundary, not the listener, is the blocker. Per the acceptance criterion's own escape
+clause this was recorded rather than solved here, and the operator chose a separate F-number:
+**F-028** carries the relocation, the cookie divergence, the third `tokenActiveChecker` copy — and
+explicitly the retrofit of what this substep left behind. Concretely, `BuildRouter` was exported in
+anticipation of a caller that cannot exist: **its parameter types are package-private, so nothing
+outside the package can call it at all**, and its only caller is `Run`. F-028 owns that correction.
+
+**Verified against the running binary, not only the suite** — the point of this substep, because
+the e2e suite provably does not exercise this path. All five fail-fast paths abort with their
+message (no auth backend, CIMD and DCR both disabled, malformed TTL, invalid `TRUSTED_PROXIES`, no
+upstream). Running against a mock upstream: the three discovery documents answer `200` and are
+self-consistent (PRM `resource` equals AS `issuer`), `code_challenge_methods_supported` is
+`["S256"]`, CIMD is advertised, `POST /mcp` without a token answers `401` with
+`WWW-Authenticate: Bearer resource_metadata="…"`, a foreign `Origin` gets `403` and the gateway's
+own gets `200`.
+
+**One documented linter exception.** gosec G118 wants the shutdown context derived from `ctx`. That
+would be **wrong**: `ctx` is already cancelled when the shutdown goroutine runs — that is why it
+runs — and a cancelled parent makes `Shutdown` return at once instead of draining in-flight
+requests. `//nolint:gosec` with that reason, in the form the repository already uses in nine places.
+
+Coverage of `pkg/mcp-proxy` rose 46.9 % → **52.7 %** across F-022d and F-022e, without a single
+existing test being modified in either.
+
+**Files:** `pkg/mcp-proxy/main.go`, `pkg/mcp-proxy/router.go` (new), `pkg/mcp-proxy/server.go` (new).
+
+### F-022 as a whole
+
+Six files were past the hard limit, the largest at 1035 lines. Four substeps were **pure moves**,
+proven by invariants — identical AST declaration sets with per-declaration body-line counts,
+identical `go test -list` output, and a line multiset showing nothing lost or gained. The fifth was
+not a move and could not use those invariants, which is why it was split off and verified
+behaviourally instead.
+
+Two lessons the task produced beyond the file sizes. **The planned safety net was too weak, and
+only a mutation showed it:** built to the specified prefix rule, renaming a heading left the suite
+green, because every `1.x` resolves while `§1` exists. **And a plan built on an inferred fact had to
+be re-planned mid-task:** F-022d's stated purpose rested on reading `Run`'s 35 % statement coverage
+as if it described its branches, when three of the four fail-fast paths were already covered. Both
+are recorded where they happened rather than smoothed over.

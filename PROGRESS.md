@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task open.** Every roadmap task F-001–F-027 is done. **F-024** added the operator's client
+**One task in the backlog.** Every roadmap task F-001–F-027 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -20,9 +20,11 @@ name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIR
 over it; **F-027** retired the project's local skills and settled the documentation architecture —
 rules (`SPEC.md`, `CODING-STANDARDS.md`, `THREAT-MODEL.md`) apart from records (`docs/`). A
 reference guard (`docs_refs_test.go`) now keeps every `SPEC §…` and FR/GR/SR pointer honest in CI.
-**F-022** is planned and ready to build (a–e): six files sit past the §2 hard limit, and one of
-them — `pkg/mcp-proxy/main.go` — cannot be fixed by moving declarations at all, because a single
-650-line function fills it. It is wanted **before the next release**.
+**F-022 is done** (a–e): six files sat past the §2 hard limit, **none does now**. The last of them,
+`pkg/mcp-proxy/main.go`, could not be fixed by moving declarations at all — a single 645-line
+function filled it — so `Run` was decomposed and verified against the running binary rather than by
+the invariants the four pure moves used. It spawned **F-028**, which retires the parallel gateway
+the end-to-end harness still builds.
 
 **Released: v0.3.0 — but the deployment is ahead of it.** It runs a locally built image carrying
 F-024 **and F-025**, by the operator's decision, and is not reproducible from the registry until a
@@ -97,127 +99,59 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-022b | CLI surface split → `main.go` (568) and `main_test.go` (776) cut **together** into five pairs, each production file with a test file of the same name; largest is 260 lines. Deviated from the plan's two-or-three files: separating environment reading from string parsing is what keeps every file under the 300-line target rather than merely under the 500 limit, and it makes the mirroring exact. **Three invariants compared, not asserted:** 94 AST declarations with identical body-line counts, `go test -list` identical at 29 tests, line multiset 0 lost / 0 gained — the last one matters more here than in F-022a, because this substep touches test files, so a green suite alone no longer proves nothing fell out. Also verified that no file name accidentally reads as a build constraint (`IgnoredGoFiles` empty). Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-022c | Proxy test file split → `pkg/proxy/proxy_test.go` (1035) into four thematic files; mirroring production was unavailable because the package has a **single** production file, so the cut follows the seams `proxy.go` itself forms. **Deviation from a and b:** two files stay above the 300-line target (343, 414) though under the 500 limit — the finer cuts would separate "is the token valid" from "is it still active", tearing apart tests of the same contract line. **The criterion that matters when splitting a test file:** each of the five shared helpers has exactly one definition — a duplicated helper compiles and then silently drifts. 35 declarations, 17 tests, 0 lines lost. Also corrected `transport_test.go`, whose opening comment justified its existence by the limit this substep removed. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-022d | `Run` part 1 → phases 1–4 (config normalisation, validation, data directory, logger, upstream, store, keys, limiters, sweeper) extracted into `config.go`, `deps.go` and `sweeper.go`; **`Run` 645 → 415 lines**, `main.go` 949 → 716. The check order is contract — a misconfigured deployment sees the *first* problem — so it was reproduced exactly, and the **13 existing fail-fast cases stayed green with no test touched**, which is what makes them evidence. Closed the one genuinely uncovered branch (CIMD and DCR both disabled: execution count 0 → 1); coverage **46.9 % → 48.1 %**, measured, the modest rise predicted because the uncovered remainder is what F-022e moves. Three new assertions each proven able to fail. **Review caught a §3 violation no linter checks:** `sweep` had four parameters against the maximum of three. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
+| F-022e | `Run` part 2 → phases 5–7 into `router.go` and `server.go`; **`Run` 645 → 27 lines**, `main.go` 949 → 312, and **no file in the repository is past the 500-line hard limit any more**. The server phase was three near-identical blocks — ~150 lines of listen/shutdown goroutine duplication — now one `serverGroup.serve` that decides TLS from the server's own `TLSConfig`. **Verified against the running binary, not the suite**, which provably does not exercise this path: five fail-fast paths abort with their message; live, the three discovery documents answer 200 and are self-consistent, `/mcp` without a token gives 401 with `WWW-Authenticate`, a foreign `Origin` gets 403. The design constraint was met — the wiring returns the engine without listening — but the harness still cannot call it, because the parameter types are package-private and it lives in package `main`. Recorded as **F-028**, which also owns the retrofit: `BuildRouter` was exported for a caller that cannot exist. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
+| F-022 | **Bring the remaining oversized files under the §2 limits — complete** (a–e). Six files were past the hard limit, the largest at 1035 lines; **none is now**. Four substeps were pure moves proven by invariants — identical AST declaration sets with body-line counts, identical `go test -list`, and a line multiset showing nothing lost or gained; the fifth decomposed a 645-line function and was verified behaviourally instead, because those invariants only prove while nothing changes. **Two lessons outlast the line counts.** The planned safety net was too weak and only a mutation showed it: built to the specified prefix rule, renaming a heading left the suite green. And the task had to be **re-planned mid-flight** because F-022d's stated purpose rested on reading `Run`'s 35 % coverage as if it described its branches — three of four fail-fast paths were already covered. Spawned **F-028**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 
 ---
 
 ## Open tasks — work top to bottom
 
-### F-022 — Bring the remaining oversized files under the §2 limits
-
-**Status:** PLANNED
-
-**Problem:** CODING-STANDARDS §2 sets a 300-line target and a **500-line hard limit**. F-020 brought
-`pkg/idp` under it, but nothing ever surveyed the rest of the tree: **six files are still past the
-hard limit**, the largest at 1035 lines, and fourteen more sit above the 300-line target. F-017b ran
-straight into this — its new tests could not go into `pkg/proxy/proxy_test.go` without pushing a
-1035-line file to 1180, so they went into a new file and the underlying violation stayed untouched.
-
-| File | Lines | Kind | State |
-|---|---|---|---|
-| `pkg/proxy/proxy_test.go` | 1035 | tests | **done (F-022c)** |
-| `pkg/mcp-proxy/main.go` | 949 | production — assembly and config wiring | F-022d/e |
-| `main_test.go` | 776 | tests | **done (F-022b)** |
-| `pkg/repository/sql.go` | 712 | production — SQL persistence | **done (F-022a)** |
-| `main.go` | 568 | production — CLI surface | **done (F-022b)** |
-| `pkg/auth/auth.go` | 558 | production — password/session/WebAuthn glue | **done (F-022a)** |
-
-Same origin as F-020's two files: they came over with the F-008 fork and grew through F-005 and
-everything after it. Size is not cosmetic in this repo — these are the files a reviewer has to hold
-in their head to reason about the auth boundary.
-
-**Idea:** Repeat the F-020 method. Cut each file along the seams its declarations already form, as a
-**pure move** with no behaviour change, so the existing tests are the proof rather than something
-that also changed.
-
-**Decided at `/prep-step` (2026-08-23), with the measurements behind each decision:**
-
-- **Five of the six files are pure moves. One is not, and that governs the shape of this task.**
-  `pkg/mcp-proxy/main.go` holds a **single 650-line function**, `Run` (lines 217–866). Moving out
-  everything else — the `Config` struct with its validation (~170 lines) and the small helpers
-  below `Run` (~83 lines) — still leaves ~690 lines around one 650-line function. The file cannot
-  reach the limit by relocation; `Run` has to be decomposed, which is restructuring, not moving.
-- **The invariant proof does not transfer to `Run`.** F-020's method rests on identical declaration
-  sets and identical body-line counts, which only prove anything while nothing changes. `Run` is
-  called from exactly one place (`main.go:189`) and the e2e suite does **not** exercise it —
-  `e2e_harness_test.go` says so itself ("builds the gateway exactly as `Run()` mounts it"), i.e. it
-  is a parallel implementation. This is the same gap F-021 found, so the proof for the wiring has
-  to be the running binary.
-- **Correction, re-planned 2026-08-24: the fail-fast paths are *not* untested.** The first plan
-  claimed they were and made "tests for the paths that had none" the point of F-022d. Measured
-  instead of inferred: `TestRun_ValidatesTTLs` (11 cases), `TestRun_RequiresAuthBackend` and
-  `TestRun_NormalizesTrustedProxies` already cover three of the four, all through `Run` itself.
-  Exactly one branch is genuinely uncovered — **both CIMD and DCR disabled**, `main.go:167.41,169.3`
-  with execution count 0, and no test sets both flags to `false`. Two of the checks do not even sit
-  in `Run`'s body but in `validateTTLs`, which is already extracted. The claim came from reading
-  `Run`'s **35.0 % statement coverage** as if it described its branches: the figure is low because
-  the tests return at the fail-fast and never reach the ~500 lines of router construction and server
-  start — the fail-fast paths are the part that *is* covered. `CODING-STANDARDS.md` §9 lists that
-  trap first: "Reading an aggregate where one record was meant."
-- **Splitting `Run` is still two substeps, not one** — that decision rested on size and risk, which
-  are unchanged — cut at the seam its own phases already form: configuration and dependencies
-  (218–485) against wiring and server lifecycle (486–861).
-- **The real testing gain is retiring the parallel implementation, and it has already drifted.**
-  `newE2EGateway` (76 lines) rebuilds what `Run` mounts, and a helper beside it says it "mirrors
-  Run's construction". The two have diverged where it matters: `Run` builds the operator session
-  cookie with HKDF-derived subkeys so it is signed **and** encrypted and sets `HttpOnly`, `Secure`,
-  `SameSite=Lax` and `MaxAge 600`; the harness calls `cookie.NewStore(secret[:])` and never calls
-  `store.Options` at all. The e2e suite therefore cannot catch a regression in any of those §1.12
-  properties. Once the wiring is a named function the harness can call it, which closes this by
-  construction rather than by vigilance.
-- **§3 violations stay out of scope.** `handleRegister` (109 lines), `newRootCommand` (232) and
-  `handleProxy` (118) are function-length problems, not file-length ones. `Run` is the sole
-  exception, because §2 is unreachable there without §3.
-- **The fourteen files between 300 and 500 stay out of scope** unless a cut makes them fall out
-  naturally; §2 only asks to "check whether it can be split" at 300, and the hard limit is the
-  actual violation. `pkg/repository/kvs.go` (487) mirrors `sql.go` and would be worth the same cut
-  afterwards for package symmetry — as its own task, not here.
-
-**Substeps** — the pure moves first, so the invariant harness is established before the one change
-it cannot prove. **F-022a–d are done.** `pkg/mcp-proxy/main.go` is down from 949 to 716 lines;
-F-022e's phases 5–7 are the remaining ~380 that bring it under the limit.
-
-The verification harness F-022a established, to be reused by b and c: an AST parser prints
-`kind name bodyLines` per top-level declaration for the whole package (tests included) — identical
-before and after proves the declarations moved intact — plus a **line multiset** comparison, which
-catches what the declaration invariant cannot: a comment stranded between the import block and the
-first declaration would vanish without any declaration changing.
-
-#### F-022e — `Run`, part 2: wiring and lifecycle
-
-**What:** Extract phases 5–7 (lines 486–861): auth/IDP/proxy router construction, the gin assembly
-(trusted proxies, `/healthz`, logging, origin check, session store) and the server lifecycle
-(listeners, TLS/ACME, shutdown). The extraction must yield a function that builds and returns the
-`*gin.Engine` **without** starting a listener — otherwise `e2e_harness_test.go`, which needs
-`httptest`, still cannot call it. That is the design decision of this substep.
-
-**Files:** `pkg/mcp-proxy/main.go`, new `pkg/mcp-proxy/router.go` and `pkg/mcp-proxy/server.go`,
-`e2e_harness_test.go`
-
-**Acceptance:**
-- [ ] `pkg/mcp-proxy/main.go` ≤ 500 lines and `Run` within the §3 orchestration exception (~80)
-- [ ] `e2e_harness_test.go` calls the extracted wiring instead of rebuilding it — **or** the reason
-      it cannot is recorded in the step-done entry, in which case the drift below is raised as its
-      own task rather than left implicit
-- [ ] The known divergence is closed or explicitly recorded: the harness builds the session cookie
-      with `cookie.NewStore(secret[:])` and never calls `store.Options`, so it runs without
-      encryption, `HttpOnly`, `Secure` or `SameSite` — unlike `Run`
-- [ ] **Verified against the running binary**, not only the suite: the gateway starts against a
-      deployment-like configuration, serves the three discovery documents, and answers `/mcp`
-      without a token with `401` plus the `WWW-Authenticate` challenge
-- [ ] Each fail-fast path still aborts startup with its message, checked against the built binary
-- [ ] `go test -race ./...` green
-
-**Dependencies:** none — but like F-020 it must not land between F-017's verification and the v0.2.0
-tag, or the release would ship code the verification never saw.
-
----
+*Nothing planned.* The next task is **F-028** in the backlog below; it needs
+`/coding-kit:prep-step` before it can be built.
 
 ## Feature ideas (backlog)
 
-*Empty.* Everything raised so far is either done or planned above.
+### F-028 — Retire the parallel gateway in the end-to-end harness
+
+**Status:** BACKLOG
+
+**Problem:** `e2e_harness_test.go` builds the gateway a second time instead of using the one `Run`
+builds, and the two have already drifted apart. Three findings, all measured during F-022e. The
+harness creates the operator session cookie with `cookie.NewStore(secret[:])` and never calls
+`store.Options`, so it runs **without encryption, `HttpOnly`, `Secure` or `SameSite`** — the
+end-to-end suite therefore cannot catch a regression in any of those SPEC §1.12 properties, which
+makes this a testing gap with a security edge rather than tidiness. The revocation check
+`tokenActiveChecker` exists there a **third** time, beside the production copy. And although F-022e
+turned the wiring into a callable function, the harness still cannot call it: it lives in package
+`main` while the parameter types are package-private. This is the same gap F-021 found once and
+closed by hand — by hand does not hold.
+
+**Idee:** Let the end-to-end tests drive the real wiring through `httptest` and delete the parallel
+construction rather than keep it in sync. The suite would then exercise what the binary runs by
+construction instead of by vigilance.
+
+**Lösungsskizze:**
+- The end-to-end tests reference nothing from package `main`, so relocating them is mechanical; the
+  question is where they end up and how much of the real startup path they should drive.
+- Driving `resolveConfig`/`openDependencies` is the faithful option; assembling the pieces directly
+  gives the tests control over the upstream and the store. That trade-off is the design decision.
+- A seam is needed for the CIMD stub, because the wiring builds the real resolver from the
+  configuration. Keeping that seam package-internal would avoid widening the public API.
+- No new dependencies, no new configuration, no change to the served surface.
+
+**Nachzug aus F-022e (ausdrücklich Teil dieser Aufgabe):** F-022e exported `BuildRouter` in
+anticipation of this task. The export does not work as intended — its parameter types are
+package-private, so **nothing outside the package can call it at all**, and its only caller is
+`Run`, two files away. Whatever F-028 decides, it owns the correction: unexport it if the tests end
+up in the same package, or design a seam that is actually callable if they do not. Any other loose
+end F-022e left behind for the same reason is this task's to clean up as well.
+
+**Abhängigkeiten:** F-022e (done — it produced the callable wiring this task builds on).
+
+---
 
 <!-- FEATURE-INDEX
-next-feature: F-028
+next-feature: F-029
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -239,10 +173,11 @@ F-018 Build the container image in CI (DONE)
 F-019 Evaluate whether DCR can be switched off (DONE)
 F-020 Split pkg/idp/idp.go along its seams (DONE)
 F-021 Validate the Origin header (DNS rebinding, SR-9) (DONE)
-F-022 Bring the remaining oversized files under the §2 limits (PLANNED)
+F-022 Bring the remaining oversized files under the §2 limits (DONE)
 F-023 CIMD documents rejected over a foreign grant type (DONE)
 F-024 Operator view of connected clients, with a kill switch (DONE)
 F-025 Name a connection at consent time, and show the client's own name (DONE)
 F-026 Dissolve REQUIREMENTS.md into SPEC, and strip the history out of SPEC (DONE)
 F-027 Retire the local skills and finish the documentation architecture (DONE)
+F-028 Retire the parallel gateway in the end-to-end harness (BACKLOG)
 -->
