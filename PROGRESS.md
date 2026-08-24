@@ -101,6 +101,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-022d | `Run` part 1 → phases 1–4 (config normalisation, validation, data directory, logger, upstream, store, keys, limiters, sweeper) extracted into `config.go`, `deps.go` and `sweeper.go`; **`Run` 645 → 415 lines**, `main.go` 949 → 716. The check order is contract — a misconfigured deployment sees the *first* problem — so it was reproduced exactly, and the **13 existing fail-fast cases stayed green with no test touched**, which is what makes them evidence. Closed the one genuinely uncovered branch (CIMD and DCR both disabled: execution count 0 → 1); coverage **46.9 % → 48.1 %**, measured, the modest rise predicted because the uncovered remainder is what F-022e moves. Three new assertions each proven able to fail. **Review caught a §3 violation no linter checks:** `sweep` had four parameters against the maximum of three. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-022e | `Run` part 2 → phases 5–7 into `router.go` and `server.go`; **`Run` 645 → 27 lines**, `main.go` 949 → 312, and **no file in the repository is past the 500-line hard limit any more**. The server phase was three near-identical blocks — ~150 lines of listen/shutdown goroutine duplication — now one `serverGroup.serve` that decides TLS from the server's own `TLSConfig`. **Verified against the running binary, not the suite**, which provably does not exercise this path: five fail-fast paths abort with their message; live, the three discovery documents answer 200 and are self-consistent, `/mcp` without a token gives 401 with `WWW-Authenticate`, a foreign `Origin` gets 403. The design constraint was met — the wiring returns the engine without listening — but the harness still cannot call it, because the parameter types are package-private and it lives in package `main`. Recorded as **F-028**, which also owns the retrofit: `BuildRouter` was exported for a caller that cannot exist. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-022 | **Bring the remaining oversized files under the §2 limits — complete** (a–e). Six files were past the hard limit, the largest at 1035 lines; **none is now**. Four substeps were pure moves proven by invariants — identical AST declaration sets with body-line counts, identical `go test -list`, and a line multiset showing nothing lost or gained; the fifth decomposed a 645-line function and was verified behaviourally instead, because those invariants only prove while nothing changes. **Two lessons outlast the line counts.** The planned safety net was too weak and only a mutation showed it: built to the specified prefix rule, renaming a heading left the suite green. And the task had to be **re-planned mid-flight** because F-022d's stated purpose rested on reading `Run`'s 35 % coverage as if it described its branches — three of four fail-fast paths were already covered. Spawned **F-028**. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
+| F-028a | End-to-end tests moved into `pkg/mcp-proxy` (794 lines, by `git mv`) so they can reach the gateway's own assembly instead of rebuilding it. **The compiler proved the duplication:** the move produced exactly one error, `tokenActiveChecker redeclared`, and the two implementations were identical line for line — the harness copy even said "copied from Run". **Deviated from the plan for the better:** it called for renaming the copy and deleting it in F-028b, which would have left two identical functions under two names; the harness now calls the production one, so `tokenActiveChecker` exists exactly once already. Identical test set of **240** across the repository, verified by `go test -list`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 
 ---
 
@@ -146,20 +147,6 @@ construction instead of by vigilance.
   when `servesTLS()` was written one substep ahead of its user.
 
 **Substeps**
-
-#### F-028a — Move the end-to-end tests into the package
-
-**What:** Relocate `e2e_harness_test.go` and `e2e_test.go` (794 lines) to `pkg/mcp-proxy`, otherwise
-unchanged — they keep building the gateway themselves for now. One change is forced: the harness's
-`tokenActiveChecker` collides with the production copy in `router.go`, so **the compiler proves the
-duplication** the moment they share a package.
-
-**Files:** `e2e_harness_test.go`, `e2e_test.go` (both moved)
-
-**Acceptance:**
-- [ ] `go test -list '.*'` returns the same test set across the repository as before the move
-- [ ] `go test -race ./...` green; the root package keeps its other tests
-- [ ] The collision is resolved by renaming the harness copy, not by keeping two implementations
 
 #### F-028b — Drive the real wiring and delete the second gateway
 

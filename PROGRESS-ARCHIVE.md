@@ -3670,3 +3670,53 @@ green, because every `1.x` resolves while `§1` exists. **And a plan built on an
 be re-planned mid-task:** F-022d's stated purpose rested on reading `Run`'s 35 % statement coverage
 as if it described its branches, when three of the four fail-fast paths were already covered. Both
 are recorded where they happened rather than smoothed over.
+
+
+---
+
+## F-028a — Move the end-to-end tests into the package — DONE 2026-08-24
+
+**What:** Relocate `e2e_harness_test.go` and `e2e_test.go` (794 lines) to `pkg/mcp-proxy`, otherwise
+unchanged — they keep building the gateway themselves for now. One change is forced: the harness's
+`tokenActiveChecker` collides with the production copy in `router.go`, so **the compiler proves the
+duplication** the moment they share a package.
+
+**Files:** `e2e_harness_test.go`, `e2e_test.go` (both moved)
+
+**Acceptance:**
+- [x] `go test -list '.*'` returns the same test set across the repository as before the move
+- [x] `go test -race ./...` green; the root package keeps its other tests
+- [x] The collision is resolved by renaming the harness copy, not by keeping two implementations
+
+### What was actually done
+
+`e2e_harness_test.go` (460 lines) and `e2e_test.go` (334) moved from the repository root to
+`pkg/mcp-proxy`, by `git mv` so the history follows them. The package clause changed; nothing else
+about the tests did.
+
+**The compiler proved the duplication, exactly as the plan predicted.** The move produced one error
+and only one: `tokenActiveChecker redeclared in this block`. The two implementations turned out to
+be identical line for line — one reads `repo`, the other `deps.repo` — and the harness copy carried
+a comment saying so itself: "copied from Run".
+
+**Deviation from the plan, and it is an improvement.** The substep called for *renaming* the harness
+copy and deleting it in F-028b. Renaming would have left two identical functions under two names,
+which is the drift this whole task exists to end. Since the production function needs nothing but
+`deps.repo`, the harness now calls it directly:
+
+    TokenActive: tokenActiveChecker(&dependencies{repo: repo}),
+
+The acceptance criterion — "not by keeping two implementations" — is therefore met literally in this
+substep rather than deferred. `tokenActiveChecker` now exists exactly **once** in the repository.
+
+**Verified:** `go test -list '.*'` returns the identical set of **240 tests** across the whole
+repository before and after; `go test -race ./...`, gofmt, vet and golangci-lint are green; the root
+package keeps its six other test files (`docs_refs_test.go`, `env_test.go`, `healthcheck_test.go`,
+`main_test.go`, `parse_test.go`, `rotatekey_test.go`).
+
+The harness header now says why the file sits in this package. The claim it still makes — that it
+assembles the gateway "the way `Run()` mounts it" — stays untrue until F-028b, and the header says
+that too rather than leaving a reader to discover it.
+
+**Files:** `e2e_harness_test.go` → `pkg/mcp-proxy/e2e_harness_test.go`,
+`e2e_test.go` → `pkg/mcp-proxy/e2e_test.go`.

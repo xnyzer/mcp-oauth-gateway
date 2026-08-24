@@ -1,4 +1,4 @@
-package main
+package mcpproxy
 
 // End-to-end harness (F-006a). Unlike the per-package tests — which exercise
 // idp, auth, proxy, keys and cimd in isolation — this assembles the whole
@@ -8,6 +8,10 @@ package main
 // verifies a token minted by /.idp/token is accepted by the proxy and
 // forwarded upstream, that the real password login gates the authorize flow,
 // and that revocation / key rotation are honoured through the full stack.
+//
+// It lives in this package rather than at the repository root so that it can
+// reach the gateway's own assembly instead of rebuilding it (F-028). The
+// rebuild below is what F-028b replaces.
 //
 // Coverage note: CIMD's HTTP fetch layer (SSRF guards, size/time limits,
 // caching) can only be reached in-package because the private-host bypass is
@@ -23,7 +27,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -42,7 +45,6 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/ory/fosite"
 	"github.com/stretchr/testify/require"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/auth"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/cimd"
@@ -185,7 +187,9 @@ func newE2EGateway(t *testing.T, opts e2eOpts) *e2eGateway {
 		Proxy:           upstream.handler(),
 		VerificationKey: keyManager.VerificationKey,
 		ProxyHeaders:    proxyHeaders,
-		TokenActive:     tokenActiveChecker(repo),
+		// The production revocation hook (SPEC §2.4) rather than a copy of it,
+		// which is what sharing a package with the gateway now allows.
+		TokenActive: tokenActiveChecker(&dependencies{repo: repo}),
 	})
 	require.NoError(t, err)
 
@@ -212,25 +216,6 @@ func limiterMiddleware(t *testing.T, expr, endpoint string, logger *zap.Logger) 
 	limit, err := ratelimit.ParseLimit(expr)
 	require.NoError(t, err)
 	return ratelimit.Middleware(ratelimit.NewLimiter(limit), endpoint, logger)
-}
-
-// tokenActiveChecker is the proxy's revocation hook (SPEC §2.4), copied from
-// Run: a token is active while its fosite record (keyed by JWT signature)
-// exists; a store failure fails closed.
-func tokenActiveChecker(repo repository.Repository) func(context.Context, string) error {
-	return func(ctx context.Context, rawToken string) error {
-		parts := strings.Split(rawToken, ".")
-		if len(parts) != 3 {
-			return proxy.ErrTokenInactive
-		}
-		if _, err := repo.GetAccessTokenSession(ctx, parts[2], nil); err != nil {
-			if errors.Is(err, fosite.ErrNotFound) {
-				return proxy.ErrTokenInactive
-			}
-			return err
-		}
-		return nil
-	}
 }
 
 // -- HTTP helpers ------------------------------------------------------------

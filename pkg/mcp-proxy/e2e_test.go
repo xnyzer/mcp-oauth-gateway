@@ -1,4 +1,4 @@
-package main
+package mcpproxy
 
 // End-to-end flows over the assembled gateway (F-006a). See
 // e2e_harness_test.go for the harness. Each test drives real HTTP against a
