@@ -1,5 +1,5 @@
 # Builder — digest-pinned (audit M9; CODING-STANDARDS §7: no floating tags).
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:6ef6e30f0ea5c384f6d111cf856e024e3086bbdcb1779da3f3b3fbba0aea53d2 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS builder
 
 ENV GOTOOLCHAIN=auto
 
