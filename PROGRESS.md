@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned and under way — **F-031a–d are done**, only F-031e (`go-webauthn` 0.18, with the passkey check on the live deployment) is open; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
+**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned and under way — **F-031a–d are done; F-031e (`go-webauthn` 0.18) is code-complete** and waits for its last criterion, the passkey check on the live deployment after the v0.5.0 release; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -192,6 +192,10 @@ F-032.
 
 #### F-031e — `go-webauthn` 0.18
 
+**State: code complete (2026-10-13), one criterion open — the passkey check on the live
+deployment.** It follows the v0.5.0 release; until then this substep, and F-031 with it, is not
+done. The operator has re-enabled the password login as the safety net.
+
 **What:** Last, so the real-device check runs on the final combination. Bump to 0.18.2; turn
 the library's relying-party-ID error into a start-up message that names `EXTERNAL_URL` and
 says what to use instead; prove that a passkey stored under 0.17 still logs in under 0.18;
@@ -203,15 +207,38 @@ cover the stricter response checks.
 **Dependencies:** F-031d.
 
 **Acceptance criteria:**
-- [ ] A credential record written by 0.17.4 completes a login under 0.18.2 (fixture test).
-- [ ] An IP address as `EXTERNAL_URL` host stops the gateway at start-up with a message naming
+- [x] A credential record written by 0.17.4 completes a login under 0.18.2 (fixture test).
+- [x] An IP address as `EXTERNAL_URL` host stops the gateway at start-up with a message naming
       the setting and the remedy; a domain and `localhost` start. Seen red once.
-- [ ] An unsolicited extension output fails the ceremony, pinned by a test, so the strict
+- [x] An unsolicited extension output fails the ceremony, pinned by a test, so the strict
       policy is a decision and not an accident of the default.
-- [ ] CHANGELOG carries a prominent upgrade note for the `EXTERNAL_URL` change.
-- [ ] Full check set green.
+- [x] CHANGELOG carries a prominent upgrade note for the `EXTERNAL_URL` change.
+- [x] Full check set green.
 - [ ] **On the live deployment:** password login re-enabled first, update applied with a
       backup, the operator's passkey login succeeds, password login disabled again.
+
+**What was built** (detail goes to `PROGRESS-ARCHIVE.md` once the last criterion is met):
+- `go-webauthn` 0.17.4 → 0.18.2, and with it — at the operator's request — the two patch updates
+  that had appeared since F-031a, `fxamacker/cbor` 2.9.6 and `x/mod` 0.42.0. No new module.
+- `newWebAuthn` refuses an IP address itself, in terms of the setting, and wraps the library's
+  refusal of any other unusable host the same way (`ErrInvalidRelyingPartyHost`). The strict
+  extension policy is set explicitly instead of inherited as a default.
+- **Fixtures written by 0.17.4** (`pkg/auth/testdata/`), generated before the bump: a synced
+  passkey (backup-eligible, backed up, user-verified) and a device-bound key without user
+  verification. Both log in under 0.18.2 and round-trip through it to the same document. A
+  fixture cannot carry its private key (CODING-STANDARDS §7), so the test enrolls a fresh key
+  and rewrites the stored record into the 0.17.4 one with that key's id and public key — the
+  field set, flags and authenticator data are 0.17.4's. That its values count was shown by
+  mutation: a fixture whose backup flags contradict the authenticator fails the login.
+- Tests for the start-up path (`startE2EGateway`, a small harness extension that returns a
+  refused start-up as an error), the unsolicited extension output at login and at enrollment,
+  and the `id`/`rawId` check. Eight mutations, each seen red.
+- All five CI jobs replicated under Go 1.27.2; `govulncheck` 0 reachable; gitleaks clean.
+
+**What no test here can tell:** whether the operator's own browser or password manager returns
+an extension output unasked. If it does, the passkey login fails after the update — which is
+what the password login is switched on for, and the agreed answer is to relax the policy to
+"ignore".
 
 ## Feature ideas (backlog)
 

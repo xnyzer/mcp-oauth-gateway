@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -20,19 +21,41 @@ import (
 	"go.uber.org/zap"
 )
 
+// ErrInvalidRelyingPartyHost reports an EXTERNAL_URL whose host cannot be a
+// WebAuthn relying-party ID.
+var ErrInvalidRelyingPartyHost = errors.New("EXTERNAL_URL has a host that cannot be used for passkeys")
+
 // newWebAuthn builds the relying party from the normalized issuer
 // (SPEC §1.12): RP ID is the bare host, the issuer itself is the sole
 // allowed origin.
+//
+// A passkey is bound to a domain name, so the host has to be one — an IP
+// address, or a single label other than localhost, can never complete a
+// ceremony. The library refuses such a relying-party ID; the error is put in
+// terms of the setting, because that is where the operator can act on it.
 func newWebAuthn(externalURL string) (*webauthn.WebAuthn, error) {
 	parsed, err := url.Parse(externalURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse external URL for WebAuthn: %w", err)
 	}
-	return webauthn.New(&webauthn.Config{
-		RPID:          parsed.Hostname(),
+	host := parsed.Hostname()
+	if net.ParseIP(host) != nil {
+		return nil, fmt.Errorf("%w: %q is an IP address, and a passkey is bound to a domain name — set EXTERNAL_URL to a hostname, or to http://localhost for local use", ErrInvalidRelyingPartyHost, host)
+	}
+	relyingParty, err := webauthn.New(&webauthn.Config{
+		RPID:          host,
 		RPDisplayName: "mcp-oauth-gateway",
 		RPOrigins:     []string{externalURL},
+		// The gateway requests no WebAuthn extension and reads none. An
+		// output nobody asked for fails the ceremony — the library's
+		// default, stated here so that it is a decision and not a default
+		// that a later version may change (fail closed, SR-3).
+		ExtensionsUnsolicitedOutputPolicy: protocol.UnsolicitedOutputPolicyReject,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %q — set EXTERNAL_URL to a domain name, or to http://localhost for local use: %w", ErrInvalidRelyingPartyHost, host, err)
+	}
+	return relyingParty, nil
 }
 
 // webAuthnUser adapts the persisted operator account to go-webauthn's User.

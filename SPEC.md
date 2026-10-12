@@ -387,7 +387,9 @@ password source:** the record never stores a password hash — only identity, pa
 password-disabled flag.
 
 **Passkey/WebAuthn:** RP ID = the issuer's host, allowed origin = the issuer
-(§0). Ceremony state lives in the cookie session, one `finish` per `begin`.
+(§0); the host therefore has to be a domain name or `localhost` (§3.1). Ceremony state lives in
+the cookie session, one `finish` per `begin`. The gateway requests no WebAuthn extension, and a
+client reply carrying an extension output nobody asked for MUST fail the ceremony (SR-3).
 
 | Endpoint | Access | Purpose |
 |---|---|---|
@@ -577,7 +579,10 @@ The option reference — every variable, its default and its description — is 
 second source of truth; this section states only what is **normative** about these options.
 
 - **`EXTERNAL_URL`** is the issuer (§0): absolute http(s), no path/query/fragment. An `http`
-  scheme on a non-loopback host MUST log a startup WARNING.
+  scheme on a non-loopback host MUST log a startup WARNING. **Its host MUST be a domain name or
+  `localhost`:** it is the passkey relying-party ID (§1.12), and a passkey is bound to a domain
+  name. With an IP address, or a single label other than `localhost`, the gateway MUST refuse
+  to start, naming the setting.
 - **At least one login backend MUST exist at startup** — a password, a configured OIDC provider,
   or an already-enrolled passkey. Otherwise the gateway MUST refuse to start (§1.12): a silently
   missing auth backend is worse than a process that will not boot.

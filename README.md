@@ -146,6 +146,12 @@ clients send none, so Claude and friends are unaffected by design.
 under a second hostname, by IP, or on a different port, the login and consent POSTs on `/.auth/*`
 are refused with `403` and you cannot log in.
 
+**Use a name, not an address.** `EXTERNAL_URL` cannot carry an IP address
+(`http://192.0.2.10:8080`): passkeys are bound to a domain name, and the gateway refuses to start
+with anything else. For a LAN-only setup give the host a name — an entry in your router's DNS or
+in `/etc/hosts` is enough (`http://gateway.lan:8080`); on the machine itself, `http://localhost`
+works.
+
 The gateway logs every rejection at WARN with both the offending and the expected origin, so one
 look at `docker logs` names the cause. `ORIGIN_CHECK_ENABLED=false` turns the check off as a rescue;
 the disabled state is logged at startup so it does not stay off by accident.
@@ -201,7 +207,7 @@ Booleans accept `true|1` / `false|0`. See [`SPEC.md`](SPEC.md) §3 for the norma
 
 | Env | Default | Description |
 |---|---|---|
-| `EXTERNAL_URL` | `http://localhost` | Public base URL = OAuth issuer. Absolute, no path/query/fragment. `http` on a non-loopback host logs a startup WARNING. |
+| `EXTERNAL_URL` | `http://localhost` | Public base URL = OAuth issuer. Absolute, no path/query/fragment. **The host must be a domain name or `localhost` — not an IP address:** it is what passkeys are bound to, and the gateway refuses to start otherwise. `http` on a non-loopback host logs a startup WARNING. |
 | `LISTEN` | `:80` (image: `:8080`) | Plain-HTTP listen address. |
 | `TLS_LISTEN` | `:443` (image: `:8443`) | TLS listen address (when TLS is enabled). |
 | `DATA_PATH` | `./data` (image: `/data`) | Data directory: signing keys, token store, auto-generated secrets. **Back this up.** |

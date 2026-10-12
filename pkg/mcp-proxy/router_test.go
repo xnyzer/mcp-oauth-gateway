@@ -99,3 +99,40 @@ func TestBuildOIDCProvidersAcceptsAnEscapedPattern(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, providers, 1)
 }
+
+// -- EXTERNAL_URL as the passkey relying party ---------------------------------
+
+// A passkey is bound to a domain name, so the gateway refuses to start with an
+// IP address as its EXTERNAL_URL host (F-031e). The start-up message has to say
+// which setting to change and what to change it to — "invalid RPID" would mean
+// nothing to an operator.
+func TestStartUpRefusesAnExternalURLThatCannotCarryAPasskey(t *testing.T) {
+	for _, externalURL := range []string{
+		"http://192.0.2.10:8080",
+		"http://127.0.0.1:8080",
+		"http://[2001:db8::1]:8080",
+	} {
+		t.Run(externalURL, func(t *testing.T) {
+			gw, err := startE2EGateway(t, e2eOpts{externalURL: externalURL})
+
+			require.Nil(t, gw, "the gateway must not come up")
+			require.ErrorIs(t, err, auth.ErrInvalidRelyingPartyHost)
+			require.Contains(t, err.Error(), "EXTERNAL_URL")
+			require.Contains(t, err.Error(), "localhost")
+		})
+	}
+}
+
+func TestStartUpAcceptsADomainNameOrLocalhostAsExternalURL(t *testing.T) {
+	for _, externalURL := range []string{
+		"https://mcp.example.com",
+		"http://localhost:8080",
+	} {
+		t.Run(externalURL, func(t *testing.T) {
+			gw, err := startE2EGateway(t, e2eOpts{externalURL: externalURL})
+
+			require.NoError(t, err)
+			require.Equal(t, externalURL, gw.issuer)
+		})
+	}
+}

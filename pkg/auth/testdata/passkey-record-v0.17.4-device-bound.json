@@ -1,0 +1,23 @@
+{
+  "id": "TUEWph6DgckRQJutf3eS9ap4Jgblfo9Iy7tqk3hfDpw=",
+  "publicKey": "pQECAyYgASFYID0fyj9yOfB2uSOOIXEOatGOUrU5TwpAzjKEaHGhZOIjIlgguZyQgsiTkPfBOLeUfR4K1P7J/QpbLR0ccnHev4ZynKo=",
+  "attestationType": "basic_surrogate",
+  "attestationFormat": "packed",
+  "transport": [
+    "internal"
+  ],
+  "flags": {
+    "userPresent": true,
+    "userVerified": false,
+    "backupEligible": false,
+    "backupState": false
+  },
+  "authenticator": {
+    "AAGUID": "F3GC02V1nUcIAEv7U4jknA=="
+  },
+  "attestation": {
+    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiTVZxNDBBM3ZGcFREdWRKMTZQbVpwX25hb05vdFVWTGFkQ3lRZy1BXzlfYyIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODA4MCJ9",
+    "clientDataHash": "EaCdCX2J7q5PKGIjZysnNatHN9Mrdc69TiSQgsJHaec=",
+    "object": "o2NmbXRmcGFja2VkZ2F0dFN0bXSiY2FsZyZjc2lnWEYwRAIgL33ldABQrKRDgZdPsEfhVJD6m4rLZVNyVJ4cLMJJnz0CIEWfcIQKw4kHUBen/XlkJ+1xCs5BoqdKQt2unhj1k2PJaGF1dGhEYXRhWKRJlg3liA6MaHQ0Fw9kdmBbj+SuuaKGMseZXPO6gx2XY0EAAAAAF3GC02V1nUcIAEv7U4jknAAgTUEWph6DgckRQJutf3eS9ap4Jgblfo9Iy7tqk3hfDpylAQIDJiABIVggPR/KP3I58Ha5I44hcQ5q0Y5StTlPCkDOMoRocaFk4iMiWCC5nJCCyJOQ98E4t5R9HgrU/sn9ClstHRxycd6/hnKcqg=="
+  }
+}

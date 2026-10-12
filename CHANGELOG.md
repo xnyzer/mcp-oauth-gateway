@@ -37,6 +37,25 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
 
 ### Changed
 
+- **Breaking, if `EXTERNAL_URL` holds an IP address: give the gateway a name before you
+  upgrade.** A gateway configured as `EXTERNAL_URL=http://192.0.2.10:8080` — an IPv4 or IPv6
+  address as the host — **no longer starts**. The message says so in these terms:
+
+  ```
+  EXTERNAL_URL has a host that cannot be used for passkeys: "192.0.2.10" is an IP address,
+  and a passkey is bound to a domain name — set EXTERNAL_URL to a hostname, or to
+  http://localhost for local use
+  ```
+
+  The cause is `go-webauthn` 0.18, which validates the passkey relying-party ID as a domain
+  name; the gateway takes that ID from the `EXTERNAL_URL` host. Passkeys never worked on such a
+  setup — a browser refuses an IP address for them — but the gateway used to start and the
+  password login used to work. **What to do:** give the host a name (a DNS entry or a line in
+  `/etc/hosts` is enough: `http://gateway.lan:8080`) and set `EXTERNAL_URL` to it. Note that
+  `EXTERNAL_URL` is also the OAuth issuer: changing it means connected clients have to
+  authorize again. A domain name, and `localhost`, are unaffected; a single-label host such as
+  `http://gateway:8080` was already refused before.
+
 - **Breaking, if you log in through OIDC: set an allow-list before you upgrade.** A gateway
   with `OIDC_CONFIGURATION_URL`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` set and no
   `OIDC_ALLOWED_*` rule **no longer starts**; the message names the four settings. Decide who
@@ -71,6 +90,21 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   have meant a base image that stops receiving fixes. Nothing to do when upgrading: the image
   still runs as non-root uid 65532, so existing named volumes and bind mounts keep their
   ownership, and it still has no shell, package manager or interpreter.
+
+- **Passkey replies are checked more strictly (`go-webauthn` 0.18).** Passkeys enrolled before
+  the upgrade keep working — a record stored by the previous version is read unchanged. Two
+  things a client can no longer get away with:
+  - **An extension output nobody asked for fails the ceremony.** The gateway requests no WebAuthn
+    extension; a login or enrollment reply that carries one anyway is refused. Browsers send an
+    empty object, which is fine. If a password manager or security key of yours stops working
+    after the upgrade, this is the first thing to suspect — the gateway logs `Passkey login
+    failed` with the reason.
+  - **A reply whose `id` and `rawId` disagree is refused** at enrollment; the previous version
+    accepted it.
+
+  **If you have switched the password login off:** keep a way back in for the upgrade. Switch
+  the password login on before you upgrade, check that your passkey still logs you in, then
+  switch it off again.
 
 - **The stdio backend speaks MCP 2026-07-28 (`mcp-go` 1.x).** Only deployments whose upstream is a
   *command* rather than a URL are affected; the transparent backend forwards bytes and is

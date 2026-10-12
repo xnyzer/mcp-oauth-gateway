@@ -120,6 +120,7 @@ type e2eOpts struct {
 	cimd          idp.CIMDResolver
 	registerLimit string // e.g. "1/m"; empty disables
 	tokenLimit    string
+	externalURL   string // defaults to e2eIssuer
 }
 
 // newE2EGateway starts the gateway the way the binary does — resolveConfig,
@@ -128,7 +129,20 @@ type e2eOpts struct {
 // exercise is what `Run` runs; the only thing left out is the listener.
 func newE2EGateway(t *testing.T, opts e2eOpts) *e2eGateway {
 	t.Helper()
+	gw, err := startE2EGateway(t, opts)
+	require.NoError(t, err)
+	return gw
+}
+
+// startE2EGateway is newE2EGateway for tests about a start-up that is refused:
+// it hands back the error the wiring reports instead of failing the test.
+func startE2EGateway(t *testing.T, opts e2eOpts) (*e2eGateway, error) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
+	issuer := opts.externalURL
+	if issuer == "" {
+		issuer = e2eIssuer
+	}
 
 	// Neutralise the three environment variables the startup path reads, so a
 	// developer's shell cannot change what the tests exercise.
@@ -148,7 +162,7 @@ func newE2EGateway(t *testing.T, opts e2eOpts) *e2eGateway {
 		TLSListen:         ":0",
 		DataPath:          t.TempDir(),
 		RepositoryBackend: "local",
-		ExternalURL:       e2eIssuer,
+		ExternalURL:       issuer,
 		PasswordHash:      string(hash),
 		// Host-only, so the gateway joins the inbound path onto it and the
 		// upstream sees the path the client asked for (SPEC §3.1).
@@ -180,12 +194,14 @@ func newE2EGateway(t *testing.T, opts e2eOpts) *e2eGateway {
 	}
 
 	router, err := buildRouter(t.Context(), rc, deps)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 
-	return &e2eGateway{server: server, issuer: e2eIssuer, repo: deps.repo, keys: deps.keys, upstream: upstream}
+	return &e2eGateway{server: server, issuer: issuer, repo: deps.repo, keys: deps.keys, upstream: upstream}, nil
 }
 
 // -- HTTP helpers ------------------------------------------------------------
