@@ -2,7 +2,7 @@ module github.com/xnyzer/mcp-oauth-gateway
 
 go 1.26.2
 
-toolchain go1.26.7
+toolchain go1.26.9
 
 require (
 	github.com/blendle/zapdriver v1.3.1
