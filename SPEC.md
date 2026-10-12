@@ -629,8 +629,8 @@ Reference as in §3.1; the normative part:
 
 - **`docker-compose.example.yml`** (repo root): gateway + example upstream, placeholder env
   values only (GR-5) — see file.
-- **`Dockerfile`**: digest-pinned `golang:1.26-bookworm`
-  builder and `gcr.io/distroless/static-debian12:nonroot` runtime — non-root (uid 65532), no
+- **`Dockerfile`**: digest-pinned `golang:1.27-bookworm`
+  builder and `gcr.io/distroless/static-debian13:nonroot` runtime — non-root (uid 65532), no
   shell/package manager/interpreters (stdio upstreams needing `npx`/`uvx` run as a separate
   service or custom image). In-image defaults `LISTEN=:8080` / `TLS_LISTEN=:8443` (a non-root
   container cannot bind :80/:443 — publish host ports onto them); `/data` owned by nonroot so

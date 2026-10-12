@@ -65,6 +65,13 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   generated patterns and 1,555 values each, and every difference traces back to one of the six
   points named here.
 
+- **Built with Go 1.27, on a new runtime base image.** The toolchain moves from 1.26.9 to 1.27.2
+  and the runtime image from `distroless/static-debian12` to **`distroless/static-debian13`** —
+  the Debian 12 flavour is no longer updated by the distroless project, so staying on it would
+  have meant a base image that stops receiving fixes. Nothing to do when upgrading: the image
+  still runs as non-root uid 65532, so existing named volumes and bind mounts keep their
+  ownership, and it still has no shell, package manager or interpreter.
+
 - **The stdio backend speaks MCP 2026-07-28 (`mcp-go` 1.x).** Only deployments whose upstream is a
   *command* rather than a URL are affected; the transparent backend forwards bytes and is
   unchanged. Towards the upstream the gateway now tries the stateless protocol first

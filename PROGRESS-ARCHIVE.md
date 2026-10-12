@@ -4266,3 +4266,85 @@ live deployment uses it.
 **Files:** `go.mod`, `go.sum`, `pkg/backend/proxy.go`, `pkg/backend/proxy_test.go`,
 `pkg/backend/proxy_protocol_test.go` (new), `docs/MCP-CONFORMANCE.md`, `CHANGELOG.md`; docs
 `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.
+
+## F-031d — Go 1.27 and the images — DONE 2026-10-13
+
+Fourth substep of F-031.
+
+**What:** Toolchain 1.27 in `go.mod`, the builder on digest-pinned `golang:1.27-bookworm`,
+the runtime on digest-pinned `distroless/static-debian13:nonroot`, golangci-lint on a version
+that supports 1.27, and the `gofmt` realignment in `pkg/idp/metadata.go`. The rules that name
+1.26 follow.
+
+**Dependencies:** F-031a–c, so the toolchain moves under a settled dependency set.
+
+**Acceptance criteria:**
+- [x] All five CI jobs replicated locally and green, `lint` with the new pinned version.
+- [x] Image builds; `--version` runs; the container reports `healthy`; it still runs as
+      non-root and can write its data directory.
+- [x] `govulncheck` against the 1.27 toolchain: 0 reachable.
+- [x] No reference to Go 1.26 or `static-debian12` is left in the rules or the README.
+
+### F-031d — what was actually done
+
+**Versions were looked up, not remembered:** Go 1.27.2 is the current release; the
+`golang:1.27-bookworm` image carries exactly it (digest `sha256:5cf287a7…`);
+`distroless/static-debian13:nonroot` is at `sha256:e2e927ec…`; golangci-lint v2.14.0 is current.
+
+- **`go.mod`:** `toolchain go1.27.2`, and `go 1.27.0`.
+- **`Dockerfile`:** both `FROM` lines re-pinned. The builder already sets `GOTOOLCHAIN=auto`, and
+  image and `go.mod` name the same release, so nothing is downloaded during the build.
+- **`ci.yml`:** golangci-lint v2.12.2 → v2.14.0. The old version fails its typecheck under Go
+  1.27 ("could not import fmt"), so the toolchain cannot move without it — which is also why
+  Dependabot's PR #17, touching the `Dockerfile` only, would have turned `lint` red.
+- **`pkg/idp/metadata.go`:** reformatted by the 1.27 `gofmt`; `git diff -w` is empty, so the
+  change is whitespace only.
+- **Rules:** CODING-STANDARDS §11 and SPEC §3.3 name 1.27 and `static-debian13`.
+
+**The `go` line moved too, which the plan had not asked for.** With only the toolchain raised,
+the gateway would have been built by 1.27 with 1.26's behaviour defaults — and CODING-STANDARDS
+could not truthfully have said "pinned to 1.27". What the line switches on was read from the
+1.27 `godebug.md` before raising it: a single default, `tracebacklabels`, which puts goroutine
+labels into tracebacks; the others are removals of settings long since at their final value.
+Every package in the build (434 directories) was searched for code that sets goroutine labels:
+one hit, gRPC's server, which the gateway does not run. No effect, and no path by which a label
+could carry something into a log.
+
+**The runtime image** changes its Debian base and nothing the gateway relies on: the user is
+still `nonroot`, uid 65532, so existing named volumes and bind mounts keep their ownership.
+
+### Verification
+
+**All five CI jobs replicated locally under `GOTOOLCHAIN=go1.27.2`:**
+- `build-test`: gofmt (the 1.27 binary) empty, `go vet`, `go build`, `go test ./...` — and
+  `-race`, green in all 11 packages.
+- `lint`: golangci-lint v2.14.0, 0 issues; `config verify` clean.
+- `license-check`: go-licenses v2.0.1 builds under 1.27 and passes.
+- `workflow-lint`: actionlint v1.7.12 clean.
+- `image-build`: built for `linux/amd64` as CI does; `--version` runs; container `healthy`.
+
+**The image at run time:** `healthy` with no volume, with a fresh named volume, and with a
+read-only root filesystem. In the named volume the gateway's files belong to 65532:65532 with
+modes 0600/0700. The binary inside reports `go1.27.2`.
+
+`govulncheck` against 1.27.2: no vulnerabilities found. `go mod tidy -diff` empty.
+
+**No new tests and no mutation pass:** the substep adds no logic. Its evidence is the replicated
+jobs and the run-time checks of the image.
+
+### Deviations and open ends
+
+- **`go` line raised**, see above.
+- **`docs/VERIFICATION.md` unchanged:** its `debian:bookworm-slim` example is a hand-built
+  container for a hand-built binary, not a reference to this image.
+- **The question the plan left to this substep is not settled.** The deprecated tag does not
+  fully explain why Dependabot proposed no runtime digest: `static-debian12` moved once more
+  after the pinned digest, and no PR came. Unproven suspicion — its digest PRs for both base
+  images were closed rather than merged in August (#1, #7), and it may not propose a digest for
+  the same tag again. With both tags changed now, it has new ones to track; whether it does is
+  proposed as a check for F-032.
+- **Dependabot PR #17** (Go 1.27 builder) is superseded and has to be closed by hand; docker PRs
+  do not close themselves.
+
+**Files:** `go.mod`, `Dockerfile`, `.github/workflows/ci.yml`, `pkg/idp/metadata.go`,
+`CODING-STANDARDS.md`, `SPEC.md`, `CHANGELOG.md`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.

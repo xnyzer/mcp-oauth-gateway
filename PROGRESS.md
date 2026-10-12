@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned and under way — **F-031a, F-031b and F-031c are done**, d and e are open; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
+**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned and under way — **F-031a–d are done**, only F-031e (`go-webauthn` 0.18, with the passkey check on the live deployment) is open; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -121,6 +121,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-031a | Routine dependency bumps → **35 minor and patch updates applied with pinned versions, no product code** (OpenTelemetry 1.47, gin-contrib, quic-go 0.63, sqlite3, grpc 1.84, `x/oauth2`, `x/time` and the rest); 37 modules moved, because the two `genproto` modules follow transitively — with the three held back for their own substeps (`glob`, `go-webauthn`, `mcp-go`) that is exactly the forty of Dependabot's grouped PR. **One new indirect module**, `go.opentelemetry.io/otel/log` (Apache-2.0), compiled in through `ory/x`. Matched the `/prep-step` dry run line for line. Full check set green with Go 1.26.9, `govulncheck` 0 reachable, image built and `healthy`. **Surfaced F-033:** `go get` printed that the Zipkin exporter is deprecated and due for removal in early 2027 — it and the long-frozen Jaeger exporter sit in the binary via `ory/x`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
 | F-031b | `gobwas/glob` 1.0 — and, on the operator's instruction, the OIDC allow-list hardened → **three security fixes for deployments that log in through OIDC:** (1) the old glob engine was over-permissive — `admin*n@corp.example` matched `admin@corp.example`, `?` matched the empty value; (2) the four `OIDC_ALLOWED_*` settings dropped every entry they could not read, and an allow-list left empty that way meant *no restriction*; (3) **OIDC without any allow-list admitted every account of the provider** — it now refuses to start, and "everyone" has to be written as `OIDC_ALLOWED_USERS_GLOB=*`. Differences between the engines measured, not assumed: both run side by side over 9,512 patterns × 1,555 values, every difference traced to one of six causes, all in the CHANGELOG. README gained an *OIDC allow-lists* section (syntax, the `\,` rule), SPEC §3.1 the normative rule. **21 mutations, each seen red.** The operator is unaffected (no OIDC). Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
 | F-031c | `mark3labs/mcp-go` 1.x → **the stdio backend speaks MCP 2026-07-28 and bridges to what came before**: towards the upstream it probes `server/discover` and falls back to the `initialize` handshake down to 2024-11-05; towards the client it serves 2026-07-28 and the handshake revisions back to 2025-03-26. The two sides are independent — a current client reaches a tool on a 2025-06-18 upstream, proven with a tool call across the bridge. **The one cost:** an older stdio upstream that *ignores* unknown methods delays start-up by the probe timeout, now a named gateway value (`MCPDiscoverProbeTimeout`, 5 s) instead of a library default. `docs/MCP-CONFORMANCE.md` states the versions with `pkg/backend/proxy_protocol_test.go` as evidence, which names each as a literal. Eight mutations, each seen red; `TestSetupProxy`, whose second half tested the upstream instead of the gateway, was removed on the operator's instruction. The transparent backend — and with it the live deployment — is untouched. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
+| F-031d | Go 1.27 and the images → **toolchain 1.26.9 → 1.27.2** (`go` line 1.27.0), builder on digest-pinned `golang:1.27-bookworm`, **runtime on digest-pinned `distroless/static-debian13`** — the Debian 12 flavour is no longer updated — and golangci-lint v2.12.2 → **v2.14.0**, because the old version fails its typecheck under Go 1.27 (which is why Dependabot's Dockerfile-only PR #17 would have gone red). `gofmt` 1.27 realigned one struct literal, whitespace only. The `go` line moved too, after checking what it switches on: one default, goroutine labels in tracebacks, and nothing in the build sets labels but gRPC's server, which the gateway does not run. **All five CI jobs replicated locally under 1.27.2**, the image job for `linux/amd64`; the image runs `healthy` with no volume, a fresh named volume and a read-only root, and writes its data as uid 65532. `govulncheck` 0 reachable. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
 
 ---
 
@@ -181,29 +182,13 @@ the Go toolchain. Ship the result as minor release **v0.5.0**.
 - **One minor release, v0.5.0,** after all five substeps — the changed start-up condition and
   the `mcp-go` major are not patch material.
 
-**Still to be analysed:** whether the missing runtime-digest PR is fully explained by the
-deprecated tag (F-031d, else F-032).
+**Analysed in F-031d, not settled:** the deprecated tag does not fully explain the missing
+runtime-digest PR — `static-debian12` did move once more after the pinned digest, and Dependabot
+never proposed it. Unproven suspicion: its digest PRs for both base images were closed rather
+than merged in August, and it may not propose a digest for the same tag again. Proposed as a
+check for F-032.
 
 **Dependencies:** none. Supersedes Dependabot PRs #24 and #17.
-
-#### F-031d — Go 1.27 and the images
-
-**What:** Toolchain 1.27 in `go.mod`, the builder on digest-pinned `golang:1.27-bookworm`,
-the runtime on digest-pinned `distroless/static-debian13:nonroot`, golangci-lint on a version
-that supports 1.27, and the `gofmt` realignment in `pkg/idp/metadata.go`. The rules that name
-1.26 follow.
-
-**Files:** `go.mod`, `Dockerfile`, `.github/workflows/ci.yml`, `pkg/idp/metadata.go`,
-`CODING-STANDARDS.md` (§11), `SPEC.md` (§3.3), `CHANGELOG.md`.
-
-**Dependencies:** F-031a–c, so the toolchain moves under a settled dependency set.
-
-**Acceptance criteria:**
-- [ ] All five CI jobs replicated locally and green, `lint` with the new pinned version.
-- [ ] Image builds; `--version` runs; the container reports `healthy`; it still runs as
-      non-root and can write its data directory.
-- [ ] `govulncheck` against the 1.27 toolchain: 0 reachable.
-- [ ] No reference to Go 1.26 or `static-debian12` is left in the rules or the README.
 
 #### F-031e — `go-webauthn` 0.18
 

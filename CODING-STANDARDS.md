@@ -128,7 +128,7 @@ Short, descriptive, visually set apart. No rambling block comments.
 
 The stack is **Go + Ory Fosite** (fork of `sigbit/mcp-auth-proxy`).
 
-- **Go version:** pinned to **1.26** (`go.mod`); CI uses a pinned `golang:1.26` image. No `latest`.
+- **Go version:** pinned to **1.27** (`go.mod`: the `go` line names the language version, the `toolchain` line the exact release every CI job and the vulnerability scan use); the image is built on a digest-pinned `golang:1.27` builder that carries the same release. No `latest`.
 - **Module path:** `github.com/xnyzer/mcp-oauth-gateway`.
 - **Formatting:** `gofmt`/`goimports` are mandatory (CI fails on diff). Imports grouped stdlib → third-party → local (§4).
 - **Linting:** `go vet` clean; `golangci-lint` clean (added in CI). Warnings are errors (§1).

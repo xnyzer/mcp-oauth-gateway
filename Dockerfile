@@ -1,5 +1,5 @@
 # Builder — digest-pinned (audit M9; CODING-STANDARDS §7: no floating tags).
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS builder
 
 ENV GOTOOLCHAIN=auto
 
@@ -22,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 # package manager, no interpreters; CA roots and tzdata included. Stdio
 # upstreams needing an interpreter (npx/uvx) must run as a separate service
 # or in a custom image.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:aef9602f8710ec12bde19d593fed1f76c708531bb7aba205110f1029786ead7b
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 
 COPY --from=builder /app/bin/main /usr/local/bin/mcp-oauth-gateway
 # /data owned by nonroot so a fresh named volume inherits the ownership.
