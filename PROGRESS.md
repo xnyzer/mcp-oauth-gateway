@@ -34,7 +34,8 @@ release.
 
 **Released: v0.4.1**, a security patch (F-029) — `0.4.0` was built with Go 1.26.7 and carries 11
 reachable standard-library advisories plus five in `x/net`; `0.4.1` has none reachable. **The
-deployment still runs `0.4.0` until it pulls `0.4.1`.**
+deployment runs `0.4.1` since 2026-10-12**, pulled from the registry; the signing key carried
+over, so connected clients kept their tokens, and the operator confirmed Claude connects.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
