@@ -5,7 +5,7 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
-## [Unreleased]
+## [0.4.2] — 2026-10-12
 
 ### Added
 

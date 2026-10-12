@@ -4,8 +4,8 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/coding-kit:add-feature` intakes new tasks (F-number), `/coding-kit:prep-step` prepares and decomposes, `/coding-kit:build-step` implements, `/coding-kit:step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State: released and live.** **v0.4.1 is public** — repo public, multi-arch image on GHCR
-(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.4.1`/`0.4`), verified against the **final MCP spec
+**State: released and live.** **v0.4.2 is public** — repo public, multi-arch image on GHCR
+(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.4.2`/`0.4`), verified against the **final MCP spec
 2026-07-28** (F-017; conformance recorded requirement by requirement in
 `docs/MCP-CONFORMANCE.md`). Feature-
 complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
@@ -37,8 +37,8 @@ reachable standard-library advisories plus five in `x/net`; `0.4.1` has none rea
 deployment runs `0.4.1` since 2026-10-12**, pulled from the registry; the signing key carried
 over, so connected clients kept their tokens, and the operator confirmed Claude connects.
 
-**Unreleased: F-030**, the version display on the settings page. It ships on its own as patch
-release **v0.4.2**.
+**Released: v0.4.2**, the version display on the settings page (F-030) — a patch release on
+the operator's decision. **The deployment still runs `0.4.1` until it pulls `0.4.2`.**
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
