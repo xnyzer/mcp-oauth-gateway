@@ -43,7 +43,7 @@ the upstream to comply.
 | A client must not be able to shadow an injected upstream credential | SR-7 | **gateway** | ✔ SPEC §1.11.4 |
 | `Origin` validated; 403 when present and invalid | MUST | **gateway** | ✔ a foreign or `null` origin is refused with 403; an absent header passes, as the specification intends (SPEC §0). Disableable via `ORIGIN_CHECK_ENABLED` for deployments the check breaks |
 | Authentication on all connections | SHOULD | **gateway** | ✔ the gateway's entire purpose |
-| Server implements `server/discover` | MUST | upstream | n/a — a JSON-RPC method, not a path. The reserved-namespace guard matches URL path prefixes only and cannot swallow it (asserted by test) |
+| Server implements `server/discover` | MUST | upstream | n/a — a JSON-RPC method, not a path. The reserved-namespace guard matches URL path prefixes only and cannot swallow it (asserted by test). With a stdio upstream the gateway is the server and answers it itself (see below) |
 | Header values validated against the body (`HeaderMismatch`, `-32020`) | MUST | upstream | n/a — the gateway does not parse bodies |
 | GET/DELETE on the MCP endpoint → 405 | SHOULD | upstream | n/a; with `HTTP_STREAMING_ONLY=true` the gateway answers GET-SSE with 405 itself (SPEC §1.11.3) |
 | `Mcp-Session-Id` ignored, no session minted or echoed | — | upstream | n/a — the gateway never minted one |
@@ -60,10 +60,31 @@ the upstream stays the upstream's business — that is the defence-in-depth spli
 per-operation authorization ever be wanted here, the two "not applicable" rows in §1 become work
 rather than notes.
 
-**The stdio backend speaks protocol 2025-11-25.** A `PROXY_TARGET` given as a command (SPEC §3.1) drives
-the upstream through `mark3labs/mcp-go`, whose stable line still declares
-`LATEST_PROTOCOL_VERSION = "2025-11-25"`; only the v1.0.0 pre-release implements 2026-07-28. The
-gateway deliberately tracks the stable line, because CODING-STANDARDS §7 pins stable versions and
-this is a public auth boundary. So that path offers neither `server/discover` nor `_meta`-carried protocol
-versions yet. **The transparent backend — the documented primary mode — is unaffected**, because it
+**The stdio backend speaks protocol 2026-07-28, and bridges to what came before it.** A
+`PROXY_TARGET` given as a command (SPEC §3.1) drives the upstream through `mark3labs/mcp-go` 1.x,
+which implements the stateless protocol core — `server/discover`, the protocol version carried in
+every request's `_meta`, no `initialize` handshake. Unlike the transparent backend, this path
+terminates MCP on both sides, so it holds two protocol versions, negotiated independently:
+
+| Side | What happens | Version in effect |
+|---|---|---|
+| towards the upstream | `server/discover` first; an upstream that has it | **2026-07-28** |
+| | an upstream without it — falls back to `initialize`, asking for 2025-11-25 | whatever the upstream answers: **2025-11-25, 2025-06-18, 2025-03-26 or 2024-11-05** |
+| | an upstream answering a version nobody knows | refused at start-up |
+| towards the client | a client on the current protocol | **2026-07-28** |
+| | a client that still performs the handshake | the version it asks for, back to **2025-03-26** |
+
+The two sides do not have to match: a client on 2026-07-28 reaches the tools of an upstream that
+only speaks 2025-06-18, with the backend translating.
+
+**One start-up cost.** An older upstream should reject `server/discover` with "method not found",
+and then the fallback is immediate. One that ignores unknown methods answers nothing; the probe is
+bounded at five seconds, after which the backend falls back. Such an upstream therefore starts
+five seconds later than it did before, once.
+
+Evidence: `pkg/backend/proxy_protocol_test.go` names each of these versions as a literal and fails
+if a library update moves one — against a real current server and a hand-written older one, in
+both directions, including a tool call across the bridge.
+
+**The transparent backend — the documented primary mode — is unaffected**, because it
 forwards bytes and holds no protocol opinion.

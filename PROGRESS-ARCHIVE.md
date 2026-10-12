@@ -4179,3 +4179,90 @@ go-licenses passes (`gobwas/glob` is MIT); `govulncheck` 0 reachable.
 `pkg/auth/oidc_glob_test.go` (new), `parse.go`, `parse_test.go`, `main.go`, `main_test.go`,
 `pkg/mcp-proxy/router.go`, `pkg/mcp-proxy/router_test.go` (new), `README.md`, `SPEC.md` (§1.12,
 §3.1), `CHANGELOG.md`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.
+
+## F-031c — `mark3labs/mcp-go` 1.x — DONE 2026-10-13
+
+Third substep of F-031.
+
+**What:** Bump to 1.2.1 and establish what the stdio backend now speaks: which protocol
+version it requests, and that it still initializes against an upstream that only knows an
+older one. Bring `docs/MCP-CONFORMANCE.md` and SPEC in line — the conformance record still
+says the stable line implements 2025-11-25 only.
+
+**Acceptance criteria:**
+- [x] A test names the protocol version the stdio path negotiates, against a current and
+      against an older upstream.
+- [x] The conformance record states that version, with the test as its evidence.
+- [x] Full check set green.
+
+### F-031c — what was actually done
+
+**The bump is one line in `go.mod`** and compiles untouched, as the dry run had shown. What it
+changes is the protocol: 2026-07-28 replaced the `initialize` handshake with a stateless core —
+`server/discover`, the version carried in every request's `_meta`, no sessions. `mcp-go` 1.x
+therefore probes `server/discover` first and falls back to the handshake when the other side
+does not have it.
+
+**The stdio backend terminates MCP on both sides, so it holds two versions**, negotiated
+independently. Established by test, not read off the changelog:
+
+| Side | Case | Version in effect |
+|---|---|---|
+| upstream | has `server/discover` | 2026-07-28 |
+| upstream | answers "method not found" → handshake, asking for 2025-11-25 | the upstream's: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05 |
+| upstream | answers a version nobody knows | refused at start-up |
+| client | current | 2026-07-28 |
+| client | still performs the handshake | the one it asks for, back to 2025-03-26 |
+
+The sides need not match: a client on 2026-07-28 lists and calls a tool on an upstream that
+answers 2025-06-18.
+
+**The one behavioural cost, found in the library source rather than in its release notes:** an
+older upstream that *ignores* an unknown method answers the probe with nothing, and on stdio
+nothing means waiting. The client bounds the probe — at five seconds by default. That default
+is now the gateway's own named value, `MCPDiscoverProbeTimeout`, passed in with
+`client.WithDiscoverTimeout`: the start-up delay such an upstream costs should not be a number
+nobody in this repository can see, and a test for it should not take five seconds.
+
+**Tests** (`pkg/backend/proxy_protocol_test.go`, new): a real `mcp-go` server over in-memory pipes
+as the current upstream; a hand-written JSON-RPC responder as the older one, configurable to
+reject or ignore the probe, to answer any version, and to offer a tool. Each version is a
+literal in the assertions, so a library update that moves one fails a test before the
+conformance record can be wrong.
+
+**`TestSetupProxy` removed, on the operator's instruction at `/step-done`.** Its first half
+checked that `setupProxy` returns a client and a handler; its second half opened a second client
+on the *upstream's* transport and asserted the upstream's own name — it never touched the
+gateway's handler, and stayed green with the identity pass-through broken. The new tests cover
+both halves through the handler; its one assertion nothing else made, the upstream's version
+being passed through, moved there and was seen red.
+
+**Eight mutations, each seen red**, from a script that now aborts when an anchor is missing
+(the lesson of F-031b): the client kept on the handshake; an old version requested; the probe
+bound left to the library default; the bound removed; the named value changed; tools not
+offered; the upstream's name not passed through; its version not passed through.
+
+**Verified** (`GOTOOLCHAIN=go1.26.9`): gofmt empty; `go mod tidy -diff` empty; `go vet` clean;
+`go test -race -count=1 ./...` green in all 11 packages; golangci-lint v2.12.2 0 issues;
+go-licenses passes (`mcp-go` is MIT); `govulncheck` 0 reachable. The built binary was started
+with a real stdio upstream: `/healthz` answers, `/mcp` without a token is `401`, no error-level
+log line.
+
+### Deviations from the plan
+
+- **`SPEC.md` did not change.** Its one sentence on the matter says the stdio backend's protocol
+  version is recorded in the conformance document, which is still true.
+- **Production code changed after all** — three lines for the named probe timeout. The plan
+  allowed code "only if negotiation needs it"; negotiation works without it, but the delay it
+  introduces would otherwise be an invisible default.
+- **Both sides tested, and the bridge**, where the plan asked for the upstream side. The old
+  record's claim covered the whole path, so the new one had to as well.
+- `setupProxy` stands at 70 lines; it is a sequential orchestration function within the §3
+  exception, and its three registration blocks were left as they are.
+
+**Not affected:** the transparent backend forwards bytes and holds no protocol opinion — and the
+live deployment uses it.
+
+**Files:** `go.mod`, `go.sum`, `pkg/backend/proxy.go`, `pkg/backend/proxy_test.go`,
+`pkg/backend/proxy_protocol_test.go` (new), `docs/MCP-CONFORMANCE.md`, `CHANGELOG.md`; docs
+`PROGRESS.md`, `PROGRESS-ARCHIVE.md`.

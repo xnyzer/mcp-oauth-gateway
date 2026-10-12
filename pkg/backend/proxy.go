@@ -21,6 +21,15 @@ import (
 
 var MCPClientInitTimeout = 1 * time.Minute
 
+// MCPDiscoverProbeTimeout bounds the server/discover probe that opens every
+// connection to the upstream. Protocol 2026-07-28 replaced the initialize
+// handshake with it, so the probe goes first; an upstream that predates it
+// should answer "method not found", but one that ignores unknown methods
+// answers nothing — and on stdio nothing would otherwise mean waiting forever.
+// After this long the backend falls back to the handshake, which makes it the
+// start-up delay such an upstream costs.
+var MCPDiscoverProbeTimeout = 5 * time.Second
+
 type ProxyBackend struct {
 	logger *zap.Logger
 	cmd    []string
@@ -97,13 +106,16 @@ func (p *ProxyBackend) Close() error {
 }
 
 func setupProxy(ctx context.Context, logger *zap.Logger, tr transport.BidirectionalInterface) (*client.Client, http.Handler, error) {
-	c := client.NewClient(tr)
+	c := client.NewClient(tr, client.WithDiscoverTimeout(MCPDiscoverProbeTimeout))
 	if err := c.Start(ctx); err != nil {
 		return nil, nil, fmt.Errorf("failed to start MCP client: %w", err)
 	}
 	initCtx, cancel := context.WithTimeout(ctx, MCPClientInitTimeout)
 	defer cancel()
 
+	// Ask for the newest protocol the library implements; the client
+	// negotiates down to whatever the upstream speaks (see
+	// docs/MCP-CONFORMANCE.md for what that comes to).
 	initRequest := mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,

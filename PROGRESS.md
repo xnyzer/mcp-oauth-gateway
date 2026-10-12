@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned and under way — **F-031a and F-031b are done**, c–e are open; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
+**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned and under way — **F-031a, F-031b and F-031c are done**, d and e are open; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -120,6 +120,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-030 | Show the running version on the settings page → **footer on the session-gated `/.auth/settings`, fed from the build-time version that `--version` reports** (passed in through `auth.Config`, wired where the router is built), so the operator can confirm in the browser which build is live. **The boundary is the point, not the rendering:** a version string tells an anonymous caller which advisories apply, so `/healthz` (SPEC §1.13) and every other public endpoint still disclose none — asserted on the assembled gateway, where `/healthz` on the real router had no exact-body test before. **Eight mutations, each seen red:** footer removed, wiring removed, version leaked into `/healthz`, onto the login page, into the redirect, the empty-value guard dropped, `Abort` removed, the session gate removed. One of them exposed a gap in the new end-to-end test itself, closed in the same step. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
 | F-031a | Routine dependency bumps → **35 minor and patch updates applied with pinned versions, no product code** (OpenTelemetry 1.47, gin-contrib, quic-go 0.63, sqlite3, grpc 1.84, `x/oauth2`, `x/time` and the rest); 37 modules moved, because the two `genproto` modules follow transitively — with the three held back for their own substeps (`glob`, `go-webauthn`, `mcp-go`) that is exactly the forty of Dependabot's grouped PR. **One new indirect module**, `go.opentelemetry.io/otel/log` (Apache-2.0), compiled in through `ory/x`. Matched the `/prep-step` dry run line for line. Full check set green with Go 1.26.9, `govulncheck` 0 reachable, image built and `healthy`. **Surfaced F-033:** `go get` printed that the Zipkin exporter is deprecated and due for removal in early 2027 — it and the long-frozen Jaeger exporter sit in the binary via `ory/x`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
 | F-031b | `gobwas/glob` 1.0 — and, on the operator's instruction, the OIDC allow-list hardened → **three security fixes for deployments that log in through OIDC:** (1) the old glob engine was over-permissive — `admin*n@corp.example` matched `admin@corp.example`, `?` matched the empty value; (2) the four `OIDC_ALLOWED_*` settings dropped every entry they could not read, and an allow-list left empty that way meant *no restriction*; (3) **OIDC without any allow-list admitted every account of the provider** — it now refuses to start, and "everyone" has to be written as `OIDC_ALLOWED_USERS_GLOB=*`. Differences between the engines measured, not assumed: both run side by side over 9,512 patterns × 1,555 values, every difference traced to one of six causes, all in the CHANGELOG. README gained an *OIDC allow-lists* section (syntax, the `\,` rule), SPEC §3.1 the normative rule. **21 mutations, each seen red.** The operator is unaffected (no OIDC). Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
+| F-031c | `mark3labs/mcp-go` 1.x → **the stdio backend speaks MCP 2026-07-28 and bridges to what came before**: towards the upstream it probes `server/discover` and falls back to the `initialize` handshake down to 2024-11-05; towards the client it serves 2026-07-28 and the handshake revisions back to 2025-03-26. The two sides are independent — a current client reaches a tool on a 2025-06-18 upstream, proven with a tool call across the bridge. **The one cost:** an older stdio upstream that *ignores* unknown methods delays start-up by the probe timeout, now a named gateway value (`MCPDiscoverProbeTimeout`, 5 s) instead of a library default. `docs/MCP-CONFORMANCE.md` states the versions with `pkg/backend/proxy_protocol_test.go` as evidence, which names each as a literal. Eight mutations, each seen red; `TestSetupProxy`, whose second half tested the upstream instead of the gateway, was removed on the operator's instruction. The transparent backend — and with it the live deployment — is untouched. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
 
 ---
 
@@ -184,24 +185,6 @@ the Go toolchain. Ship the result as minor release **v0.5.0**.
 deprecated tag (F-031d, else F-032).
 
 **Dependencies:** none. Supersedes Dependabot PRs #24 and #17.
-
-#### F-031c — `mark3labs/mcp-go` 1.x
-
-**What:** Bump to 1.2.1 and establish what the stdio backend now speaks: which protocol
-version it requests, and that it still initializes against an upstream that only knows an
-older one. Bring `docs/MCP-CONFORMANCE.md` and SPEC in line — the conformance record still
-says the stable line implements 2025-11-25 only.
-
-**Files:** `go.mod`, `go.sum`, `pkg/backend/` (tests; code only if negotiation needs it),
-`docs/MCP-CONFORMANCE.md`, `SPEC.md`, `CHANGELOG.md`.
-
-**Dependencies:** F-031a.
-
-**Acceptance criteria:**
-- [ ] A test names the protocol version the stdio path negotiates, against a current and
-      against an older upstream.
-- [ ] The conformance record states that version, with the test as its evidence.
-- [ ] Full check set green.
 
 #### F-031d — Go 1.27 and the images
 

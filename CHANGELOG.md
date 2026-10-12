@@ -65,6 +65,19 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   generated patterns and 1,555 values each, and every difference traces back to one of the six
   points named here.
 
+- **The stdio backend speaks MCP 2026-07-28 (`mcp-go` 1.x).** Only deployments whose upstream is a
+  *command* rather than a URL are affected; the transparent backend forwards bytes and is
+  unchanged. Towards the upstream the gateway now tries the stateless protocol first
+  (`server/discover`) and falls back to the `initialize` handshake for an upstream that predates
+  it, down to 2024-11-05. Towards clients it serves 2026-07-28 and, for clients that still perform
+  the handshake, the earlier revisions back to 2025-03-26. The two sides are independent, so a
+  current client reaches the tools of an older upstream.
+
+  **One thing to expect:** an older stdio upstream that *ignores* unknown methods, instead of
+  rejecting them, makes the gateway wait five seconds at start-up before it falls back. A
+  well-behaved one costs nothing. What the backend speaks in each case is recorded in
+  [`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md).
+
 - **Upgrade note for all four `OIDC_ALLOWED_*` settings.** The gateway refuses to start when
   - an entry of `OIDC_ALLOWED_ATTRIBUTES` or `OIDC_ALLOWED_ATTRIBUTES_GLOB` is not
     `/pointer=value` — no `=`, no value, or a key that does not start with `/`;

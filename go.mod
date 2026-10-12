@@ -13,7 +13,7 @@ require (
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/gobwas/glob v1.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/mark3labs/mcp-go v0.58.0
+	github.com/mark3labs/mcp-go v1.2.1
 	github.com/mattn/go-jsonpointer v0.0.1
 	github.com/ory/fosite v0.49.0
 	github.com/spf13/cobra v1.10.2
