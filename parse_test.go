@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -142,29 +144,142 @@ func TestParseAttributeMap(t *testing.T) {
 			},
 		},
 		{
-			name:     "invalid format - no equals sign",
-			input:    "invalid",
-			expected: map[string][]string{},
+			name:  "blank entries are dropped",
+			input: "/groups=admin,, ,/role=editor,",
+			expected: map[string][]string{
+				"/groups": {"admin"},
+				"/role":   {"editor"},
+			},
 		},
 		{
-			name:     "invalid format - empty key",
-			input:    "=value",
-			expected: map[string][]string{},
+			name:  "a value may contain an equals sign",
+			input: "/claim=a=b",
+			expected: map[string][]string{
+				"/claim": {"a=b"},
+			},
 		},
 		{
-			name:     "invalid format - empty value",
-			input:    "/key=",
-			expected: map[string][]string{},
+			name:  "an escaped comma stays inside the value",
+			input: `/groups={eng\,ops}-*`,
+			expected: map[string][]string{
+				"/groups": {"{eng,ops}-*"},
+			},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := parseAttributeMap(tc.input)
+			result, err := parseAttributeMap(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if !reflect.DeepEqual(result, tc.expected) {
 				t.Errorf("Expected %v, got %v", tc.expected, result)
 			}
 		})
+	}
+}
+
+// An entry that cannot be read as a rule is an error, never a dropped rule:
+// dropped, a lone malformed entry used to leave the allow-list empty, and an
+// empty allow-list means "no restriction".
+func TestParseAttributeMapRejectsMalformedEntries(t *testing.T) {
+	testCases := []struct {
+		name      string
+		input     string
+		wantInErr string
+	}{
+		{"no equals sign", "/groups admin", `"/groups admin"`},
+		{"no equals sign beside a valid entry", "/groups=admin,invalid", `"invalid"`},
+		{"empty key", "=value", `"=value"`},
+		{"key is not a JSON pointer", "groups=admin", `"groups=admin"`},
+		{"empty value", "/key=", `"/key="`},
+		{"only separators", " , ,", errEmptyAllowList.Error()},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := parseAttributeMap(tc.input)
+			if err == nil {
+				t.Fatalf("expected an error, got %v", result)
+			}
+			if !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Errorf("error %q does not name %s", err, tc.wantInErr)
+			}
+		})
+	}
+}
+
+func TestParseAllowList(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		split    func(string) []string
+		expected []string
+	}{
+		{"unset", "", splitCSV, nil},
+		{"plain list", "alice@example.com,bob@example.com", splitCSV, []string{"alice@example.com", "bob@example.com"}},
+		{"blank entries are dropped", " alice@example.com ,, ,bob@example.com,", splitCSV, []string{"alice@example.com", "bob@example.com"}},
+		{"glob list keeps escaped commas", `{alice\,bob}@example.com,*@example.org`, splitEscapedCSV, []string{"{alice,bob}@example.com", "*@example.org"}},
+		{"glob list keeps other escapes", `user\*@example.com`, splitEscapedCSV, []string{`user\*@example.com`}},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := parseAllowList(tc.input, tc.split)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("Expected %q, got %q", tc.expected, result)
+			}
+		})
+	}
+
+	// Set, but nothing in it: the lenient reading would be "no restriction".
+	for _, raw := range []string{",", " ", " , ,"} {
+		for name, split := range map[string]func(string) []string{"plain": splitCSV, "glob": splitEscapedCSV} {
+			if result, err := parseAllowList(raw, split); !errors.Is(err, errEmptyAllowList) {
+				t.Errorf("%s list %q: expected errEmptyAllowList, got %v / %v", name, raw, result, err)
+			}
+		}
+	}
+}
+
+// Each of the four settings reports its own name, so the start-up message
+// tells the operator which variable to look at.
+func TestOIDCAllowListSettingsNameTheSettingInErrors(t *testing.T) {
+	testCases := []struct {
+		settings oidcAllowListSettings
+		want     string
+	}{
+		{oidcAllowListSettings{Users: ","}, "OIDC_ALLOWED_USERS is set"},
+		{oidcAllowListSettings{UsersGlob: " "}, "OIDC_ALLOWED_USERS_GLOB is set"},
+		{oidcAllowListSettings{Attributes: "/groups admin"}, "OIDC_ALLOWED_ATTRIBUTES has an entry"},
+		{oidcAllowListSettings{AttributesGlob: "groups=*"}, "OIDC_ALLOWED_ATTRIBUTES_GLOB has an entry"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.want, func(t *testing.T) {
+			_, err := tc.settings.parse()
+			if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+				t.Fatalf("expected an error starting with %q, got %v", tc.want, err)
+			}
+		})
+	}
+
+	lists, err := oidcAllowListSettings{
+		Users:          "alice@example.com",
+		UsersGlob:      "*@example.org",
+		Attributes:     "/groups=admin",
+		AttributesGlob: "/groups=team-*",
+	}.parse()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(lists.Users) != 1 || len(lists.UsersGlob) != 1 || len(lists.Attributes) != 1 || len(lists.AttributesGlob) != 1 {
+		t.Errorf("every setting should yield its one rule, got %+v", lists)
+	}
+
+	if lists, err := (oidcAllowListSettings{}).parse(); err != nil || lists.Users != nil || lists.UsersGlob != nil {
+		t.Errorf("unset settings parse to no rules without error, got %+v / %v", lists, err)
 	}
 }
 

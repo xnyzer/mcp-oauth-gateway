@@ -164,6 +164,15 @@ func buildOIDCProviders(rc resolvedConfig) ([]auth.Provider, error) {
 		rc.OIDCAllowedAttributes,
 		rc.OIDCAllowedAttributesGlob,
 	)
+	if errors.Is(err, auth.ErrNoAllowList) {
+		return nil, fmt.Errorf("failed to create OIDC provider: %w — set at least one of OIDC_ALLOWED_USERS, OIDC_ALLOWED_USERS_GLOB, OIDC_ALLOWED_ATTRIBUTES, OIDC_ALLOWED_ATTRIBUTES_GLOB; to admit every account of the provider, say so with OIDC_ALLOWED_USERS_GLOB=*", err)
+	}
+	if errors.Is(err, auth.ErrInvalidGlobPattern) {
+		// The likeliest cause is not a typo but the list syntax: the setting
+		// is split at commas before a pattern is read, so `{a,b}` arrives in
+		// two halves unless its comma is escaped.
+		return nil, fmt.Errorf("failed to create OIDC provider: %w — in OIDC_ALLOWED_USERS_GLOB and OIDC_ALLOWED_ATTRIBUTES_GLOB a comma separates patterns, so write a comma inside one as \\,", err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
 	}

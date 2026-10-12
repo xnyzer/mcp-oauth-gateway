@@ -1,6 +1,8 @@
 package main
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,5 +202,73 @@ func TestNewRootCommand_AbuseProtectionFromEnv(t *testing.T) {
 	}
 	if received.LoginLockoutThreshold != 5 || received.LoginLockoutDuration != 30*time.Minute {
 		t.Fatalf("unexpected lockout config from env: %d %s", received.LoginLockoutThreshold, received.LoginLockoutDuration)
+	}
+}
+
+// A malformed OIDC allow-list must keep the gateway from starting at all. The
+// runner stands in for the gateway: if it is called, start-up went ahead.
+func TestNewRootCommand_RejectsMalformedOIDCAllowLists(t *testing.T) {
+	testCases := []struct {
+		env   string
+		value string
+	}{
+		{"OIDC_ALLOWED_USERS", ","},
+		{"OIDC_ALLOWED_USERS_GLOB", " , "},
+		{"OIDC_ALLOWED_ATTRIBUTES", "/groups admin"},
+		{"OIDC_ALLOWED_ATTRIBUTES_GLOB", "groups=team-*"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv(tc.env, tc.value)
+
+			started := false
+			cmd := newRootCommand(proxyRunnerFunc(func(mcpproxy.Config) error {
+				started = true
+				return nil
+			}))
+			cmd.SetArgs([]string{"http://backend"})
+			cmd.SilenceErrors = true
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("expected start-up to fail for %s=%q", tc.env, tc.value)
+			}
+			if started {
+				t.Fatalf("the gateway must not start with %s=%q", tc.env, tc.value)
+			}
+			if !strings.HasPrefix(err.Error(), tc.env+" ") {
+				t.Errorf("error %q does not name the setting %s", err, tc.env)
+			}
+		})
+	}
+}
+
+func TestNewRootCommand_PassesOIDCAllowListsOn(t *testing.T) {
+	t.Setenv("OIDC_ALLOWED_USERS", "alice@example.com, bob@example.com,")
+	t.Setenv("OIDC_ALLOWED_USERS_GLOB", `{carol\,dave}@example.com`)
+	t.Setenv("OIDC_ALLOWED_ATTRIBUTES", "/groups=admin")
+	t.Setenv("OIDC_ALLOWED_ATTRIBUTES_GLOB", "/groups=team-*")
+
+	var got mcpproxy.Config
+	cmd := newRootCommand(proxyRunnerFunc(func(cfg mcpproxy.Config) error {
+		got = cfg
+		return nil
+	}))
+	cmd.SetArgs([]string{"http://backend"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected command to succeed, got error: %v", err)
+	}
+
+	if !reflect.DeepEqual(got.OIDCAllowedUsers, []string{"alice@example.com", "bob@example.com"}) {
+		t.Errorf("users: got %q", got.OIDCAllowedUsers)
+	}
+	if !reflect.DeepEqual(got.OIDCAllowedUsersGlob, []string{"{carol,dave}@example.com"}) {
+		t.Errorf("users glob: got %q", got.OIDCAllowedUsersGlob)
+	}
+	if !reflect.DeepEqual(got.OIDCAllowedAttributes, map[string][]string{"/groups": {"admin"}}) {
+		t.Errorf("attributes: got %v", got.OIDCAllowedAttributes)
+	}
+	if !reflect.DeepEqual(got.OIDCAllowedAttributesGlob, map[string][]string{"/groups": {"team-*"}}) {
+		t.Errorf("attributes glob: got %v", got.OIDCAllowedAttributesGlob)
 	}
 }

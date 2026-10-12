@@ -4053,3 +4053,129 @@ watch item (re-check 2027-01-15), instead of being acted on inside a routine bum
 
 **No CHANGELOG entry:** nothing here is visible to an operator; the release notes for v0.5.0
 will name the dependency refresh once, for F-031 as a whole.
+
+## F-031b — `gobwas/glob` 1.0, and the OIDC allow-list hardened — DONE 2026-10-13
+
+Second substep of F-031. **Its scope grew twice, both times on the operator's instruction**,
+after the glob work had surfaced two further faults in the same allow-list; the planned part is
+recorded first, the extensions after it.
+
+**What (as planned):** Adapt the OIDC allow-list to `*glob.Pattern`. Before the bump, write a
+table test that pins what the allow-list matches — wildcards, character classes, alternates,
+escapes, non-ASCII, and above all what must **not** match — and run it against 0.2.3; then bump
+and run it again. Compile errors stay fail-fast at start-up.
+
+**Acceptance criteria:**
+- [x] The table passes against 0.2.3 as written, or every row that does not is recorded as a
+      known defect of the old engine.
+- [x] Every row whose result differs under 1.0 is explained and named in the CHANGELOG for
+      operators using `OIDC_ALLOWED_*_GLOB`.
+- [x] The negative rows have been seen to fail once (CODING-STANDARDS §9).
+- [x] Full check set green.
+
+### Part 1 — the glob engine
+
+**The move itself was one word**: `glob.Glob` (an interface) became `*glob.Pattern`. Before it,
+the two duplicated compile loops in `NewOIDCProvider` became one helper, `compileGlobs`, so a
+test exercises the exact call production makes — compiled **without separators** — instead of
+compiling patterns of its own. Its error now names the pattern and wraps the sentinel
+`ErrInvalidGlobPattern`.
+
+**The table** (`pkg/auth/oidc_glob_test.go`, 49 rows, 23 of them negative) was run against
+0.2.3 first. **Exactly the eight rows marked "0.2.3 got this wrong" failed there, and no
+other**: five wrong matches, two malformed patterns it accepted, one crash. Under 1.0 all pass.
+
+**The differences were measured, not looked up.** A throwaway probe in the scratchpad, built once
+against each version, ran 9,512 generated patterns against 1,555 values each — about 15 million
+comparisons per engine. 72.6 % of the patterns behaved identically on every value; every one of
+the 23,195 differing pairs among patterns both engines compile traced back to a named cause, and
+so did all 1,446 patterns only 1.0 rejects. Six causes, all in the CHANGELOG:
+1. **Overlapping literals** — `admin*n@corp.example` matched `admin@corp.example` (over-permissive).
+2. **`?` and negated classes matched the empty value** (over-permissive).
+3. **Malformed patterns** — unclosed `{`, trailing backslash — were accepted; now a start-up error.
+4. **Non-ASCII** — `?` and classes failed on a multi-byte character.
+5. **Empty braces** — `a{}` panicked inside `Match`, at login time.
+6. **Empty alternatives** next to `*` or another brace group were lost — found by the probe
+   after the first CHANGELOG draft had named only five causes.
+
+Of 54 hand-written realistic patterns, 50 behaved identically; the four that did not are rows
+of the table.
+
+### Part 2 — strict parsing of the four settings (operator's instruction)
+
+**The fault:** `parseAttributeMap` dropped an entry without `=`, with an empty key or with an
+empty value, and every list kept or dropped blank entries depending on how it was split. An
+allow-list emptied that way read as "no restriction", so a typo in the only rule admitted every
+account of the provider. **Now** (`parse.go`): blank entries (a trailing comma, stray spaces)
+are dropped; anything else that is not a rule — no `=`, no value, a key that is not a JSON
+pointer starting with `/`, a setting that is set but holds no entry — stops start-up with a
+message naming the setting and the entry. Parsing moved out of `RunE` into
+`oidcAllowListSettings.parse`.
+
+**Found on the way: the comma trap.** The glob settings are split at commas before a pattern is
+read, so `{alice,bob}@example.com` arrives as `{alice` and `bob}@example.com` unless the comma is
+escaped as `\,`. 0.2.3 accepted both halves silently; 1.0 rejects the first with "unclosed `{`",
+which would send an operator looking for a typo. `buildOIDCProviders` recognises
+`ErrInvalidGlobPattern` and adds the escape rule to the message.
+
+### Part 3 — OIDC requires an allow-list (operator's decision)
+
+**The root:** with OIDC enabled and none of the four settings set, `Authorization` returned
+"allowed" for every account the provider authenticated — with a provider anyone can sign up to,
+everyone, as the single operator. Part 2 closed the typo route to that state, not the state:
+leaving the settings out, or an empty variable, still led there. **User chose refusing to start
+over a start-up warning**, because a warning leaves the trap open for everyone who does not read
+logs, and v0.5.0 already changes start-up conditions. Now `NewOIDCProvider` refuses a provider
+without a rule (`ErrNoAllowList`) **before it fetches anything**, so the refusal does not depend
+on the provider being reachable; "everyone" is a rule that has to be written,
+`OIDC_ALLOWED_USERS_GLOB=*`. The allow-all branch in `Authorization` is gone: a provider without
+a rule — which the constructor never builds — denies. `buildOIDCProviders` names the four
+settings and the `*` form in the start-up message.
+
+**Rule evaluation was extracted** into `oidcProvider.isAllowed` during `/step-done`:
+`Authorization` had stood at 67 lines, past the §3 hard limit; it is now under 30.
+`NewOIDCProvider` (67) is an orchestration function within the §3 exception.
+
+### Verification
+
+**21 mutations, each seen red**, run from bash scripts with byte-for-byte restore checks: seven
+on the glob path (substring matching, match-everything, a dropped malformed pattern, an error
+not naming the pattern, empty patterns compiled, a separator configured, list values ignored),
+nine on the parsing (each drop-instead-of-error path restored, escapes ignored, the parse error
+ignored at start-up, the comma hint removed), five on the requirement (no check, allow-all
+restored, the check moved after the fetch, an attribute key without values counted as a rule,
+the start-up message stripped). Under "every pattern matches every value", all 23 negative rows
+failed. **A process slip, caught:** after the `isAllowed` extraction, two glob mutations whose
+anchor text had changed were not applied — the script's assertion failed but did not abort, and
+the run reported "nothing failed". Re-run with the anchors fixed; both went red. The mutation
+memory now says the assertion must abort the run.
+
+**On the built binary:** OIDC without an allow-list stops with the message naming the four
+settings and `OIDC_ALLOWED_USERS_GLOB=*`; with `*` the check passes and start-up fails only on the
+unreachable test provider; an unescaped `{alice,bob}` stops with the escape rule; a malformed
+attribute rule names setting and entry.
+
+**Check set** (`GOTOOLCHAIN=go1.26.9`): gofmt empty; `go mod tidy -diff` empty; `go vet` clean;
+`go test -race -count=1 ./...` green in all 11 packages; golangci-lint v2.12.2 0 issues;
+go-licenses passes (`gobwas/glob` is MIT); `govulncheck` 0 reachable.
+
+### Deviations from the plan
+
+- **Scope extended twice on the operator's instruction** (Parts 2 and 3); Part 3's design was the
+  operator's choice between two options.
+- **`compileGlobs` extracted** instead of a bare type swap — otherwise the table would have tested
+  its own compile call, not production's.
+- **New test files** `pkg/auth/oidc_glob_test.go` and `pkg/mcp-proxy/router_test.go`:
+  `oidc_test.go` stood at 483 lines and would have crossed the 500-line limit.
+- **Existing tests that built providers with empty lists** now pass `*`. Three of them — the
+  constructor's error paths — would otherwise have failed for the new reason instead of the one
+  their names state.
+- **Test data uses reserved domains only** (`*.example`, `example.com` subdomains); two real
+  domains in the first draft were replaced.
+- **One commit instead of the two announced:** the three parts interleave in `oidc.go` and the
+  test files; splitting them by hand risked an intermediate commit that does not build.
+
+**Files:** `go.mod`, `go.sum`, `pkg/auth/oidc.go`, `pkg/auth/oidc_test.go`,
+`pkg/auth/oidc_glob_test.go` (new), `parse.go`, `parse_test.go`, `main.go`, `main_test.go`,
+`pkg/mcp-proxy/router.go`, `pkg/mcp-proxy/router_test.go` (new), `README.md`, `SPEC.md` (§1.12,
+§3.1), `CHANGELOG.md`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.

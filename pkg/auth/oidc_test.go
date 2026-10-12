@@ -20,6 +20,9 @@ const (
 	TestOIDCUserIDField  = "/sub"
 )
 
+// allowEveryone is the explicit "every account of the provider" allow-list.
+var allowEveryone = []string{"*"}
+
 func setupOIDCTest(allowedUsers []string, userIDField string) (Provider, gin.IRoutes, gin.IRoutes, *httptest.Server) {
 	// Setup OIDC configuration server
 	configServer := gin.New()
@@ -36,6 +39,12 @@ func setupOIDCTest(allowedUsers []string, userIDField string) (Provider, gin.IRo
 		userIDField = TestOIDCUserIDField
 	}
 
+	// A provider needs an allow-list. Tests that do not care who gets in ask
+	// for everyone the way an operator has to: with a pattern that says so.
+	var allowedUsersGlob []string
+	if len(allowedUsers) == 0 {
+		allowedUsersGlob = allowEveryone
+	}
 	p, err := NewOIDCProvider(
 		tsConfig.URL+"/.well-known/openid_configuration",
 		[]string{"openid", "profile"},
@@ -45,7 +54,7 @@ func setupOIDCTest(allowedUsers []string, userIDField string) (Provider, gin.IRo
 		TestOIDCClientID,
 		TestOIDCClientSecret,
 		allowedUsers,
-		[]string{},
+		allowedUsersGlob,
 		nil,
 		nil,
 	)
@@ -121,7 +130,7 @@ func TestOIDCProviderAuthorization(t *testing.T) {
 		expect       bool
 	}{
 		{
-			name:         "allow all users",
+			name:         "allow all users, asked for with a star",
 			allowedUsers: []string{},
 			userIDField:  "/sub",
 			userResp:     `{"sub": "user1", "name": "Test User"}`,
@@ -185,7 +194,7 @@ func TestOIDCProviderErrors(t *testing.T) {
 			TestOIDCClientID,
 			TestOIDCClientSecret,
 			[]string{},
-			[]string{},
+			allowEveryone,
 			nil,
 			nil,
 		)
@@ -209,7 +218,7 @@ func TestOIDCProviderErrors(t *testing.T) {
 			TestOIDCClientID,
 			TestOIDCClientSecret,
 			[]string{},
-			[]string{},
+			allowEveryone,
 			nil,
 			nil,
 		)
@@ -233,7 +242,7 @@ func TestOIDCProviderErrors(t *testing.T) {
 			TestOIDCClientID,
 			TestOIDCClientSecret,
 			[]string{},
-			[]string{},
+			allowEveryone,
 			nil,
 			nil,
 		)
@@ -370,12 +379,6 @@ func TestOIDCProviderAttributeMatching(t *testing.T) {
 		userInfo              map[string]interface{}
 		expected              bool
 	}{
-		{
-			name:              "allow all when no restrictions",
-			allowedAttributes: nil,
-			userInfo:          map[string]interface{}{"sub": "user1", "email": "user@example.com"},
-			expected:          true,
-		},
 		{
 			name:              "exact match on string attribute",
 			allowedAttributes: map[string][]string{"/department": {"engineering"}},

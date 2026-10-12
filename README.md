@@ -225,13 +225,65 @@ Booleans accept `true|1` / `false|0`. See [`SPEC.md`](SPEC.md) §3 for the norma
 | `PASSWORD_HASH` | — | bcrypt hash of the operator password (preferred; generate via `./setup.sh` or `htpasswd -nBC 12 "" \| tr -d ':\n'`). In a Compose `env_file`, escape `$` as `$$`. |
 | `PASSWORD` | — | Plain-text alternative (hashed at startup). Prefer `PASSWORD_HASH`. |
 | `NO_PROVIDER_AUTO_SELECT` | `false` | Don't auto-redirect to a sole login provider. |
-| `OIDC_CONFIGURATION_URL` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | Optional OIDC login backend — active only when all three are set. |
+| `OIDC_CONFIGURATION_URL` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | Optional OIDC login backend — active only when all three are set, and it **requires an allow-list** (below). |
 | `OIDC_SCOPES` / `OIDC_USER_ID_FIELD` / `OIDC_PROVIDER_NAME` | `openid,profile,email` / `/email` / `OIDC` | OIDC details. |
-| `OIDC_ALLOWED_USERS[_GLOB]`, `OIDC_ALLOWED_ATTRIBUTES[_GLOB]` | — | OIDC allow-lists (exact / glob). |
+| `OIDC_ALLOWED_USERS[_GLOB]`, `OIDC_ALLOWED_ATTRIBUTES[_GLOB]` | — | Who may log in through OIDC — see [OIDC allow-lists](#oidc-allow-lists). |
 
 At least one login backend must exist at startup: a password, OIDC, or an already-enrolled
 passkey — otherwise the gateway refuses to start. Passkeys are enrolled at `/.auth/settings`
 after the first login.
+
+#### OIDC allow-lists
+
+Four settings decide which accounts of your OIDC provider may log in. **A login is allowed as
+soon as one rule matches** — the rules are alternatives, so adding one widens access and never
+narrows it.
+
+| Setting | A rule matches … | Example |
+|---|---|---|
+| `OIDC_ALLOWED_USERS` | the user ID exactly | `alice@example.com,bob@example.com` |
+| `OIDC_ALLOWED_USERS_GLOB` | the user ID against a pattern | `*@example.com` |
+| `OIDC_ALLOWED_ATTRIBUTES` | a userinfo attribute exactly | `/groups=admins,/department=it` |
+| `OIDC_ALLOWED_ATTRIBUTES_GLOB` | a userinfo attribute against a pattern | `/groups=team-*` |
+
+The user ID is the userinfo field `OIDC_USER_ID_FIELD` points to. An attribute is named by a
+JSON pointer (`/groups`, `/org/team`); if its value is a list, one matching entry is enough.
+
+**OIDC needs at least one rule — without one the gateway refuses to start.** With no rule,
+every account your provider authenticates would be the operator; with a provider anyone can sign
+up to, that is everyone. So "everyone" is never the result of leaving the settings out or of an
+empty variable. If it is really what you want, say so:
+
+```
+OIDC_ALLOWED_USERS_GLOB=*
+```
+
+**Pattern syntax.** A pattern describes the whole value, and matching is case-sensitive.
+
+| Pattern | Matches |
+|---|---|
+| `*` | any run of characters, including none — **across `@`, `.` and `/` too** |
+| `?` | exactly one character |
+| `[abc]`, `[a-z]` | one character from the set or range |
+| `[!a-z]` | one character **not** in the set or range |
+| `{alice,bob}` | one of the alternatives; `{-eu,}` makes a part optional |
+| `\*`, `\?` | the character itself |
+
+So `*@example.com` allows every address of that domain — and nothing at `example.com.evil.example`,
+because the pattern is anchored at both ends. Note what `*` does **not** promise: it has no
+notion of a "local part", so a pattern is only as trustworthy as the claim it is matched
+against. Use a claim your provider verifies.
+
+**Commas separate entries**, so a comma inside a pattern is written `\,`:
+
+```
+OIDC_ALLOWED_USERS_GLOB={alice\,bob}@example.com,*@example.org
+```
+
+**An entry the gateway cannot read stops it at start-up**, with a message naming the setting
+and the entry: an attribute rule that is not `/pointer=value`, a pattern that does not parse,
+or a setting that is set but empty. A rule that was silently dropped would be a hole in an
+authorization decision.
 
 ### Upstream / proxy
 

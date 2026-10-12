@@ -84,15 +84,15 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 		// no stack trace) — main exits non-zero on them.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			oidcAllowedUsersList := splitCSV(oidcAllowedUsers)
-
-			var oidcAllowedUsersGlobList []string
-			if oidcAllowedUsersGlob != "" {
-				oidcAllowedUsersGlobList = splitWithEscapes(oidcAllowedUsersGlob, ",")
+			oidcAllowed, err := oidcAllowListSettings{
+				Users:          oidcAllowedUsers,
+				UsersGlob:      oidcAllowedUsersGlob,
+				Attributes:     oidcAllowedAttributes,
+				AttributesGlob: oidcAllowedAttributesGlob,
+			}.parse()
+			if err != nil {
+				return err
 			}
-
-			oidcAllowedAttributesMap := parseAttributeMap(oidcAllowedAttributes)
-			oidcAllowedAttributesGlobMap := parseAttributeMap(oidcAllowedAttributesGlob)
 
 			oidcScopesList := splitCSV(oidcScopes)
 			if len(oidcScopesList) == 0 {
@@ -125,10 +125,10 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				OIDCScopes:                oidcScopesList,
 				OIDCUserIDField:           oidcUserIDField,
 				OIDCProviderName:          oidcProviderName,
-				OIDCAllowedUsers:          oidcAllowedUsersList,
-				OIDCAllowedUsersGlob:      oidcAllowedUsersGlobList,
-				OIDCAllowedAttributes:     oidcAllowedAttributesMap,
-				OIDCAllowedAttributesGlob: oidcAllowedAttributesGlobMap,
+				OIDCAllowedUsers:          oidcAllowed.Users,
+				OIDCAllowedUsersGlob:      oidcAllowed.UsersGlob,
+				OIDCAllowedAttributes:     oidcAllowed.Attributes,
+				OIDCAllowedAttributesGlob: oidcAllowed.AttributesGlob,
 
 				NoProviderAutoSelect: noProviderAutoSelect,
 				Password:             password,

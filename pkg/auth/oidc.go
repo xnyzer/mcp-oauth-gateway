@@ -15,22 +15,62 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var (
+	// ErrInvalidGlobPattern reports an allow-list pattern that does not parse.
+	ErrInvalidGlobPattern = errors.New("invalid glob pattern")
+	// ErrNoAllowList reports an OIDC provider configured without a single
+	// allow rule.
+	ErrNoAllowList = errors.New("OIDC login is configured without an allow-list")
+)
+
 type oidcProvider struct {
 	oauth2                oauth2.Config
 	providerName          string
 	userInfoURL           string
 	userIDField           string
 	allowedUsers          []string
-	allowedUsersGlob      []glob.Glob
+	allowedUsersGlob      []*glob.Pattern
 	allowedAttributes     map[string][]string
-	allowedAttributesGlob map[string][]glob.Glob
+	allowedAttributesGlob map[string][]*glob.Pattern
 }
 
+// NewOIDCProvider builds the generic OIDC login backend. Its allow-list is
+// checked before anything is fetched, so a gateway that would let the wrong
+// people in is refused whether or not the provider is reachable.
 func NewOIDCProvider(
 	configurationURL string, scopes []string, userIDField string,
 	providerName, externalURL, clientID, clientSecret string, allowedUsers []string, allowedUsersGlob []string,
 	allowedAttributes map[string][]string, allowedAttributesGlob map[string][]string,
 ) (Provider, error) {
+	compiledGlobs, err := compileGlobs(allowedUsersGlob)
+	if err != nil {
+		return nil, err
+	}
+	compiledAttributeGlobs := make(map[string][]*glob.Pattern)
+	for key, patterns := range allowedAttributesGlob {
+		compiled, err := compileGlobs(patterns)
+		if err != nil {
+			return nil, err
+		}
+		if len(compiled) > 0 {
+			compiledAttributeGlobs[key] = compiled
+		}
+	}
+	provider := &oidcProvider{
+		providerName:          providerName,
+		userIDField:           userIDField,
+		allowedUsers:          allowedUsers,
+		allowedUsersGlob:      compiledGlobs,
+		allowedAttributes:     allowedAttributes,
+		allowedAttributesGlob: compiledAttributeGlobs,
+	}
+	// Without a rule, every account the provider authenticates would be the
+	// operator. That has to be asked for with a `*`, never arrived at by
+	// leaving the settings out or by an empty variable (§6, fail closed).
+	if !provider.hasAllowRule() {
+		return nil, ErrNoAllowList
+	}
+
 	resp, err := http.Get(configurationURL) //nolint:gosec // G107: fetching the operator-configured OIDC discovery URL is this provider's purpose
 	if err != nil {
 		return nil, err
@@ -47,56 +87,36 @@ func NewOIDCProvider(
 	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
 		return nil, err
 	}
-	r, err := url.JoinPath(externalURL, OIDCCallbackEndpoint)
+	redirectURL, err := url.JoinPath(externalURL, OIDCCallbackEndpoint)
 	if err != nil {
 		return nil, err
 	}
-
-	// Compile glob patterns
-	var compiledGlobs []glob.Glob
-	for _, pattern := range allowedUsersGlob {
-		if pattern != "" {
-			g, err := glob.Compile(pattern)
-			if err != nil {
-				return nil, err
-			}
-			compiledGlobs = append(compiledGlobs, g)
-		}
-	}
-
-	// Compile attribute glob patterns
-	compiledAttributeGlobs := make(map[string][]glob.Glob)
-	for key, patterns := range allowedAttributesGlob {
-		for _, pattern := range patterns {
-			if pattern != "" {
-				g, err := glob.Compile(pattern)
-				if err != nil {
-					return nil, err
-				}
-				compiledAttributeGlobs[key] = append(compiledAttributeGlobs[key], g)
-			}
-		}
-	}
-
-	return &oidcProvider{
-		oauth2: oauth2.Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			RedirectURL:  r,
-			Scopes:       scopes,
-			Endpoint: oauth2.Endpoint{
-				AuthURL:  cfg.AuthEndpoint,
-				TokenURL: cfg.TokenEndpoint,
-			},
+	provider.userInfoURL = cfg.UserInfo
+	provider.oauth2 = oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURL,
+		Scopes:       scopes,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  cfg.AuthEndpoint,
+			TokenURL: cfg.TokenEndpoint,
 		},
-		providerName:          providerName,
-		userInfoURL:           cfg.UserInfo,
-		userIDField:           userIDField,
-		allowedUsers:          allowedUsers,
-		allowedUsersGlob:      compiledGlobs,
-		allowedAttributes:     allowedAttributes,
-		allowedAttributesGlob: compiledAttributeGlobs,
-	}, nil
+	}
+	return provider, nil
+}
+
+// hasAllowRule reports whether at least one of the four allow-lists holds a
+// rule.
+func (p *oidcProvider) hasAllowRule() bool {
+	if len(p.allowedUsers) > 0 || len(p.allowedUsersGlob) > 0 || len(p.allowedAttributesGlob) > 0 {
+		return true
+	}
+	for _, values := range p.allowedAttributes {
+		if len(values) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *oidcProvider) Name() string {
@@ -159,46 +179,53 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 		return false, "", nil, errors.New("user ID field is not a string")
 	}
 
-	// If no restrictions are set, allow all users
-	if len(p.allowedUsers) == 0 && len(p.allowedUsersGlob) == 0 && len(p.allowedAttributes) == 0 && len(p.allowedAttributesGlob) == 0 {
-		return true, userID, userInfoMap, nil
-	}
+	return p.isAllowed(obj, userID), userID, userInfoMap, nil
+}
 
-	// Check exact user matches first
+// isAllowed applies the allow-list to a verified identity. A login is allowed
+// as soon as one rule matches. No rule, no login: NewOIDCProvider refuses to
+// build a provider without one, and a provider that has none anyway denies
+// rather than admits. An attribute the userinfo response lacks matches nothing.
+func (p *oidcProvider) isAllowed(userInfo any, userID string) bool {
 	if slices.Contains(p.allowedUsers, userID) {
-		return true, userID, userInfoMap, nil
+		return true
 	}
-
-	// Check user glob patterns
 	for _, g := range p.allowedUsersGlob {
 		if g.Match(userID) {
-			return true, userID, userInfoMap, nil
+			return true
 		}
 	}
-
-	// Check exact attribute matches
 	for key, allowedValues := range p.allowedAttributes {
-		attrValue, err := jsonpointer.Get(obj, key)
-		if err != nil {
-			continue // Attribute not found, skip
-		}
-		if matchAttributeValue(attrValue, allowedValues) {
-			return true, userID, userInfoMap, nil
+		if attrValue, err := jsonpointer.Get(userInfo, key); err == nil && matchAttributeValue(attrValue, allowedValues) {
+			return true
 		}
 	}
-
-	// Check attribute glob patterns
 	for key, globs := range p.allowedAttributesGlob {
-		attrValue, err := jsonpointer.Get(obj, key)
-		if err != nil {
-			continue // Attribute not found, skip
-		}
-		if matchAttributeGlob(attrValue, globs) {
-			return true, userID, userInfoMap, nil
+		if attrValue, err := jsonpointer.Get(userInfo, key); err == nil && matchAttributeGlob(attrValue, globs) {
+			return true
 		}
 	}
+	return false
+}
 
-	return false, userID, userInfoMap, nil
+// compileGlobs compiles the non-empty patterns of an allow-list. No separator
+// is configured, so `*` spans every character — `@`, `.` and `/` included —
+// and a pattern is matched against the whole value, never a part of it. A
+// pattern that does not compile is an error, which stops start-up rather than
+// silently dropping a rule from an authorization decision.
+func compileGlobs(patterns []string) ([]*glob.Pattern, error) {
+	var compiled []*glob.Pattern
+	for _, pattern := range patterns {
+		if pattern == "" {
+			continue
+		}
+		g, err := glob.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("%w %q: %w", ErrInvalidGlobPattern, pattern, err)
+		}
+		compiled = append(compiled, g)
+	}
+	return compiled, nil
 }
 
 // matchAttributeValue checks if an attribute value matches any of the allowed values.
@@ -221,7 +248,7 @@ func matchAttributeValue(attrValue any, allowedValues []string) bool {
 
 // matchAttributeGlob checks if an attribute value matches any of the glob patterns.
 // Supports string values and arrays of strings.
-func matchAttributeGlob(attrValue any, globs []glob.Glob) bool {
+func matchAttributeGlob(attrValue any, globs []*glob.Pattern) bool {
 	switch v := attrValue.(type) {
 	case string:
 		for _, g := range globs {

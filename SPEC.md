@@ -359,7 +359,8 @@ defence-in-depth on top of `SameSite=Lax`. Form POSTs carry it in a hidden
 
 - `GET /.auth/login` — login page. Backends: **passkey/WebAuthn** (preferred, offered once a
   credential is enrolled), **password** (bcrypt hash(es) from the env config — see below),
-  and **generic OIDC** (off by default, active only when configured).
+  and **generic OIDC** (off by default, active only when configured — and only with an
+  allow-list, §3.1).
 - `POST /.auth/login` — password verification. **Rate limiting / lockout (SR-6):** per-IP token
   bucket on the login surfaces (password + passkey ceremony) and a
   per-account lockout after `LOGIN_LOCKOUT_THRESHOLD` consecutive failed password logins
@@ -580,6 +581,15 @@ second source of truth; this section states only what is **normative** about the
 - **At least one login backend MUST exist at startup** — a password, a configured OIDC provider,
   or an already-enrolled passkey. Otherwise the gateway MUST refuse to start (§1.12): a silently
   missing auth backend is worse than a process that will not boot.
+- **An enabled OIDC backend MUST have an allow-list (SR-3).** At least one rule in
+  `OIDC_ALLOWED_USERS`, `OIDC_ALLOWED_USERS_GLOB`, `OIDC_ALLOWED_ATTRIBUTES` or
+  `OIDC_ALLOWED_ATTRIBUTES_GLOB`; without one the gateway MUST refuse to start, because every
+  account the provider authenticates would otherwise be the operator. Admitting every account is
+  itself a rule (`OIDC_ALLOWED_USERS_GLOB=*`) — it has to be written down, never arrived at by
+  omission. **An entry that cannot be read MUST stop start-up and MUST NOT be dropped:** an
+  attribute rule that is not `/pointer=value`, a pattern that does not parse, a setting that is
+  set but holds no entry. A login is allowed when **one** rule matches; a pattern is matched
+  against the whole value, case-sensitively, and `*` spans every character.
 - **TLS** is either terminated by the gateway (built-in ACME or a supplied cert+key, which MUST
   be set together) or by a fronting reverse proxy (GR-1, SR-2).
 - **`TRUSTED_PROXIES`** accepts bare IPs and CIDR ranges; bare IPs are normalised to `/32`

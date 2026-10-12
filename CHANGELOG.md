@@ -5,6 +5,78 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
+## [Unreleased]
+
+### Security
+
+- **OIDC allow-list patterns no longer match more than they say.** `OIDC_ALLOWED_USERS_GLOB` and
+  `OIDC_ALLOWED_ATTRIBUTES_GLOB` are matched by `gobwas/glob` 1.0, whose engine is a rewrite. The
+  old one (0.2.3) was over-permissive in two ways, both of which could admit an identity the
+  pattern does not describe:
+  - **Literals on both sides of a `*` could share characters.** `admin*n@corp.example` matched
+    `admin@corp.example`, and `admin*admin` matched a single `admin`.
+  - **`?` and negated classes matched the empty value**, although each stands for exactly one
+    character.
+
+  Only deployments that log in through OIDC **and** use a glob allow-list are affected; OIDC is
+  off by default. If you use such patterns, read the upgrade note below.
+
+- **OIDC login now requires an allow-list.** With OIDC enabled and none of the four
+  `OIDC_ALLOWED_*` settings set, **every account the provider authenticates could log in as the
+  operator** — with a provider anyone can sign up to, everyone. Leaving the settings out was
+  enough, and so was an empty variable (`OIDC_ALLOWED_USERS=${UNSET}`). The gateway now refuses
+  to start in that state. Admitting every account remains possible, but has to be written down:
+  `OIDC_ALLOWED_USERS_GLOB=*`. A provider that somehow holds no rule denies instead of admitting.
+
+- **A misread OIDC allow-list no longer turns into "no restriction".** The four
+  `OIDC_ALLOWED_*` settings used to drop whatever they could not read: an attribute rule without
+  `=`, one without a value, a list that held only commas. With no rule left, the allow-list was
+  empty — and an empty allow-list lets **every** account of the provider log in. A typo in the
+  only rule was therefore enough to open the gateway to the whole provider. Such an entry now
+  stops start-up, with a message naming the setting and the entry.
+
+### Changed
+
+- **Breaking, if you log in through OIDC: set an allow-list before you upgrade.** A gateway
+  with `OIDC_CONFIGURATION_URL`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` set and no
+  `OIDC_ALLOWED_*` rule **no longer starts**; the message names the four settings. Decide who
+  should get in and set a rule — or, to keep exactly what you had, `OIDC_ALLOWED_USERS_GLOB=*`.
+  Deployments without OIDC (the default) are not affected.
+
+- **Upgrade note for OIDC glob patterns — check them before you upgrade.** Beyond the two matching
+  fixes under *Security*, 1.0 differs from 0.2.3 in four more ways:
+  - **A malformed pattern now stops the gateway at start-up.** An unclosed `{` (as in
+    `{alice,bob`) or a trailing backslash used to be accepted and read as if it had been
+    well-formed; it is now an error, and the message names the pattern. That is deliberate — a
+    rule in an authorization decision should not be guessed at — but it means a typo that went
+    unnoticed until now keeps the new version from starting.
+  - **A non-ASCII character counts as one character.** `user?@example.com` now matches
+    `userü@example.com`; before, `?` and character classes failed on anything outside ASCII. A
+    pattern can therefore match values it used to miss.
+  - **Empty braces no longer crash a login.** A pattern such as `a{}` made the match panic at
+    login time; it now matches as if the braces were absent.
+  - **An empty alternative is honoured everywhere.** `{dev,}{ops,}-lead` now matches `-lead`
+    and `*{a,}` the empty value; before, the empty choice was lost when it stood next to a `*`
+    or to another brace group. Again a pattern can match values it used to miss.
+
+  Everything else in glob matching behaves as before: a pattern is matched against the whole
+  value, matching is case-sensitive, and `*` has no separator — it spans every character, `@`,
+  `.` and `/` included. Measured, not assumed: the two engines were run side by side over 9,512
+  generated patterns and 1,555 values each, and every difference traces back to one of the six
+  points named here.
+
+- **Upgrade note for all four `OIDC_ALLOWED_*` settings.** The gateway refuses to start when
+  - an entry of `OIDC_ALLOWED_ATTRIBUTES` or `OIDC_ALLOWED_ATTRIBUTES_GLOB` is not
+    `/pointer=value` — no `=`, no value, or a key that does not start with `/`;
+  - a setting is set but holds no entry (only commas or spaces);
+  - a pattern does not parse. If that pattern contains `{` or `}`, the cause is usually the list
+    syntax rather than a typo: **commas separate entries, so a comma inside a pattern is written
+    `\,`** — `{alice\,bob}@example.com`. Unescaped, the pattern arrives in two halves; 0.2.3
+    silently accepted each half as a pattern of its own.
+
+  A trailing comma and stray spaces are still fine. The syntax is now documented in the README
+  under *OIDC allow-lists*.
+
 ## [0.4.2] — 2026-10-12
 
 ### Added
