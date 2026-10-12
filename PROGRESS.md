@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**Three tasks in the backlog:** F-030 (show the running version on the settings page), F-031 (dependency and platform updates) and F-032 (repository and supply-chain hardening). Every task F-001–F-029 is done. **F-024** added the operator's client
+**One task planned, two in the backlog:** F-030 (show the running version on the settings page) is planned; F-031 (dependency and platform updates) and F-032 (repository and supply-chain hardening) wait in the backlog. Every task F-001–F-029 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -117,14 +117,9 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 
 ## Open tasks — work top to bottom
 
-*Nothing planned.* The backlog below holds F-030, F-031 and F-032; a task moves here once
-`/coding-kit:prep-step` has planned it.
-
-## Feature ideas (backlog)
-
 ### F-030 — Show the running version on the settings page
 
-**Status:** BACKLOG
+**Status:** PLANNED
 
 **Problem:** The operator cannot see in the browser which version is running — only via
 `--version` inside the container on the host. After an update there is no quick way to
@@ -135,16 +130,35 @@ confirm the new image is actually live.
 unchanged: SPEC §1.13 forbids version disclosure there, because it is unauthenticated and
 publicly reachable, and a version string tells an attacker which advisories apply.
 
-**Solution sketch:**
-- Pass the version into the settings template and render it in an unobtrusive spot
-  (e.g. page footer); `dev` builds show `dev`.
-- Extend SPEC §1.12 (the `GET /.auth/settings` row) by the version display; §1.13 stays
-  as it is, and the reason is worth a sentence there.
-- No new endpoint, no new dependency, no outbound call — an "update available" check
-  against GitHub is deliberately out of scope (egress from an auth boundary, new failure
+**Solution sketch** (as planned in `/prep-step`, 2026-10-12 — small, no substeps):
+- The version reaches the page through the auth router's construction options (a `Version`
+  field on `auth.Config`, wired from `version.Version` where the router is built) rather than
+  the handler reading the package global. It is still the one build-time value `--version`
+  reports — nothing an operator sets, so the two cannot drift. The indirection exists for the
+  test: it can set a distinctive value and assert that exact rendering, where the global would
+  only ever say `dev`.
+- Rendered as a small footer on the settings page; an empty value renders nothing.
+- Extend SPEC §1.12 (the `GET /.auth/settings` row) by the version display; §1.13 stays as it
+  is and gains a sentence on why. README's "Version" line and the CHANGELOG follow.
+- No new endpoint, no new config, no new dependency, no outbound call — an "update available"
+  check against GitHub is deliberately out of scope (egress from an auth boundary, new failure
   mode); the operator compares against the releases page.
 
+**Acceptance criteria:**
+- [ ] A logged-in operator sees the version in the settings footer, asserted on the specific
+      rendering, not a loose `Contains`.
+- [ ] Without a session the version is nowhere: not on the login page, not in the redirect
+      that `GET /.auth/settings` answers with (client must not follow redirects).
+- [ ] `/healthz` still answers exactly `{"status":"ok"}`.
+- [ ] Each new assertion has been seen to fail once (CODING-STANDARDS §9).
+- [ ] Full check set green with the pinned toolchain.
+
+**Release:** on its own as patch release **v0.4.2** — the operator's decision: worth shipping,
+not worth a minor bump.
+
 **Dependencies:** none.
+
+## Feature ideas (backlog)
 
 ### F-031 — Bring dependencies and the platform up to date
 
@@ -239,7 +253,7 @@ F-026 Dissolve REQUIREMENTS.md into SPEC, and strip the history out of SPEC (DON
 F-027 Retire the local skills and finish the documentation architecture (DONE)
 F-028 Retire the parallel gateway in the end-to-end harness (DONE)
 F-029 Close reachable vulnerabilities and scan the toolchain we ship (DONE)
-F-030 Show the running version on the settings page
+F-030 Show the running version on the settings page (PLANNED)
 F-031 Bring dependencies and the platform up to date
 F-032 Harden the repository and the supply chain
 -->
