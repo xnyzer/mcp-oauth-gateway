@@ -4,8 +4,8 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/coding-kit:add-feature` intakes new tasks (F-number), `/coding-kit:prep-step` prepares and decomposes, `/coding-kit:build-step` implements, `/coding-kit:step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State: released and live.** **v0.4.0 is public** — repo public, multi-arch image on GHCR
-(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.4.0`/`0.4`), verified against the **final MCP spec
+**State: released and live.** **v0.4.1 is public** — repo public, multi-arch image on GHCR
+(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.4.1`/`0.4`), verified against the **final MCP spec
 2026-07-28** (F-017; conformance recorded requirement by requirement in
 `docs/MCP-CONFORMANCE.md`). Feature-
 complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
@@ -32,8 +32,9 @@ a connection gets at consent time (F-025), and the documentation and structural 
 since 2026-08-23; **pulling `0.4.0` makes it reproducible again**, which is the point of the
 release.
 
-**Unreleased: F-029**, a security fix — `0.4.0` was built with Go 1.26.7 and carries 11 reachable
-standard-library advisories plus five in `x/net`. It ships as patch release **v0.4.1**.
+**Released: v0.4.1**, a security patch (F-029) — `0.4.0` was built with Go 1.26.7 and carries 11
+reachable standard-library advisories plus five in `x/net`; `0.4.1` has none reachable. **The
+deployment still runs `0.4.0` until it pulls `0.4.1`.**
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
