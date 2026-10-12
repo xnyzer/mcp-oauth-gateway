@@ -392,7 +392,7 @@ password-disabled flag.
 |---|---|---|
 | `POST /.auth/webauthn/login/begin` / `finish` | public (CSRF-checked) | **discoverable** (usernameless) assertion ceremony — empty allow-list, so the begin response never enumerates the operator's credential IDs to an anonymous caller; `400`/`401` with a uniform error when unavailable or failed; a sign-count regression (clone warning) or a failed sign-count persist denies the login (fail-closed) |
 | `POST /.auth/webauthn/register/begin` / `finish` | session-gated (CSRF-checked) | enrollment (attestation) ceremony; existing credentials are excluded; a resident (discoverable) key is **required** so every new passkey supports discoverable login |
-| `GET /.auth/settings` | session-gated | passkey list/enroll/delete + password-fallback toggle + **the client list** |
+| `GET /.auth/settings` | session-gated | passkey list/enroll/delete + password-fallback toggle + **the client list**; the page footer names the running build version — the only place the gateway shows it over HTTP (§1.13) |
 | `POST /.auth/settings/password`, `POST /.auth/settings/credentials/delete` | session-gated (CSRF-checked) | form posts (per-session CSRF token + `SameSite=Lax`) |
 | `POST /.auth/settings/clients/revoke`, `.../clients/grants/revoke`, `.../clients/revoke-all` | session-gated (CSRF-checked) | operator revocation: one client, one authorization, or everything |
 
@@ -439,9 +439,12 @@ are fixed server-side texts selected by code) and MUST NOT reveal whether a user
 ### 1.13 Health — `GET /healthz`
 
 `200 {"status":"ok"}` once the process is serving; no auth, no version/internals disclosure
-(SR-10). Not proxied to the upstream. Served on every listener: in TLS modes the plain-HTTP
-listener answers `/healthz` directly (everything else redirects to https), so the container
-health probe (`mcp-oauth-gateway healthcheck`) always targets `LISTEN`.
+(SR-10) — the endpoint is public, and a version string tells an anonymous caller which
+advisories apply. The operator reads the running version behind their session instead, in the
+settings page footer (§1.12). Not proxied to the upstream. Served on every listener: in TLS
+modes the plain-HTTP listener answers `/healthz` directly (everything else redirects to
+https), so the container health probe (`mcp-oauth-gateway healthcheck`) always targets
+`LISTEN`.
 
 ---
 

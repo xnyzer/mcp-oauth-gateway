@@ -44,6 +44,9 @@ type AuthRouter struct {
 	// lockout locks the operator account after consecutive failed password
 	// logins (SR-6); nil disables.
 	lockout *ratelimit.Lockout
+	// version is the build version shown on the session-gated settings page
+	// and nowhere else (SPEC §1.12); empty renders nothing.
+	version string
 }
 
 // Config carries all options for the user-authentication surface
@@ -72,6 +75,12 @@ type Config struct {
 	// (SR-6); nil disables. Passkey logins are exempt — assertions are
 	// cryptographic, not guessable.
 	Lockout *ratelimit.Lockout
+	// Version is the build version rendered in the settings page footer, so
+	// the operator can confirm which build is live. It is passed in rather
+	// than read from pkg/version so a test can render a distinctive value.
+	// Only the session-gated settings page shows it — the public pages and
+	// /healthz never disclose the version (SPEC §1.13).
+	Version string
 }
 
 func NewAuthRouter(cfg Config) (*AuthRouter, error) {
@@ -128,6 +137,7 @@ func NewAuthRouter(cfg Config) (*AuthRouter, error) {
 		logger:               cfg.Logger,
 		loginRateLimit:       cfg.LoginRateLimit,
 		lockout:              cfg.Lockout,
+		version:              cfg.Version,
 	}, nil
 }
 

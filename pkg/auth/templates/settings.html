@@ -370,6 +370,11 @@
       {{end}}
 
       <div class="footer"><a href="/.auth/logout">Logout</a></div>
+      {{if .Version}}
+      <div class="muted small" id="gateway-version">
+        mcp-oauth-gateway {{.Version}}
+      </div>
+      {{end}}
     </div>
 
     {{template "webauthn_script"}}

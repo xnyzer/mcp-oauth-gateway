@@ -5,6 +5,16 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
+## [Unreleased]
+
+### Added
+
+- **The settings page shows which version is running (F-030).** The footer of `/.auth/settings`
+  names the build, so after an update you can confirm in the browser that the new image is
+  live instead of running `--version` inside the container. It is visible only behind your
+  login: `/healthz` and every other public endpoint still disclose no version, because that
+  would tell an anonymous caller which advisories apply. No schema or config change.
+
 ## [0.4.1] — 2026-10-12
 
 ### Security

@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned, two in the backlog:** F-030 (show the running version on the settings page) is planned; F-031 (dependency and platform updates) and F-032 (repository and supply-chain hardening) wait in the backlog. Every task F-001–F-029 is done. **F-024** added the operator's client
+**Two tasks in the backlog:** F-031 (dependency and platform updates) and F-032 (repository and supply-chain hardening). Every task F-001–F-030 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -36,6 +36,9 @@ release.
 reachable standard-library advisories plus five in `x/net`; `0.4.1` has none reachable. **The
 deployment runs `0.4.1` since 2026-10-12**, pulled from the registry; the signing key carried
 over, so connected clients kept their tokens, and the operator confirmed Claude connects.
+
+**Unreleased: F-030**, the version display on the settings page. It ships on its own as patch
+release **v0.4.2**.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
@@ -112,51 +115,14 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-028b | Harness onto the real startup path → `newE2EGateway` runs `resolveConfig` → `openDependenciesWithLogger` → `buildRouter` and **assembles nothing itself**; the mock upstream runs as a real HTTP server behind `ProxyTargets`, so the transparent backend is exercised too. **The gap that motivated the task is closed and was measured, not argued:** a throwaway probe against the real login printed `Path=/; Max-Age=600; HttpOnly; SameSite=Lax` with a signed-and-encrypted value, where the old harness had none of it. Two package-internal seams, one of them a structural fix — the CIMD resolver moved to `deps.go`, where collaborators are built. **Retrofit from F-022e done:** `BuildRouter` is unexported again, so `pkg/mcp-proxy` exports exactly what it did before F-022e. Beyond the plan: `OriginCheckEnabled: true`, because leaving it off would have created a fresh divergence in the task that exists to end divergence. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-028 | **Retire the parallel gateway in the end-to-end harness — complete** (a/b). The suite tested a gateway it built itself, and the two had drifted where it mattered most: the session cookie ran without encryption, `HttpOnly`, `Secure` or `SameSite`, so a regression in any of those SPEC §1.12 properties was invisible to it. Now the suite drives the binary's own startup path and constructs nothing — by construction rather than by vigilance, which is what F-021 could not achieve by fixing the symptom once by hand. **The compiler proved the duplication** during the move: exactly one redeclaration error, and the two `tokenActiveChecker` bodies were identical line for line. Carried its predecessor's correction too: F-022e had exported a function for a caller that could never exist. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-029 | Close reachable vulnerabilities and scan the toolchain we ship → **`x/net` 0.61.0, `grpc` 1.83.2, Go toolchain 1.26.7 → 1.26.9 in `go.mod` *and* the digest-pinned builder image, and `vulncheck.yml` fixed to scan the pinned toolchain**. Triggered by the weekly `vulncheck` failing on five HTTP/2 advisories in `x/net`. **The real finding was the blind spot behind it:** `govulncheck-action` defaults `go-version-input` to `stable`, which overrides `go-version-file`, so CI scanned the standard library of Go 1.27.2 — the shipped binary, built with 1.26.7, carried **11 reachable standard-library advisories** (net/http, HTTP/2, crypto/tls, html/template, net/textproto) that no run ever reported. Run against 1.26.9: **0 reachable**. Suite + `-race`, gofmt, vet, golangci-lint, go-licenses, actionlint and a local image build polled to `healthy` all green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
+| F-030 | Show the running version on the settings page → **footer on the session-gated `/.auth/settings`, fed from the build-time version that `--version` reports** (passed in through `auth.Config`, wired where the router is built), so the operator can confirm in the browser which build is live. **The boundary is the point, not the rendering:** a version string tells an anonymous caller which advisories apply, so `/healthz` (SPEC §1.13) and every other public endpoint still disclose none — asserted on the assembled gateway, where `/healthz` on the real router had no exact-body test before. **Eight mutations, each seen red:** footer removed, wiring removed, version leaked into `/healthz`, onto the login page, into the redirect, the empty-value guard dropped, `Abort` removed, the session gate removed. One of them exposed a gap in the new end-to-end test itself, closed in the same step. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
 
 ---
 
 ## Open tasks — work top to bottom
 
-### F-030 — Show the running version on the settings page
-
-**Status:** PLANNED
-
-**Problem:** The operator cannot see in the browser which version is running — only via
-`--version` inside the container on the host. After an update there is no quick way to
-confirm the new image is actually live.
-
-**Idea:** Show the build version (`pkg/version.Version`) on the session-gated
-`/.auth/settings` page, so only the logged-in operator sees it. `/healthz` stays
-unchanged: SPEC §1.13 forbids version disclosure there, because it is unauthenticated and
-publicly reachable, and a version string tells an attacker which advisories apply.
-
-**Solution sketch** (as planned in `/prep-step`, 2026-10-12 — small, no substeps):
-- The version reaches the page through the auth router's construction options (a `Version`
-  field on `auth.Config`, wired from `version.Version` where the router is built) rather than
-  the handler reading the package global. It is still the one build-time value `--version`
-  reports — nothing an operator sets, so the two cannot drift. The indirection exists for the
-  test: it can set a distinctive value and assert that exact rendering, where the global would
-  only ever say `dev`.
-- Rendered as a small footer on the settings page; an empty value renders nothing.
-- Extend SPEC §1.12 (the `GET /.auth/settings` row) by the version display; §1.13 stays as it
-  is and gains a sentence on why. README's "Version" line and the CHANGELOG follow.
-- No new endpoint, no new config, no new dependency, no outbound call — an "update available"
-  check against GitHub is deliberately out of scope (egress from an auth boundary, new failure
-  mode); the operator compares against the releases page.
-
-**Acceptance criteria:**
-- [ ] A logged-in operator sees the version in the settings footer, asserted on the specific
-      rendering, not a loose `Contains`.
-- [ ] Without a session the version is nowhere: not on the login page, not in the redirect
-      that `GET /.auth/settings` answers with (client must not follow redirects).
-- [ ] `/healthz` still answers exactly `{"status":"ok"}`.
-- [ ] Each new assertion has been seen to fail once (CODING-STANDARDS §9).
-- [ ] Full check set green with the pinned toolchain.
-
-**Release:** on its own as patch release **v0.4.2** — the operator's decision: worth shipping,
-not worth a minor bump.
-
-**Dependencies:** none.
+*Nothing planned.* The backlog below holds F-031 and F-032; a task moves here once
+`/coding-kit:prep-step` has planned it.
 
 ## Feature ideas (backlog)
 
@@ -253,7 +219,7 @@ F-026 Dissolve REQUIREMENTS.md into SPEC, and strip the history out of SPEC (DON
 F-027 Retire the local skills and finish the documentation architecture (DONE)
 F-028 Retire the parallel gateway in the end-to-end harness (DONE)
 F-029 Close reachable vulnerabilities and scan the toolchain we ship (DONE)
-F-030 Show the running version on the settings page (PLANNED)
+F-030 Show the running version on the settings page (DONE)
 F-031 Bring dependencies and the platform up to date
 F-032 Harden the repository and the supply chain
 -->

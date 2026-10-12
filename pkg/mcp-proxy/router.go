@@ -17,6 +17,7 @@ import (
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/idp"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/proxy"
 	"github.com/xnyzer/mcp-oauth-gateway/pkg/ratelimit"
+	"github.com/xnyzer/mcp-oauth-gateway/pkg/version"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -140,6 +141,7 @@ func newAuthRouter(ctx context.Context, rc resolvedConfig, deps *dependencies) (
 		Logger:         deps.logger,
 		LoginRateLimit: ratelimit.Middleware(deps.limiters.login, "login", deps.logger),
 		Lockout:        deps.limiters.lockout,
+		Version:        version.Version,
 	})
 }
 

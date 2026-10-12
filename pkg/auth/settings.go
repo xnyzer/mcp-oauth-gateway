@@ -50,6 +50,8 @@ type settingsTemplateData struct {
 	// ConfirmRevokeAll renders the panic button's confirmation panel instead
 	// of the button, so revoking everything takes two deliberate actions.
 	ConfirmRevokeAll bool
+	// Version is the build version for the page footer; empty hides it.
+	Version string
 }
 
 // handleSettings renders the session-gated settings page (SPEC §1.12):
@@ -93,6 +95,7 @@ func (a *AuthRouter) handleSettings(c *gin.Context) {
 		// Compared, never reflected: the query only selects a fixed panel
 		// (SPEC §1.12, no XSS).
 		ConfirmRevokeAll: c.Query("confirm") == "revoke_all",
+		Version:          a.version,
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)

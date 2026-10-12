@@ -309,7 +309,9 @@ The narrowing is yours to make, deployment by deployment.
   volume. Restoring it restores all sessions and keys.
 - **Logs:** structured JSON on stdout, including auth events (`login_ok`, `login_fail`,
   `token_issued`, `register`, `rate_limited`, `revoked`) without secrets.
-- **Version:** `mcp-oauth-gateway --version`; release images report their git tag.
+- **Version:** shown in the footer of `/.auth/settings` once you are logged in, and by
+  `mcp-oauth-gateway --version`; release images report their git tag. No public endpoint
+  discloses it — `/healthz` deliberately says only `{"status":"ok"}`.
 - **Upgrades:** pin image versions; read the [release notes](CHANGELOG.md) — schema
   migrations and config changes are documented there. Downgrades are unsupported.
 
