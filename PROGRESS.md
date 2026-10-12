@@ -38,7 +38,9 @@ deployment runs `0.4.1` since 2026-10-12**, pulled from the registry; the signin
 over, so connected clients kept their tokens, and the operator confirmed Claude connects.
 
 **Released: v0.4.2**, the version display on the settings page (F-030) — a patch release on
-the operator's decision. **The deployment still runs `0.4.1` until it pulls `0.4.2`.**
+the operator's decision. **The deployment runs `0.4.2` since
+2026-10-12**; the signing key carried over again, and the operator confirmed the footer in the
+browser — the one check F-030's own verification could not make.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
