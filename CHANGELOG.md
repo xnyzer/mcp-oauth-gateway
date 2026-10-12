@@ -5,7 +5,15 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
-## [Unreleased]
+## [0.5.0] — 2026-10-13
+
+A maintenance release with three hardening fixes for OIDC logins. **Most deployments have nothing
+to do when upgrading** — a gateway reached under a domain name, logged into with a password or a
+passkey, upgrades as it is. Read on before upgrading if one of these applies:
+
+- **`EXTERNAL_URL` holds an IP address** — the gateway no longer starts until the host has a name.
+- **You log in through OIDC** — an allow-list is now required, and its entries are read strictly.
+- **You have switched the password login off** — keep a way back in while you check your passkey.
 
 ### Security
 
@@ -84,6 +92,18 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   generated patterns and 1,555 values each, and every difference traces back to one of the six
   points named here.
 
+- **Upgrade note for all four `OIDC_ALLOWED_*` settings.** The gateway refuses to start when
+  - an entry of `OIDC_ALLOWED_ATTRIBUTES` or `OIDC_ALLOWED_ATTRIBUTES_GLOB` is not
+    `/pointer=value` — no `=`, no value, or a key that does not start with `/`;
+  - a setting is set but holds no entry (only commas or spaces);
+  - a pattern does not parse. If that pattern contains `{` or `}`, the cause is usually the list
+    syntax rather than a typo: **commas separate entries, so a comma inside a pattern is written
+    `\,`** — `{alice\,bob}@example.com`. Unescaped, the pattern arrives in two halves; 0.2.3
+    silently accepted each half as a pattern of its own.
+
+  A trailing comma and stray spaces are still fine. The syntax is now documented in the README
+  under *OIDC allow-lists*.
+
 - **Built with Go 1.27, on a new runtime base image.** The toolchain moves from 1.26.9 to 1.27.2
   and the runtime image from `distroless/static-debian12` to **`distroless/static-debian13`** —
   the Debian 12 flavour is no longer updated by the distroless project, so staying on it would
@@ -119,17 +139,10 @@ called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades 
   well-behaved one costs nothing. What the backend speaks in each case is recorded in
   [`docs/MCP-CONFORMANCE.md`](docs/MCP-CONFORMANCE.md).
 
-- **Upgrade note for all four `OIDC_ALLOWED_*` settings.** The gateway refuses to start when
-  - an entry of `OIDC_ALLOWED_ATTRIBUTES` or `OIDC_ALLOWED_ATTRIBUTES_GLOB` is not
-    `/pointer=value` — no `=`, no value, or a key that does not start with `/`;
-  - a setting is set but holds no entry (only commas or spaces);
-  - a pattern does not parse. If that pattern contains `{` or `}`, the cause is usually the list
-    syntax rather than a typo: **commas separate entries, so a comma inside a pattern is written
-    `\,`** — `{alice\,bob}@example.com`. Unescaped, the pattern arrives in two halves; 0.2.3
-    silently accepted each half as a pattern of its own.
-
-  A trailing comma and stray spaces are still fine. The syntax is now documented in the README
-  under *OIDC allow-lists*.
+- **Dependencies refreshed.** Beyond the libraries named above, 37 modules moved to their current
+  minor or patch release (OpenTelemetry 1.47, gRPC 1.84, quic-go 0.63, `x/oauth2`, `x/time` and
+  others). None of them closes a known vulnerability; the scan reports zero reachable before and
+  after.
 
 ## [0.4.2] — 2026-10-12
 

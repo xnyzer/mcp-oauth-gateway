@@ -4,8 +4,8 @@ Living task list. **Done table** at the top, **open tasks in execution order** b
 
 How it works: `/coding-kit:add-feature` intakes new tasks (F-number), `/coding-kit:prep-step` prepares and decomposes, `/coding-kit:build-step` implements, `/coding-kit:step-done` finishes (review, docs, Graphiti, commit). Details: `HOW-TO-CODE-WITH-CLAUDE.md`.
 
-**State: released and live.** **v0.4.2 is public** — repo public, multi-arch image on GHCR
-(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.4.2`/`0.4`), verified against the **final MCP spec
+**State: released and live.** **v0.5.0 is public** — repo public, multi-arch image on GHCR
+(`ghcr.io/xnyzer/mcp-oauth-gateway`, tags `0.5.0`/`0.5`), verified against the **final MCP spec
 2026-07-28** (F-017; conformance recorded requirement by requirement in
 `docs/MCP-CONFORMANCE.md`). Feature-
 complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to end on 2026-08-21**:
@@ -41,6 +41,12 @@ over, so connected clients kept their tokens, and the operator confirmed Claude 
 the operator's decision. **The deployment runs `0.4.2` since
 2026-10-12**; the signing key carried over again, and the operator confirmed the footer in the
 browser — the one check F-030's own verification could not make.
+
+**Released: v0.5.0**, the dependency and platform refresh (F-031): Go 1.27, `distroless/static-debian13`,
+`mcp-go` 1.x, `go-webauthn` 0.18, `gobwas/glob` 1.0 — and, found on the way, three hardening fixes
+for OIDC logins. A minor release because two start-up conditions changed. **The deployment still
+runs `0.4.2` until it pulls `0.5.0`**, and with that pull comes F-031e's last criterion: the
+operator's passkey login.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
