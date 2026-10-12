@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**Nothing open.** Every roadmap task F-001–F-029 is done. **F-024** added the operator's client
+**Three tasks in the backlog:** F-030 (show the running version on the settings page), F-031 (dependency and platform updates) and F-032 (repository and supply-chain hardening). Every task F-001–F-029 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -117,15 +117,99 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 
 ## Open tasks — work top to bottom
 
-*Nothing planned and nothing in the backlog.* Every roadmap task is done; new work starts
-with `/coding-kit:add-feature`.
+*Nothing planned.* The backlog below holds F-030, F-031 and F-032; a task moves here once
+`/coding-kit:prep-step` has planned it.
 
 ## Feature ideas (backlog)
 
-*Empty.* Everything raised so far is either done or planned above.
+### F-030 — Show the running version on the settings page
+
+**Status:** BACKLOG
+
+**Problem:** The operator cannot see in the browser which version is running — only via
+`--version` inside the container on the host. After an update there is no quick way to
+confirm the new image is actually live.
+
+**Idea:** Show the build version (`pkg/version.Version`) on the session-gated
+`/.auth/settings` page, so only the logged-in operator sees it. `/healthz` stays
+unchanged: SPEC §1.13 forbids version disclosure there, because it is unauthenticated and
+publicly reachable, and a version string tells an attacker which advisories apply.
+
+**Solution sketch:**
+- Pass the version into the settings template and render it in an unobtrusive spot
+  (e.g. page footer); `dev` builds show `dev`.
+- Extend SPEC §1.12 (the `GET /.auth/settings` row) by the version display; §1.13 stays
+  as it is, and the reason is worth a sentence there.
+- No new endpoint, no new dependency, no outbound call — an "update available" check
+  against GitHub is deliberately out of scope (egress from an auth boundary, new failure
+  mode); the operator compares against the releases page.
+
+**Dependencies:** none.
+
+### F-031 — Bring dependencies and the platform up to date
+
+**Status:** BACKLOG
+
+**Problem:** About forty dependency updates are pending, and Dependabot's grouped PR cannot
+land them: it fails to compile, because three of the updates change an API. None closes a
+known vulnerability — `govulncheck` reports zero reachable and no alert is open — but the
+longer the gap grows, the larger and riskier the next security bump becomes; F-029 showed how
+a routine fix turns into a toolchain move when the baseline has drifted.
+
+**Idea:** Take the updates in on `main` in separately verified pieces instead of as one
+grouped PR: the routine bumps first, then each API-changing update on its own, then the Go
+toolchain. Ship the result as a minor release, since a major bump of the MCP library is not
+patch material.
+
+**Solution sketch:**
+- Routine minor/patch bumps (OpenTelemetry, gin-contrib, quic-go, sqlite3, grpc, `x/oauth2`,
+  `x/time` and the rest of the group) — one step, full check set.
+- `gobwas/glob` 0.2 → 1.0: adapt the OIDC attribute matching to the new API.
+- `go-webauthn/webauthn` 0.17 → 0.18: the passkey path is security-critical, so it gets its
+  own step, the virtual-authenticator suite, and a real-browser passkey login before release.
+- `mark3labs/mcp-go` 0.58 → 1.x: v1 is stable now, which was the reason F-017a stayed on
+  0.58; expect an API migration in the stdio backend and re-check which protocol version that
+  path then speaks (`docs/MCP-CONFORMANCE.md`).
+- Go 1.27 in `go.mod` and the digest-pinned builder image, including the `gofmt` realignment
+  1.27 applies to `pkg/idp/metadata.go`.
+- Re-pin the distroless runtime image, whose digest has gone stale without a Dependabot PR;
+  decide whether to stay on `static-debian12` or move to `static-debian13`.
+- Dependencies stay permissively licensed; `go-licenses` decides, not the changelog.
+
+**To be analysed:** why Dependabot's docker ecosystem did not propose the runtime digest;
+whether mcp-go 1.x changes behaviour on the wire for existing stdio deployments.
+
+**Dependencies:** none. Supersedes Dependabot PRs #24 and #17.
+
+### F-032 — Harden the repository and the supply chain
+
+**Status:** BACKLOG
+
+**Problem:** GitHub's free security features for public repositories are switched off here:
+secret scanning, push protection and Dependabot security updates. The actions are pinned by
+major tag rather than by commit, and nothing scans the built image — `govulncheck` covers the
+Go code and standard library, not the runtime base image. F-029 was a reminder that a check
+which does not look at the shipped artefact reports green regardless.
+
+**Idea:** Switch on what costs nothing, and close the two gaps in what CI verifies. Mostly
+settings and workflow changes, no product code.
+
+**Solution sketch:**
+- Enable secret scanning with push protection and Dependabot security updates in the
+  repository settings (operator action, or via the API with the operator's go).
+- Pin third-party actions to commit SHAs, with the version as a comment so Dependabot keeps
+  them current (CODING-STANDARDS §7: pinned versions).
+- Scan the built container image for known vulnerabilities in CI and on a schedule, with a
+  permissively licensed scanner — the image-level counterpart to `vulncheck.yml`.
+- Consider CodeQL code scanning; decide on signal versus noise before adopting it.
+
+**To be analysed:** which image scanner (licence, maintenance, false-positive rate on a
+distroless static image); whether CodeQL adds anything over golangci-lint + `govulncheck`.
+
+**Dependencies:** none. Small enough to go before F-031.
 
 <!-- FEATURE-INDEX
-next-feature: F-029
+next-feature: F-033
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -155,4 +239,7 @@ F-026 Dissolve REQUIREMENTS.md into SPEC, and strip the history out of SPEC (DON
 F-027 Retire the local skills and finish the documentation architecture (DONE)
 F-028 Retire the parallel gateway in the end-to-end harness (DONE)
 F-029 Close reachable vulnerabilities and scan the toolchain we ship (DONE)
+F-030 Show the running version on the settings page
+F-031 Bring dependencies and the platform up to date
+F-032 Harden the repository and the supply chain
 -->
