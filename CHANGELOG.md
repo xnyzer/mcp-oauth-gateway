@@ -5,6 +5,24 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
+## [Unreleased]
+
+### Security
+
+- **Built with Go 1.26.9 (was 1.26.7).** The 0.4.0 image carries 11 standard-library advisories
+  reachable from the gateway, fixed in 1.26.9: `net/http` over HTTP/1 and HTTP/2, on the server
+  and on the transport to the upstream (GO-2026-6617, -6613, -6612, -6611, -6610, -6605, -6603),
+  `net/textproto` (GO-2026-6608), `crypto/tls` (GO-2026-6607) and `html/template`, which renders
+  the login and consent pages (GO-2026-6600, -6599). **Upgrade recommended.** No schema or config
+  change.
+- **`golang.org/x/net` 0.61.0** (was 0.58.0): five reachable HTTP/2 advisories (GO-2026-6603,
+  -6610, -6611, -6612, -6617).
+- **`google.golang.org/grpc` 1.83.2** (was 1.83.1): GO-2026-6443. Not reachable — the gateway runs
+  no gRPC server — but bumped so the alert closes.
+- **The weekly vulnerability scan now covers the toolchain that is shipped.** It had been checking
+  the standard library of the latest Go release instead of the pinned one, which is how the
+  advisories above went unreported.
+
 ## [0.4.0] — 2026-08-24
 
 ### Added

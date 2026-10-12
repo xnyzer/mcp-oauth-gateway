@@ -18,5 +18,9 @@ jobs:
     steps:
       - uses: golang/govulncheck-action@v1
         with:
+          # The action defaults go-version-input to "stable", which overrides
+          # go-version-file and scans the standard library of the latest Go
+          # release instead of the toolchain we ship. Clear it so go.mod wins.
+          go-version-input: ""
           go-version-file: go.mod
           go-package: ./...

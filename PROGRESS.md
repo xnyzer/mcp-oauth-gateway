@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**Nothing open.** Every roadmap task F-001–F-028 is done. **F-024** added the operator's client
+**Nothing open.** Every roadmap task F-001–F-029 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -31,6 +31,9 @@ a connection gets at consent time (F-025), and the documentation and structural 
 (F-022, F-026, F-027, F-028). The deployment ran ahead of the registry on a locally built image
 since 2026-08-23; **pulling `0.4.0` makes it reproducible again**, which is the point of the
 release.
+
+**Unreleased: F-029**, a security fix — `0.4.0` was built with Go 1.26.7 and carries 11 reachable
+standard-library advisories plus five in `x/net`. It ships as patch release **v0.4.1**.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
@@ -106,6 +109,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-028a | End-to-end tests moved into `pkg/mcp-proxy` (794 lines, by `git mv`) so they can reach the gateway's own assembly instead of rebuilding it. **The compiler proved the duplication:** the move produced exactly one error, `tokenActiveChecker redeclared`, and the two implementations were identical line for line — the harness copy even said "copied from Run". **Deviated from the plan for the better:** it called for renaming the copy and deleting it in F-028b, which would have left two identical functions under two names; the harness now calls the production one, so `tokenActiveChecker` exists exactly once already. Identical test set of **240** across the repository, verified by `go test -list`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-028b | Harness onto the real startup path → `newE2EGateway` runs `resolveConfig` → `openDependenciesWithLogger` → `buildRouter` and **assembles nothing itself**; the mock upstream runs as a real HTTP server behind `ProxyTargets`, so the transparent backend is exercised too. **The gap that motivated the task is closed and was measured, not argued:** a throwaway probe against the real login printed `Path=/; Max-Age=600; HttpOnly; SameSite=Lax` with a signed-and-encrypted value, where the old harness had none of it. Two package-internal seams, one of them a structural fix — the CIMD resolver moved to `deps.go`, where collaborators are built. **Retrofit from F-022e done:** `BuildRouter` is unexported again, so `pkg/mcp-proxy` exports exactly what it did before F-022e. Beyond the plan: `OriginCheckEnabled: true`, because leaving it off would have created a fresh divergence in the task that exists to end divergence. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-028 | **Retire the parallel gateway in the end-to-end harness — complete** (a/b). The suite tested a gateway it built itself, and the two had drifted where it mattered most: the session cookie ran without encryption, `HttpOnly`, `Secure` or `SameSite`, so a regression in any of those SPEC §1.12 properties was invisible to it. Now the suite drives the binary's own startup path and constructs nothing — by construction rather than by vigilance, which is what F-021 could not achieve by fixing the symptom once by hand. **The compiler proved the duplication** during the move: exactly one redeclaration error, and the two `tokenActiveChecker` bodies were identical line for line. Carried its predecessor's correction too: F-022e had exported a function for a caller that could never exist. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
+| F-029 | Close reachable vulnerabilities and scan the toolchain we ship → **`x/net` 0.61.0, `grpc` 1.83.2, Go toolchain 1.26.7 → 1.26.9 in `go.mod` *and* the digest-pinned builder image, and `vulncheck.yml` fixed to scan the pinned toolchain**. Triggered by the weekly `vulncheck` failing on five HTTP/2 advisories in `x/net`. **The real finding was the blind spot behind it:** `govulncheck-action` defaults `go-version-input` to `stable`, which overrides `go-version-file`, so CI scanned the standard library of Go 1.27.2 — the shipped binary, built with 1.26.7, carried **11 reachable standard-library advisories** (net/http, HTTP/2, crypto/tls, html/template, net/textproto) that no run ever reported. Run against 1.26.9: **0 reachable**. Suite + `-race`, gofmt, vet, golangci-lint, go-licenses, actionlint and a local image build polled to `healthy` all green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
 
 ---
 
@@ -148,4 +152,5 @@ F-025 Name a connection at consent time, and show the client's own name (DONE)
 F-026 Dissolve REQUIREMENTS.md into SPEC, and strip the history out of SPEC (DONE)
 F-027 Retire the local skills and finish the documentation architecture (DONE)
 F-028 Retire the parallel gateway in the end-to-end harness (DONE)
+F-029 Close reachable vulnerabilities and scan the toolchain we ship (DONE)
 -->
