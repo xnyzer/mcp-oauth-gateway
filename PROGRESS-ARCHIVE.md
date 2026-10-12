@@ -4001,3 +4001,55 @@ login page without the version, password login `302`, settings footer
 `pkg/mcp-proxy/router.go`, `pkg/auth/settings_test.go` (new),
 `pkg/mcp-proxy/e2e_version_test.go` (new), `SPEC.md` (§1.12, §1.13), `README.md`,
 `CHANGELOG.md`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.
+
+## F-031a — Routine bumps — DONE 2026-10-12
+
+First substep of F-031 (*Bring dependencies and the platform up to date*); the parent entry,
+with the dry-run findings and the operator's decisions, stays in `PROGRESS.md` until its last
+substep is done.
+
+**What:** The 35 minor and patch updates of the group that change neither API nor documented
+behaviour (OpenTelemetry 1.47, gin-contrib, quic-go, sqlite3, grpc 1.84, `x/oauth2`, `x/time`
+and the rest). No product code. One new indirect module appears, `go.opentelemetry.io/otel/log`.
+
+**Files:** `go.mod`, `go.sum`.
+
+**Acceptance criteria:**
+- [x] `go mod tidy` clean; the only new module is the one named above, and it is permissively
+      licensed (`go-licenses` green).
+- [x] Full check set green with the pinned toolchain; `govulncheck` 0 reachable.
+
+### F-031a — what was actually done
+
+**Applied with explicit pinned versions** (`go get module@version` for each of the 35, then
+`go mod tidy`), from a script rather than `@latest` — CODING-STANDARDS §7. **37 modules moved:**
+the 35, plus the two `google.golang.org/genproto` modules, which follow transitively. With the
+three updates held back for their own substeps — `gobwas/glob`, `go-webauthn/webauthn`,
+`mark3labs/mcp-go`, all verified unchanged afterwards — that is exactly the forty of Dependabot's
+grouped PR #24. The `go` line and the toolchain did not move.
+
+**One module added, none removed:** `go.opentelemetry.io/otel/log` v1.47.0, an indirect
+dependency compiled into the build (two packages) through `ory/fosite` → `ory/x/otelx` →
+`otel`. Apache-2.0, with a BSD-3-Clause part; `go-licenses check` passes.
+
+**The result matched the `/prep-step` dry run line for line** — same 37 modules, same single
+addition, same diff size (118 insertions, 115 deletions). That is the dry run doing its job:
+this substep held no surprise because the surprises had been measured beforehand.
+
+**Verified** (all with `GOTOOLCHAIN=go1.26.9`): `go mod tidy -diff` empty; `go mod verify` —
+all modules verified; gofmt from that toolchain empty; `go vet` clean; `go test -race -count=1
+./...` green in all 11 packages with tests; golangci-lint v2.12.2 0 issues; go-licenses v2.0.1
+passes; actionlint clean; `govulncheck` — no vulnerabilities found. The `image-build` job
+replicated locally: image builds, `--version` runs, the container reports `healthy`, no
+error-level log line.
+
+**Found on the way, not built here:** `go get` printed that
+`go.opentelemetry.io/otel/exporters/zipkin` is deprecated and will be removed in early 2027.
+Tracing it showed two unused trace exporters in the binary, both through `ory/x`: Zipkin, and
+Jaeger, which has been frozen at v1.17.0 since its own removal. Taken in as **F-033**, a dated
+watch item (re-check 2027-01-15), instead of being acted on inside a routine bump.
+
+**Deviations from the plan:** none.
+
+**No CHANGELOG entry:** nothing here is visible to an operator; the release notes for v0.5.0
+will name the dependency refresh once, for F-031 as a whole.

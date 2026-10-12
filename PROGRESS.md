@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
+**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned and under way — **F-031a is done**, b–e are open; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -118,6 +118,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-028 | **Retire the parallel gateway in the end-to-end harness — complete** (a/b). The suite tested a gateway it built itself, and the two had drifted where it mattered most: the session cookie ran without encryption, `HttpOnly`, `Secure` or `SameSite`, so a regression in any of those SPEC §1.12 properties was invisible to it. Now the suite drives the binary's own startup path and constructs nothing — by construction rather than by vigilance, which is what F-021 could not achieve by fixing the symptom once by hand. **The compiler proved the duplication** during the move: exactly one redeclaration error, and the two `tokenActiveChecker` bodies were identical line for line. Carried its predecessor's correction too: F-022e had exported a function for a caller that could never exist. Detail in `PROGRESS-ARCHIVE.md`. | 2026-08-24 |
 | F-029 | Close reachable vulnerabilities and scan the toolchain we ship → **`x/net` 0.61.0, `grpc` 1.83.2, Go toolchain 1.26.7 → 1.26.9 in `go.mod` *and* the digest-pinned builder image, and `vulncheck.yml` fixed to scan the pinned toolchain**. Triggered by the weekly `vulncheck` failing on five HTTP/2 advisories in `x/net`. **The real finding was the blind spot behind it:** `govulncheck-action` defaults `go-version-input` to `stable`, which overrides `go-version-file`, so CI scanned the standard library of Go 1.27.2 — the shipped binary, built with 1.26.7, carried **11 reachable standard-library advisories** (net/http, HTTP/2, crypto/tls, html/template, net/textproto) that no run ever reported. Run against 1.26.9: **0 reachable**. Suite + `-race`, gofmt, vet, golangci-lint, go-licenses, actionlint and a local image build polled to `healthy` all green. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
 | F-030 | Show the running version on the settings page → **footer on the session-gated `/.auth/settings`, fed from the build-time version that `--version` reports** (passed in through `auth.Config`, wired where the router is built), so the operator can confirm in the browser which build is live. **The boundary is the point, not the rendering:** a version string tells an anonymous caller which advisories apply, so `/healthz` (SPEC §1.13) and every other public endpoint still disclose none — asserted on the assembled gateway, where `/healthz` on the real router had no exact-body test before. **Eight mutations, each seen red:** footer removed, wiring removed, version leaked into `/healthz`, onto the login page, into the redirect, the empty-value guard dropped, `Abort` removed, the session gate removed. One of them exposed a gap in the new end-to-end test itself, closed in the same step. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
+| F-031a | Routine dependency bumps → **35 minor and patch updates applied with pinned versions, no product code** (OpenTelemetry 1.47, gin-contrib, quic-go 0.63, sqlite3, grpc 1.84, `x/oauth2`, `x/time` and the rest); 37 modules moved, because the two `genproto` modules follow transitively — with the three held back for their own substeps (`glob`, `go-webauthn`, `mcp-go`) that is exactly the forty of Dependabot's grouped PR. **One new indirect module**, `go.opentelemetry.io/otel/log` (Apache-2.0), compiled in through `ory/x`. Matched the `/prep-step` dry run line for line. Full check set green with Go 1.26.9, `govulncheck` 0 reachable, image built and `healthy`. **Surfaced F-033:** `go get` printed that the Zipkin exporter is deprecated and due for removal in early 2027 — it and the long-frozen Jaeger exporter sit in the binary via `ory/x`. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-12 |
 
 ---
 
@@ -182,19 +183,6 @@ the Go toolchain. Ship the result as minor release **v0.5.0**.
 deprecated tag (F-031d, else F-032).
 
 **Dependencies:** none. Supersedes Dependabot PRs #24 and #17.
-
-#### F-031a — Routine bumps
-
-**What:** The 35 minor and patch updates of the group that change neither API nor documented
-behaviour (OpenTelemetry 1.47, gin-contrib, quic-go, sqlite3, grpc 1.84, `x/oauth2`, `x/time`
-and the rest). No product code. One new indirect module appears, `go.opentelemetry.io/otel/log`.
-
-**Files:** `go.mod`, `go.sum`.
-
-**Acceptance criteria:**
-- [ ] `go mod tidy` clean; the only new module is the one named above, and it is permissively
-      licensed (`go-licenses` green).
-- [ ] Full check set green with the pinned toolchain; `govulncheck` 0 reachable.
 
 #### F-031b — `gobwas/glob` 1.0
 
