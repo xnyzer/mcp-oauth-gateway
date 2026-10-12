@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned, one in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned; F-032 (repository and supply-chain hardening) waits in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
+**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -304,8 +304,40 @@ distroless static image); whether CodeQL adds anything over golangci-lint + `gov
 
 **Dependencies:** none. Small enough to go before F-031.
 
+### F-033 — Watch the frozen OpenTelemetry exporters pulled in through `ory/x`
+
+**Status:** BACKLOG
+
+**Problem:** Two trace exporters are compiled into the binary that the gateway never uses and
+cannot drop: `ory/fosite` imports `ory/x/otelx`, which imports the OpenTelemetry Zipkin and
+Jaeger exporters. The Jaeger exporter was removed upstream long ago and is frozen at v1.17.0;
+the Zipkin exporter is announced as "deprecated and will be removed in early 2027". A frozen
+module receives no fixes, and the first OpenTelemetry release it no longer compiles against
+turns a routine bump into a blocked one — found during F-031a, when `go get` printed the
+deprecation notice.
+
+**Idea:** Nothing to build now — the gateway configures no tracing, so the code is never
+executed, and both exporters still compile against OpenTelemetry 1.47. Re-check on a date, and
+earlier on a trigger, so the removal is met on our schedule rather than in the middle of a
+security bump.
+
+**Re-check on 2027-01-15**, or earlier as soon as one of these happens:
+- an OpenTelemetry bump fails to build;
+- `govulncheck` or a Dependabot alert names either exporter;
+- `ory/fosite` or `ory/x` publishes a new version.
+
+**Solution sketch:**
+- At the re-check: has OpenTelemetry removed the Zipkin exporter, and at which last version;
+  has `ory/x` dropped the two imports (it had not on 2026-10-12, at v0.0.729, and carried no
+  issue about it); does the current tree still build against the then-current OpenTelemetry.
+- If `ory/x` has not moved: raise it upstream, and decide whether holding OpenTelemetry at the
+  last compatible version is acceptable for an auth boundary, or for how long.
+- No new dependency; a replacement for Fosite is out of scope here.
+
+**Dependencies:** none.
+
 <!-- FEATURE-INDEX
-next-feature: F-033
+next-feature: F-034
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -338,4 +370,5 @@ F-029 Close reachable vulnerabilities and scan the toolchain we ship (DONE)
 F-030 Show the running version on the settings page (DONE)
 F-031 Bring dependencies and the platform up to date (PLANNED)
 F-032 Harden the repository and the supply chain
+F-033 Watch the frozen OpenTelemetry exporters pulled in through ory/x
 -->
