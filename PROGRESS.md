@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**Two tasks in the backlog:** F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters). Every task F-001–F-031 is done. **F-024** added the operator's client
+**Three tasks in the backlog:** F-032 (repository and supply-chain hardening), F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) and F-034 (land on the settings page after a direct login). Every task F-001–F-031 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -136,7 +136,7 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 
 ## Open tasks — work top to bottom
 
-*Nothing planned.* The backlog below holds F-032 and F-033; a task moves here once
+*Nothing planned.* The backlog below holds F-032, F-033 and F-034; a task moves here once
 `/coding-kit:prep-step` has planned it.
 
 ## Feature ideas (backlog)
@@ -210,8 +210,39 @@ security bump.
 
 **Dependencies:** none.
 
+### F-034 — Land on the settings page after a direct login
+
+**Status:** BACKLOG
+
+**Problem:** An operator who opens `/.auth/login` directly and logs in is redirected to `/` —
+which belongs to the protected proxy surface and answers `{"error":"unauthorized"}`. The login
+worked; the landing page is wrong, and the operator has to type the settings address by hand.
+The post-login target is the page that sent the browser to the login, and it falls back to `/`
+when there was none. Inherited behaviour, noticed by the operator on the passkey check after the
+v0.5.0 deployment.
+
+**Idea:** Without a stored target, land where an operator has something to do: the settings
+page. The fallback is a constant in the code, never taken from the request, so this opens no
+redirect an attacker could steer.
+
+**Solution sketch:**
+- One default target for all three login paths (password, passkey, OIDC callback) and for a
+  stored target that fails normalisation (SPEC §1.12) — today each of those ends at `/`.
+- A visit to `/.auth/login` with a session that is already logged in goes to that target as
+  well, instead of showing the form again.
+- State the default in SPEC §1.12, which so far only says how a stored target is normalised.
+- No new endpoint, config or dependency. A patch release.
+
+**To be analysed:** where an **OIDC** login lands. The settings page is reserved for the
+gateway's own account — an OIDC-provider session is answered `403` there (SPEC §1.12) — so
+sending it to the settings page would trade one error page for another. Candidates: a minimal
+"signed in" page for sessions without settings access, or leaving OIDC at `/`. Likewise what the
+default is when the settings page does not exist at all (no user store configured).
+
+**Dependencies:** none.
+
 <!-- FEATURE-INDEX
-next-feature: F-034
+next-feature: F-035
 F-001 Build vs fork evaluation (DONE)
 F-002 Choose language + OAuth library (DONE)
 F-003 DCR vs CIMD decision (DONE)
@@ -245,4 +276,5 @@ F-030 Show the running version on the settings page (DONE)
 F-031 Bring dependencies and the platform up to date (DONE)
 F-032 Harden the repository and the supply chain
 F-033 Watch the frozen OpenTelemetry exporters pulled in through ory/x
+F-034 Land on the settings page after a direct login
 -->
