@@ -12,7 +12,7 @@ complete against `SPEC.md`, security-audited (F-006b) and **live-verified end to
 Claude connects via **CIMD**, no longer via the deprecated DCR fallback. The rationale for every
 finished task is archived in `PROGRESS-ARCHIVE.md`.
 
-**One task planned, two in the backlog:** F-031 (dependency and platform updates, five substeps a–e, ending in v0.5.0) is planned and under way — **F-031a–d are done; F-031e (`go-webauthn` 0.18) is code-complete** and waits for its last criterion, the passkey check on the live deployment after the v0.5.0 release; F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters) wait in the backlog. Every task F-001–F-030 is done. **F-024** added the operator's client
+**Two tasks in the backlog:** F-032 (repository and supply-chain hardening) and F-033 (a dated watch item, re-check on 2027-01-15: frozen OpenTelemetry exporters). Every task F-001–F-031 is done. **F-024** added the operator's client
 list with its kill switch and **F-025** the name each connection carries — both live-verified on
 2026-08-23 (a revoke reached the real client in **44 seconds** against a one-hour token TTL; the
 name prefilled from Claude's own metadata document). **F-026** dissolved `REQUIREMENTS.md` into
@@ -44,9 +44,10 @@ browser — the one check F-030's own verification could not make.
 
 **Released: v0.5.0**, the dependency and platform refresh (F-031): Go 1.27, `distroless/static-debian13`,
 `mcp-go` 1.x, `go-webauthn` 0.18, `gobwas/glob` 1.0 — and, found on the way, three hardening fixes
-for OIDC logins. A minor release because two start-up conditions changed. **The deployment still
-runs `0.4.2` until it pulls `0.5.0`**, and with that pull comes F-031e's last criterion: the
-operator's passkey login.
+for OIDC logins. A minor release because two start-up conditions changed. **The deployment runs
+`0.5.0` since 2026-10-13.** It was rehearsed beside the running gateway on a copy of its data
+before the switch; the signing key carried over, the operator's passkey login works under the
+stricter checks, and Claude connects.
 
 F-numbers are stable IDs; the document order, not the number, is the path.
 
@@ -128,123 +129,15 @@ F-numbers are stable IDs; the document order, not the number, is the path.
 | F-031b | `gobwas/glob` 1.0 — and, on the operator's instruction, the OIDC allow-list hardened → **three security fixes for deployments that log in through OIDC:** (1) the old glob engine was over-permissive — `admin*n@corp.example` matched `admin@corp.example`, `?` matched the empty value; (2) the four `OIDC_ALLOWED_*` settings dropped every entry they could not read, and an allow-list left empty that way meant *no restriction*; (3) **OIDC without any allow-list admitted every account of the provider** — it now refuses to start, and "everyone" has to be written as `OIDC_ALLOWED_USERS_GLOB=*`. Differences between the engines measured, not assumed: both run side by side over 9,512 patterns × 1,555 values, every difference traced to one of six causes, all in the CHANGELOG. README gained an *OIDC allow-lists* section (syntax, the `\,` rule), SPEC §3.1 the normative rule. **21 mutations, each seen red.** The operator is unaffected (no OIDC). Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
 | F-031c | `mark3labs/mcp-go` 1.x → **the stdio backend speaks MCP 2026-07-28 and bridges to what came before**: towards the upstream it probes `server/discover` and falls back to the `initialize` handshake down to 2024-11-05; towards the client it serves 2026-07-28 and the handshake revisions back to 2025-03-26. The two sides are independent — a current client reaches a tool on a 2025-06-18 upstream, proven with a tool call across the bridge. **The one cost:** an older stdio upstream that *ignores* unknown methods delays start-up by the probe timeout, now a named gateway value (`MCPDiscoverProbeTimeout`, 5 s) instead of a library default. `docs/MCP-CONFORMANCE.md` states the versions with `pkg/backend/proxy_protocol_test.go` as evidence, which names each as a literal. Eight mutations, each seen red; `TestSetupProxy`, whose second half tested the upstream instead of the gateway, was removed on the operator's instruction. The transparent backend — and with it the live deployment — is untouched. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
 | F-031d | Go 1.27 and the images → **toolchain 1.26.9 → 1.27.2** (`go` line 1.27.0), builder on digest-pinned `golang:1.27-bookworm`, **runtime on digest-pinned `distroless/static-debian13`** — the Debian 12 flavour is no longer updated — and golangci-lint v2.12.2 → **v2.14.0**, because the old version fails its typecheck under Go 1.27 (which is why Dependabot's Dockerfile-only PR #17 would have gone red). `gofmt` 1.27 realigned one struct literal, whitespace only. The `go` line moved too, after checking what it switches on: one default, goroutine labels in tracebacks, and nothing in the build sets labels but gRPC's server, which the gateway does not run. **All five CI jobs replicated locally under 1.27.2**, the image job for `linux/amd64`; the image runs `healthy` with no volume, a fresh named volume and a read-only root, and writes its data as uid 65532. `govulncheck` 0 reachable. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
+| F-031e | `go-webauthn` 0.18 → **an IP address as `EXTERNAL_URL` host now stops start-up**, with a message naming the setting and the way out — the host is the passkey relying-party ID, and 0.18 validates it as a domain name; the strict policy for extension outputs nobody asked for is set explicitly. **Passkeys stored by 0.17 keep working**, shown on two records 0.17.4 wrote (a synced passkey and a device-bound key), kept as fixtures. Carried `cbor` 2.9.6 and `x/mod` 0.42.0 along. Eight mutations, each seen red. **Its last criterion was met on the live deployment:** before the switch, v0.5.0 was rehearsed beside the running gateway on a copy of its data and began a passkey login there — proof it reads the stored passkeys; after it, the operator logged in with their own passkey and switched the password login, re-enabled as the safety net, off again. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
+| F-031 | **Bring dependencies and the platform up to date — complete** (a–e), released as **v0.5.0**. Forty pending updates, taken in on `main` in five separately verified pieces instead of Dependabot's grouped PR: 37 routine bumps, `gobwas/glob` 1.0, `mcp-go` 1.x, Go 1.27 with new base images, `go-webauthn` 0.18. **The dry run before planning corrected the intake** — one update breaks the build, not three; the risk sat in behaviour no compiler reports. **What the work turned up beyond updates:** the old glob engine matched more than a pattern says; a misread OIDC allow-list silently became "no restriction"; OIDC without an allow-list admitted every account of the provider — all three fixed, the last on the operator's decision to refuse start-up. It also spawned F-033 (frozen OpenTelemetry exporters) and a Dependabot check in F-032. Detail in `PROGRESS-ARCHIVE.md`. | 2026-10-13 |
 
 ---
 
 ## Open tasks — work top to bottom
 
-### F-031 — Bring dependencies and the platform up to date
-
-**Status:** PLANNED
-
-**Problem:** About forty dependency updates are pending, and Dependabot's grouped PR cannot
-land them: it fails to compile. None closes a known vulnerability — `govulncheck` reports zero
-reachable and no alert is open — but the longer the gap grows, the larger and riskier the next
-security bump becomes; F-029 showed how a routine fix turns into a toolchain move when the
-baseline has drifted.
-
-**Idea:** Take the updates in on `main` in separately verified pieces instead of as one
-grouped PR: the routine bumps first, then each update that changes behaviour on its own, then
-the Go toolchain. Ship the result as minor release **v0.5.0**.
-
-**What `/prep-step` measured (2026-10-12, dry run in a throwaway worktree):**
-- **Only one update breaks the build.** `gobwas/glob` 1.0 turns the `glob.Glob` interface into
-  `*glob.Pattern` — a one-word change in `pkg/auth/oidc.go`. `go-webauthn` 0.18.2 and `mcp-go`
-  1.2.1 compile untouched, and with all forty updates applied the full suite, lint, licences
-  and `govulncheck` are green. The intake's "three API-changing updates" was wrong.
-- **The risk is in behaviour, which no compiler reports and our tests do not cover:**
-  - `glob` 1.0 is a rewrite of the matching engine closing 23 issues, two of them crashes in
-    `Match`. It decides the OIDC allow-list — an authorization decision — and the only test
-    for it has two patterns.
-  - `go-webauthn` 0.18 validates the relying-party ID as a domain: an IP address as the
-    `EXTERNAL_URL` host passed `webauthn.New` under 0.17.4 and fails it under 0.18.2, so such a
-    gateway **no longer starts**. Single-label hosts (`http://gateway:8080`) were already
-    refused under 0.17.4.
-  - `go-webauthn` 0.18 fails a ceremony when the client returns an extension output nobody
-    requested. An operator who has disabled the password login is locked out if their
-    authenticator does that.
-  - `mcp-go` 1.x makes `LATEST_PROTOCOL_VERSION` 2026-07-28; the stdio backend requests it.
-    The transparent backend forwards bytes and is unaffected.
-- **Go 1.27 needs more than the builder image.** golangci-lint v2.12.2 fails its typecheck
-  under Go 1.27, so the pinned linter moves too (v2.14.0 is current). `gofmt` 1.27 realigns
-  one struct literal in `pkg/idp/metadata.go`; suite and `govulncheck` are green under 1.27.2.
-  Dependabot's PR #17 touches the `Dockerfile` only and would have gone red in `lint`.
-- **`distroless/static-debian12` is no longer updated.** The distroless README lists only
-  Debian 13 as published and updated and calls every other tag deprecated — which is the
-  likely reason Dependabot proposed no new runtime digest.
-
-**Decisions (operator, 2026-10-12):**
-- **IP address in `EXTERNAL_URL`: fail fast with a clear message**, over starting without
-  passkeys — single-label hosts are already refused the same way, a passkey never could work
-  on an IP, and degrading would mean uncoupling the settings page from WebAuthn on the login
-  surface. It gets a prominent upgrade note in the CHANGELOG.
-- **Unsolicited extension outputs: keep the library's strict default**, verified against the
-  operator's real authenticators before the deployment switches.
-- **Deployment safety net:** passkeys are bound to the production domain and cannot be tried
-  on a staging host, so the operator re-enables the password login before the update, tests a
-  passkey login after it, and disables the password again.
-- **Runtime image: move to `distroless/static-debian13`**, over re-pinning the deprecated
-  `debian12` tag.
-- **One minor release, v0.5.0,** after all five substeps — the changed start-up condition and
-  the `mcp-go` major are not patch material.
-
-**Analysed in F-031d, not settled:** the deprecated tag does not fully explain the missing
-runtime-digest PR — `static-debian12` did move once more after the pinned digest, and Dependabot
-never proposed it. Unproven suspicion: its digest PRs for both base images were closed rather
-than merged in August, and it may not propose a digest for the same tag again. Now a check in
-F-032.
-
-**Dependencies:** none. Supersedes Dependabot PRs #24 and #17.
-
-#### F-031e — `go-webauthn` 0.18
-
-**State: code complete (2026-10-13), one criterion open — the passkey check on the live
-deployment.** It follows the v0.5.0 release; until then this substep, and F-031 with it, is not
-done. The operator has re-enabled the password login as the safety net.
-
-**What:** Last, so the real-device check runs on the final combination. Bump to 0.18.2; turn
-the library's relying-party-ID error into a start-up message that names `EXTERNAL_URL` and
-says what to use instead; prove that a passkey stored under 0.17 still logs in under 0.18;
-cover the stricter response checks.
-
-**Files:** `go.mod`, `go.sum`, `pkg/auth/webauthn.go`, `pkg/auth/webauthn_test.go`,
-`pkg/mcp-proxy/` (start-up path test), `README.md`, `SPEC.md` (§1.12, §3.1), `CHANGELOG.md`.
-
-**Dependencies:** F-031d.
-
-**Acceptance criteria:**
-- [x] A credential record written by 0.17.4 completes a login under 0.18.2 (fixture test).
-- [x] An IP address as `EXTERNAL_URL` host stops the gateway at start-up with a message naming
-      the setting and the remedy; a domain and `localhost` start. Seen red once.
-- [x] An unsolicited extension output fails the ceremony, pinned by a test, so the strict
-      policy is a decision and not an accident of the default.
-- [x] CHANGELOG carries a prominent upgrade note for the `EXTERNAL_URL` change.
-- [x] Full check set green.
-- [ ] **On the live deployment:** password login re-enabled first, update applied with a
-      backup, the operator's passkey login succeeds, password login disabled again.
-
-**What was built** (detail goes to `PROGRESS-ARCHIVE.md` once the last criterion is met):
-- `go-webauthn` 0.17.4 → 0.18.2, and with it — at the operator's request — the two patch updates
-  that had appeared since F-031a, `fxamacker/cbor` 2.9.6 and `x/mod` 0.42.0. No new module.
-- `newWebAuthn` refuses an IP address itself, in terms of the setting, and wraps the library's
-  refusal of any other unusable host the same way (`ErrInvalidRelyingPartyHost`). The strict
-  extension policy is set explicitly instead of inherited as a default.
-- **Fixtures written by 0.17.4** (`pkg/auth/testdata/`), generated before the bump: a synced
-  passkey (backup-eligible, backed up, user-verified) and a device-bound key without user
-  verification. Both log in under 0.18.2 and round-trip through it to the same document. A
-  fixture cannot carry its private key (CODING-STANDARDS §7), so the test enrolls a fresh key
-  and rewrites the stored record into the 0.17.4 one with that key's id and public key — the
-  field set, flags and authenticator data are 0.17.4's. That its values count was shown by
-  mutation: a fixture whose backup flags contradict the authenticator fails the login.
-- Tests for the start-up path (`startE2EGateway`, a small harness extension that returns a
-  refused start-up as an error), the unsolicited extension output at login and at enrollment,
-  and the `id`/`rawId` check. Eight mutations, each seen red.
-- All five CI jobs replicated under Go 1.27.2; `govulncheck` 0 reachable; gitleaks clean.
-
-**What no test here can tell:** whether the operator's own browser or password manager returns
-an extension output unasked. If it does, the passkey login fails after the update — which is
-what the password login is switched on for, and the agreed answer is to relax the policy to
-"ignore".
+*Nothing planned.* The backlog below holds F-032 and F-033; a task moves here once
+`/coding-kit:prep-step` has planned it.
 
 ## Feature ideas (backlog)
 
@@ -349,7 +242,7 @@ F-027 Retire the local skills and finish the documentation architecture (DONE)
 F-028 Retire the parallel gateway in the end-to-end harness (DONE)
 F-029 Close reachable vulnerabilities and scan the toolchain we ship (DONE)
 F-030 Show the running version on the settings page (DONE)
-F-031 Bring dependencies and the platform up to date (PLANNED)
+F-031 Bring dependencies and the platform up to date (DONE)
 F-032 Harden the repository and the supply chain
 F-033 Watch the frozen OpenTelemetry exporters pulled in through ory/x
 -->

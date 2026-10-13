@@ -4348,3 +4348,183 @@ jobs and the run-time checks of the image.
 
 **Files:** `go.mod`, `Dockerfile`, `.github/workflows/ci.yml`, `pkg/idp/metadata.go`,
 `CODING-STANDARDS.md`, `SPEC.md`, `CHANGELOG.md`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.
+
+## F-031e — `go-webauthn` 0.18 — DONE 2026-10-13
+
+Fifth and last substep of F-031. Its code was complete and released as part of v0.5.0 before its
+last criterion — the operator's own passkey on the live deployment — could be met; the two are
+recorded in that order.
+
+**What:** Last, so the real-device check runs on the final combination. Bump to 0.18.2; turn
+the library's relying-party-ID error into a start-up message that names `EXTERNAL_URL` and
+says what to use instead; prove that a passkey stored under 0.17 still logs in under 0.18;
+cover the stricter response checks.
+
+**Files:** `go.mod`, `go.sum`, `pkg/auth/webauthn.go`, `pkg/auth/webauthn_test.go`,
+`pkg/mcp-proxy/` (start-up path test), `README.md`, `SPEC.md` (§1.12, §3.1), `CHANGELOG.md`.
+
+**Dependencies:** F-031d.
+
+**Acceptance criteria:**
+- [x] A credential record written by 0.17.4 completes a login under 0.18.2 (fixture test).
+- [x] An IP address as `EXTERNAL_URL` host stops the gateway at start-up with a message naming
+      the setting and the remedy; a domain and `localhost` start. Seen red once.
+- [x] An unsolicited extension output fails the ceremony, pinned by a test, so the strict
+      policy is a decision and not an accident of the default.
+- [x] CHANGELOG carries a prominent upgrade note for the `EXTERNAL_URL` change.
+- [x] Full check set green.
+- [x] **On the live deployment:** password login re-enabled first, update applied with a
+      backup, the operator's passkey login succeeds, password login disabled again.
+
+**What was built:**
+- `go-webauthn` 0.17.4 → 0.18.2, and with it — at the operator's request — the two patch updates
+  that had appeared since F-031a, `fxamacker/cbor` 2.9.6 and `x/mod` 0.42.0. No new module.
+- `newWebAuthn` refuses an IP address itself, in terms of the setting, and wraps the library's
+  refusal of any other unusable host the same way (`ErrInvalidRelyingPartyHost`). The strict
+  extension policy is set explicitly instead of inherited as a default.
+- **Fixtures written by 0.17.4** (`pkg/auth/testdata/`), generated before the bump: a synced
+  passkey (backup-eligible, backed up, user-verified) and a device-bound key without user
+  verification. Both log in under 0.18.2 and round-trip through it to the same document. A
+  fixture cannot carry its private key (CODING-STANDARDS §7), so the test enrolls a fresh key
+  and rewrites the stored record into the 0.17.4 one with that key's id and public key — the
+  field set, flags and authenticator data are 0.17.4's. That its values count was shown by
+  mutation: a fixture whose backup flags contradict the authenticator fails the login.
+- Tests for the start-up path (`startE2EGateway`, a small harness extension that returns a
+  refused start-up as an error), the unsolicited extension output at login and at enrollment,
+  and the `id`/`rawId` check. Eight mutations, each seen red.
+- All five CI jobs replicated under Go 1.27.2; `govulncheck` 0 reachable; gitleaks clean.
+
+### F-031e — the live deployment
+
+**What no test could tell** was whether the operator's own browser or password manager returns
+an extension output unasked — under the strict policy that fails the login, and the operator
+had the password login switched off. Passkeys are bound to the production domain, so there was
+no staging host to try them on. The agreed safety net: the operator re-enabled the password
+login before the update.
+
+**A rehearsal that needed no private key was found on the way.** Beginning a passkey login
+makes the gateway decode every stored credential record; it needs no assertion, only a CSRF
+token. So before the switch, v0.5.0 was started **beside** the running gateway — a separate
+Compose project, bound to the host's loopback only, on a **copy** of the data directory and with
+the real environment file — and asked to begin a passkey login. It answered `200` with a
+challenge for the production relying-party ID and logged neither warning nor error: v0.5.0 reads
+the stored passkeys, and the production `EXTERNAL_URL` passes the new host validation. The
+rehearsal and its data copy were removed again; the running gateway was never touched by it.
+
+**The switch:** backup of the Compose file and the data directory, image tag to `0.5.0`, pull,
+`up -d`; `healthy` after six seconds, no error or warning in the log. From outside: both
+metadata documents, the JWKS and the login page answer `200`, `/mcp` without a token answers
+`401` with its challenge, no public page names the version, and **the signing key is the one in
+the backup**, so connected clients kept their tokens.
+
+**The operator's check:** the passkey login succeeded under the stricter checks; the password
+login was switched off again; Claude connects. The strict extension policy therefore stays.
+
+**Seen by the operator on that login, not part of this task:** after a direct visit to the login
+page the gateway redirects to `/`, which is the protected proxy surface and answers
+`{"error":"unauthorized"}`. Inherited behaviour — the post-login target defaults to `/` when no
+protected page was visited first. Proposed as a task of its own.
+
+**Deviations from the plan:**
+- The end-to-end harness gained `startE2EGateway`, which returns a refused start-up as an error.
+- The two patch updates were carried along at the operator's request.
+- The rehearsal on a data copy was not in the plan; it turned the riskiest step from "switch and
+  see" into "switch what has already been seen to work".
+- `handleWebAuthnLoginFinish` stands at 62 lines; it is a sequential handler within the §3
+  exception and was deliberately left alone on the eve of a release that changes the library
+  beneath it.
+
+**Files:** `go.mod`, `go.sum`, `pkg/auth/webauthn.go`, `pkg/auth/webauthn_upgrade_test.go` (new),
+`pkg/auth/testdata/` (new), `pkg/mcp-proxy/e2e_harness_test.go`, `pkg/mcp-proxy/router_test.go`,
+`README.md`, `SPEC.md` (§1.12, §3.1), `CHANGELOG.md`; docs `PROGRESS.md`, `PROGRESS-ARCHIVE.md`.
+
+## F-031 — Bring dependencies and the platform up to date — DONE 2026-10-13
+
+**Problem:** About forty dependency updates are pending, and Dependabot's grouped PR cannot
+land them: it fails to compile. None closes a known vulnerability — `govulncheck` reports zero
+reachable and no alert is open — but the longer the gap grows, the larger and riskier the next
+security bump becomes; F-029 showed how a routine fix turns into a toolchain move when the
+baseline has drifted.
+
+**Idea:** Take the updates in on `main` in separately verified pieces instead of as one
+grouped PR: the routine bumps first, then each update that changes behaviour on its own, then
+the Go toolchain. Ship the result as minor release **v0.5.0**.
+
+**What `/prep-step` measured (2026-10-12, dry run in a throwaway worktree):**
+- **Only one update breaks the build.** `gobwas/glob` 1.0 turns the `glob.Glob` interface into
+  `*glob.Pattern` — a one-word change in `pkg/auth/oidc.go`. `go-webauthn` 0.18.2 and `mcp-go`
+  1.2.1 compile untouched, and with all forty updates applied the full suite, lint, licences
+  and `govulncheck` are green. The intake's "three API-changing updates" was wrong.
+- **The risk is in behaviour, which no compiler reports and our tests do not cover:**
+  - `glob` 1.0 is a rewrite of the matching engine closing 23 issues, two of them crashes in
+    `Match`. It decides the OIDC allow-list — an authorization decision — and the only test
+    for it has two patterns.
+  - `go-webauthn` 0.18 validates the relying-party ID as a domain: an IP address as the
+    `EXTERNAL_URL` host passed `webauthn.New` under 0.17.4 and fails it under 0.18.2, so such a
+    gateway **no longer starts**. Single-label hosts (`http://gateway:8080`) were already
+    refused under 0.17.4.
+  - `go-webauthn` 0.18 fails a ceremony when the client returns an extension output nobody
+    requested. An operator who has disabled the password login is locked out if their
+    authenticator does that.
+  - `mcp-go` 1.x makes `LATEST_PROTOCOL_VERSION` 2026-07-28; the stdio backend requests it.
+    The transparent backend forwards bytes and is unaffected.
+- **Go 1.27 needs more than the builder image.** golangci-lint v2.12.2 fails its typecheck
+  under Go 1.27, so the pinned linter moves too (v2.14.0 is current). `gofmt` 1.27 realigns
+  one struct literal in `pkg/idp/metadata.go`; suite and `govulncheck` are green under 1.27.2.
+  Dependabot's PR #17 touches the `Dockerfile` only and would have gone red in `lint`.
+- **`distroless/static-debian12` is no longer updated.** The distroless README lists only
+  Debian 13 as published and updated and calls every other tag deprecated — which is the
+  likely reason Dependabot proposed no new runtime digest.
+
+**Decisions (operator, 2026-10-12):**
+- **IP address in `EXTERNAL_URL`: fail fast with a clear message**, over starting without
+  passkeys — single-label hosts are already refused the same way, a passkey never could work
+  on an IP, and degrading would mean uncoupling the settings page from WebAuthn on the login
+  surface. It gets a prominent upgrade note in the CHANGELOG.
+- **Unsolicited extension outputs: keep the library's strict default**, verified against the
+  operator's real authenticators before the deployment switches.
+- **Deployment safety net:** passkeys are bound to the production domain and cannot be tried
+  on a staging host, so the operator re-enables the password login before the update, tests a
+  passkey login after it, and disables the password again.
+- **Runtime image: move to `distroless/static-debian13`**, over re-pinning the deprecated
+  `debian12` tag.
+- **One minor release, v0.5.0,** after all five substeps — the changed start-up condition and
+  the `mcp-go` major are not patch material.
+
+**Analysed in F-031d, not settled:** the deprecated tag does not fully explain the missing
+runtime-digest PR — `static-debian12` did move once more after the pinned digest, and Dependabot
+never proposed it. Unproven suspicion: its digest PRs for both base images were closed rather
+than merged in August, and it may not propose a digest for the same tag again. Now a check in
+F-032.
+
+**Dependencies:** none. Supersedes Dependabot PRs #24 and #17.
+
+### F-031 as a whole
+
+Forty updates, five substeps (a–e, each with its own entry above), one minor release:
+**v0.5.0**. The dependency set is current, the toolchain is Go 1.27, the runtime image is one
+that is still maintained, and the stdio backend speaks the current MCP protocol.
+
+**What carried the task was measuring before deciding.** The dry run before planning showed that
+one update breaks the build, not three — and that the risk was in behaviour. Each substep then
+measured its own: two glob engines side by side over fifteen million comparisons; the protocol
+version on both sides of the stdio backend; what the `go` line switches on; records written by
+the old WebAuthn library; and, last, the new version on a copy of the live data before the
+live switch.
+
+**It found more than it was sent for.** Three faults in the OIDC allow-list, each able to admit
+an account the operator never meant to: an over-permissive glob engine, entries dropped instead
+of refused, and — the root — OIDC without any allow-list admitting everyone. All three are fixed;
+the third on the operator's decision to refuse start-up rather than warn. The live deployment
+uses no OIDC and was never exposed to them.
+
+**It left two things to others:** F-033, a dated watch on two frozen OpenTelemetry exporters
+compiled in through `ory/x`; and a check in F-032 on whether Dependabot still proposes
+base-image digests.
+
+**Two process lessons, both now in the mutation practice:** a mutation run goes through a script
+with a verified restore, and a mutation whose anchor is missing aborts the run instead of
+reporting "nothing failed".
+
+**Superseded Dependabot PRs:** #24 (rebuilt by Dependabot as the updates landed), #17 (closed by
+hand).
