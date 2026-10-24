@@ -5,6 +5,18 @@ All notable changes are documented here, following
 [SemVer](https://semver.org/spec/v2.0.0.html). **Schema migrations and config changes are
 called out explicitly** (SPEC §2.5) — read them before upgrading. Downgrades are unsupported.
 
+## [Unreleased]
+
+### Added
+
+- **`PROXY_ALLOWED_PATHS` — limit what an access token unlocks.** By default every non-reserved
+  path is forwarded, so a connected client reaches everything the upstream serves, with the
+  injected credential attached: an upstream that exposes a REST or admin API next to `/mcp`
+  hands that API to every client that completed the OAuth flow. The new option lists the path
+  prefixes clients may use (`/mcp`, or `/mcp/alice` on a multi-tenant upstream); anything else
+  is `404` before the token is looked at, like a reserved namespace. Prefixes match whole
+  segments. Unset, nothing changes. **Config change, opt-in; no migration.** SPEC §1.11, §3.1.
+
 ## [0.5.0] — 2026-10-13
 
 A maintenance release with three hardening fixes for OIDC logins. **Most deployments have nothing

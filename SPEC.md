@@ -317,7 +317,14 @@ introspection MUST be rejected — no token oracle). Response `200`:
 
 ### 1.11 Protected proxy surface (every non-public path)
 
-FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list:
+FR-6/FR-8/SR-3/SR-7. All requests to paths outside the §0 public list.
+
+**Allowlist (optional):** when `PROXY_ALLOWED_PATHS` is set, a path outside every configured
+prefix is answered `404` before any token is looked at — the same contract as a reserved
+namespace — and never reaches the upstream. A prefix matches whole path segments (`/mcp` covers
+`/mcp` and `/mcp/…`, not `/mcpx`). Empty keeps the historical behaviour: every non-reserved path
+is forwarded. Rationale: the injected credential (§1.11.4) MUST NOT become a key to everything
+the upstream serves next to its MCP path (FR-6, SR-7). Inside the allowlist:
 
 1. **Bearer required:** `Authorization: Bearer <jwt>`. Validation: JWS signature against the
    JWKS key set (`kid`; RS256/ES256, unknown `kid` or alg mismatch → 401), `iss`, `aud`
@@ -605,6 +612,9 @@ second source of truth; this section states only what is **normative** about the
 - Exactly **one** upstream target is configured, as a positional argument: an `http(s)://` URL
   or a stdio command. The upstream credential to inject is configured alongside it and never
   reaches the client (FR-6, §1.11.4).
+- **`PROXY_ALLOWED_PATHS`** entries MUST start with `/`; a trailing slash is dropped; `/` alone
+  MUST be refused at startup (it would spell out "everything", which is what leaving the option
+  unset already means, and an allowlist that allows everything is a mistake, not a choice).
 
 ### 3.2 Protocol, abuse-protection and key options
 
