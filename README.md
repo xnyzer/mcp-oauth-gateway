@@ -191,6 +191,13 @@ The upstream target is the container command (a positional argument, not an env 
 - **Bearer-protected upstream:** set `PROXY_BEARER_TOKEN` — the gateway injects it toward
   the upstream; connecting clients never see it.
 - **Unauthenticated upstream:** just omit `PROXY_BEARER_TOKEN`.
+- **Limit what the token unlocks:** every non-reserved path is forwarded by default, so an
+  authorized client reaches *everything* the upstream serves — an MCP server that also exposes
+  a REST or admin API next to `/mcp` hands that API to every connected client, with the
+  injected credential attached. Set `PROXY_ALLOWED_PATHS` to the path prefixes clients need
+  (`/mcp`, or `/mcp/alice` for one bank of a multi-tenant upstream); the gateway answers
+  `404` outside them, token or not. Prefixes match whole path segments (`/mcp` covers
+  `/mcp/...` but not `/mcpx`).
 - **Path gotcha:** the gateway joins the *inbound* path onto the target. If your upstream
   serves MCP on the same path clients use (e.g. both `/mcp`), configure the target
   **host-only** (`http://mcp-upstream:3000`), otherwise the path doubles (`/mcp/mcp`).
@@ -302,6 +309,7 @@ authorization decision.
 | `HEADER_MAPPING` / `HEADER_MAPPING_BASE` | — / `/userinfo` | Claim→header mapping toward the upstream. |
 | `TRUSTED_PROXIES` | — | IPs/CIDRs allowed to set `X-Forwarded-*` (bare IPs are normalised to `/32`·`/128`). Empty = none trusted. |
 | `HTTP_STREAMING_ONLY` | `false` | Reject GET-SSE with 405 (streamable-HTTP-only upstreams). |
+| `PROXY_ALLOWED_PATHS` | — | Path prefixes that may be proxied, `P1,P2` (segment-wise, `/mcp` covers `/mcp/...`); anything else is `404`. Empty = every non-reserved path. Each entry must start with `/`; `/` alone is refused. |
 
 ### Tokens, clients & keys
 

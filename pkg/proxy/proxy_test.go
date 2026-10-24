@@ -201,3 +201,88 @@ func TestProxyRouter_HTTPStreamingOnlyRejectsSSE(t *testing.T) {
 		})
 	}
 }
+
+// TestProxyRouter_AllowedPathsRestrictUpstream covers SPEC §1.11: with an
+// allowlist only its subtrees reach the upstream; everything else is 404,
+// with or without a token, and matching stops at segment boundaries.
+func TestProxyRouter_AllowedPathsRestrictUpstream(t *testing.T) {
+	privateKey, publicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	var upstreamPaths []string
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPaths = append(upstreamPaths, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	})
+	proxyRouter, err := NewProxyRouter(Config{
+		ExternalURL:         "https://example.com",
+		Proxy:               upstream,
+		VerificationKey:     testKeyLookup(publicKey),
+		ProxyHeaders:        http.Header{},
+		HeaderMappingBase:   "/userinfo",
+		AllowedPathPrefixes: []string{"/mcp/alice/", " /sse"},
+	})
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	proxyRouter.SetupRoutes(router)
+
+	token, err := createJWT(privateKey, jwt.MapClaims{
+		"sub": "test-user",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+
+	serve := func(path string, withToken bool) int {
+		req, err := http.NewRequest("POST", path, nil)
+		require.NoError(t, err)
+		if withToken {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	t.Run("allowed subtrees are forwarded", func(t *testing.T) {
+		for _, path := range []string{"/mcp/alice", "/mcp/alice/", "/mcp/alice/messages", "/sse"} {
+			assert.Equal(t, http.StatusOK, serve(path, true), path)
+		}
+		assert.Equal(t, []string{"/mcp/alice", "/mcp/alice/", "/mcp/alice/messages", "/sse"}, upstreamPaths)
+	})
+
+	t.Run("other paths are 404 even with a valid token", func(t *testing.T) {
+		upstreamPaths = nil
+		for _, path := range []string{"/", "/mcp", "/mcp/bob/", "/mcp/alicex", "/v1/admin/delete", "/ssex"} {
+			assert.Equal(t, http.StatusNotFound, serve(path, true), path)
+		}
+		assert.Empty(t, upstreamPaths, "paths outside the allowlist must never reach the upstream")
+	})
+
+	t.Run("without a token the allowlist still answers 404, allowed paths 401", func(t *testing.T) {
+		assert.Equal(t, http.StatusNotFound, serve("/v1/admin/delete", false))
+		assert.Equal(t, http.StatusUnauthorized, serve("/mcp/alice/", false))
+	})
+}
+
+// TestNewProxyRouter_ValidatesAllowedPaths covers the fail-fast rules of
+// SPEC §3.1 for PROXY_ALLOWED_PATHS.
+func TestNewProxyRouter_ValidatesAllowedPaths(t *testing.T) {
+	_, publicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+	base := Config{ExternalURL: "https://example.com", VerificationKey: testKeyLookup(publicKey)}
+
+	for _, invalid := range [][]string{{"mcp"}, {""}, {"/"}, {"/mcp", "//"}} {
+		cfg := base
+		cfg.AllowedPathPrefixes = invalid
+		_, err := NewProxyRouter(cfg)
+		assert.Error(t, err, "%q must be rejected", invalid)
+	}
+
+	cfg := base
+	cfg.AllowedPathPrefixes = []string{"/mcp/", "/sse"}
+	proxyRouter, err := NewProxyRouter(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/mcp", "/sse"}, proxyRouter.cfg.AllowedPathPrefixes)
+}
