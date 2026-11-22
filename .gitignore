@@ -1,32 +1,34 @@
-# Secrets / runtime
-.env
+# OS / editor
+.DS_Store
+
+# Claude Code — machine-local settings & audit artifacts (never commit)
+.claude/settings.local.json
+AUDIT-RESULTS.md
+
+# Env files — only the example is tracked
+.env*
+!.env.example
+
+# Private material (see private/README.md)
+private/*
+!private/README.md
+
+# module:gitignore — stack module entries are appended below
+# go module
+bin/
+dist/
+coverage.out
+
+# Project — key material and runtime data (signing keys, token store) never reach git
 *.env
 !*.env.example
 *.pem
 *.key
 *.jwks
 data/
-__pycache__/
 
-# Reference internals / anything that must never reach the public repo
-private/
-
-# Audit output (regenerated on demand)
-AUDIT-RESULTS.md
-
-# macOS
-.DS_Store
-
-# Build artifacts
-/bin/
-/dist/
-node_modules/
-
-# Go
+# Project — Go build and test output beyond the module entries
 /mcp-oauth-gateway
 *.test
 *.out
 coverage.txt
-
-# Claude local settings (personal, not shared)
-.claude/settings.local.json

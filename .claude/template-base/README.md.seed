@@ -1,0 +1,51 @@
+# mcp-oauth-gateway
+
+Self-hosted OAuth 2.1 gateway that puts MCP authorization in front of any MCP server, without a third-party identity provider
+
+<!-- template:adapt: expand into 2–4 sentences from the short-info: what it does, for
+whom, what makes it distinct. -->
+
+## Status
+
+<!-- template:adapt: one line on the current state -->
+Early development — see [features/INDEX.md](features/INDEX.md) for the roadmap.
+
+<!-- section:readme-getting-started -->
+## Getting started
+
+Toolchain is pinned via [mise](https://mise.jdx.dev); everything else follows from it.
+Activate mise once per machine so the pinned versions come first in every shell —
+terminal, editor and Claude Code take their `PATH` from it: add
+`eval "$(mise activate zsh --shims)"` at the very end of `~/.zshrc` (after nvm and other
+tool managers), restart the terminal and the editor, and check that `mise doctor` reports
+`shims_on_path: yes`.
+
+```
+mise install   # toolchain (incl. just, lefthook, gitleaks)
+just setup     # dependencies + git hooks
+just check     # full gate: format check, lint, types, tests
+```
+
+| Recipe | Purpose |
+|--------|---------|
+| `just setup` | Install dependencies and git hooks |
+| `just dev` | Run the project locally |
+| `just test` | Run the test suite |
+| `just lint` | Static analysis |
+| `just format` | Auto-format the codebase |
+| `just check` | The full gate — must be green before every commit |
+| `just build` | Production build |
+<!-- /section:readme-getting-started -->
+
+## Documentation
+
+- `features/INDEX.md` — roadmap: recommended order and the table of all features, one
+  file per feature in `features/`
+- `docs/adr/` — decisions that shape the project beyond one feature
+- `CODING-STANDARDS.md` — binding coding rules
+- `HOW-TO-CODE-WITH-CLAUDE.md` — development workflow (Claude Code + coding-kit skills)
+- `CONTRIBUTING.md`, `SECURITY.md`, `AI-DISCLOSURE.md` — governance
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).

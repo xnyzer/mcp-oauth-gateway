@@ -1,0 +1,53 @@
+# License policy — which licenses the project's runtime dependencies may carry.
+#
+# `just license-check` (part of `just check`) lists every runtime dependency with its
+# license and checks the list against this file (scripts/license-check.sh). Dependencies
+# for development and tests are not checked; a package that ships with the product
+# belongs in the runtime dependencies, also when a bundler packs it.
+#
+#   allow <license>              a license as the tools report it: an SPDX id (MIT,
+#                                Apache-2.0) or an older name (MIT License). The rest
+#                                of the line is the name, compared exactly.
+#   except <package> <reason…>   this package passes whatever its license says. The
+#                                reason is required — say why the deviation is fine.
+#
+# Expressions: with OR one allowed alternative is enough; with AND every part must be
+# allowed, and so must every name in a list separated by "; " (how Python packages
+# list several licenses). WITH clauses and nested brackets pass only when the whole
+# text is allowed here. A package without a recognised license fails.
+#
+# Copyleft: GPL, AGPL and LGPL are not allowed (CODING-STANDARDS.md § 8), MPL is. Add a
+# license or an exception below as a conscious, documented decision.
+
+# Permissive licenses, SPDX ids
+allow 0BSD
+allow Apache-2.0
+allow BlueOak-1.0.0
+allow BSD-2-Clause
+allow BSD-3-Clause
+allow BSL-1.0
+allow CC0-1.0
+allow ISC
+allow MIT
+allow MIT-0
+allow PSF-2.0
+allow Python-2.0
+allow Unlicense
+allow Zlib
+
+# Weak copyleft limited to the library's own files
+allow MPL-2.0
+
+# Older names the Python tools report for the same licenses
+allow Apache Software License
+allow BSD License
+allow Boost Software License 1.0 (BSL-1.0)
+allow CC0 1.0 Universal (CC0 1.0) Public Domain Dedication
+allow ISC License (ISCL)
+allow MIT License
+allow Mozilla Public License 2.0 (MPL 2.0)
+allow Python Software Foundation License
+allow The Unlicense (Unlicense)
+allow zlib/libpng License
+
+# Exceptions — one line per package, with the reason

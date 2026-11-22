@@ -390,7 +390,9 @@ golang-jwt, x/crypto), PKCE S256-only, audience-bound short-lived JWTs with serv
 revocation, SSRF-guarded CIMD resolution, rate limits + lockout, non-root distroless
 container. Details: [`THREAT-MODEL.md`](THREAT-MODEL.md) and [`SPEC.md`](SPEC.md). The
 codebase went through an adversarial security audit before its first release; findings and
-fixes are documented in [`PROGRESS-ARCHIVE.md`](PROGRESS-ARCHIVE.md) (F-006b).
+fixes are documented in
+[`features/F-006-verify-against-claude-security-review.md`](features/F-006-verify-against-claude-security-review.md)
+(F-006b).
 
 **Reporting vulnerabilities:** please use GitHub private vulnerability reporting — see
 [`SECURITY.md`](SECURITY.md).
@@ -412,8 +414,8 @@ fixes are documented in [`PROGRESS-ARCHIVE.md`](PROGRESS-ARCHIVE.md) (F-006b).
   end to end against real clients. Walk it after deploying or before a release.
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes (incl. migrations).
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute, commit conventions, secrets hygiene.
-- [`PROGRESS.md`](PROGRESS.md) / [`PROGRESS-ARCHIVE.md`](PROGRESS-ARCHIVE.md) — roadmap and
-  finished work with rationale.
+- [`features/INDEX.md`](features/INDEX.md) — roadmap: recommended order and all features, one
+  file per task with its history and rationale.
 - [`HOW-TO-CODE-WITH-CLAUDE.md`](HOW-TO-CODE-WITH-CLAUDE.md) / [`AI-DISCLOSURE.md`](AI-DISCLOSURE.md)
   — how this project is built.
 

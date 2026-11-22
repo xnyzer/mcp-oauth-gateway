@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Base snapshot of the template (managed by /update-conventions) — collapsed in diffs
+.claude/template-base/** linguist-generated=true

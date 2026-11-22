@@ -1,0 +1,17 @@
+# coding-kit template answers (MANIFEST § Answers) — recovered by /update-conventions
+PROJECT_NAME=mcp-oauth-gateway
+PROJECT_DESCRIPTION=Self-hosted OAuth 2.1 gateway that puts MCP authorization in front of any MCP server, without a third-party identity provider
+OWNER=xnyzer
+YEAR=2026
+GROUP_ID=mcp-oauth-gateway
+LANG_LIVING_DOCS=English
+LANG_CLAUDE_MD=English
+LANG_COMMENTS=English
+LANG_COMMITS=English
+LANG_README=English
+LICENSE_SPDX=Apache-2.0
+MODULE=go
+VISIBILITY=public
+HOST=github
+OPTIONAL=graphiti
+FRAGMENTS=

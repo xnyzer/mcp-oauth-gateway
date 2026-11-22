@@ -9,55 +9,21 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-test:
+  check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: gofmt
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "These files are not gofmt-clean:"; echo "$unformatted"
-            echo "Run: gofmt -w ."; exit 1
-          fi
-      - name: vet
-        run: go vet ./...
-      - name: build
-        run: go build ./...
-      - name: test
-        run: go test ./...
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
+      - run: just setup
+      - run: just check
+  # module:ci-jobs — stack modules append additional jobs below this line
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9.3.0
-        with:
-          version: v2.14.0
-
-  license-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: install go-licenses (pinned)
-        run: go install github.com/google/go-licenses/v2@v2.0.1
-      - name: check no GPL/AGPL/LGPL
-        run: |
-          "$(go env GOPATH)/bin/go-licenses" check ./... --disallowed_types=forbidden,restricted
+  # -- Project jobs (beyond just check) ---------------------------------------
 
   # Lints the workflow files themselves so a malformed workflow fails loudly
   # instead of being silently dropped by GitHub ("No jobs were run", F-013).

@@ -1,15 +1,51 @@
 {
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if ! git -C \"$CLAUDE_PROJECT_DIR\" diff --quiet HEAD 2>/dev/null || ! git -C \"$CLAUDE_PROJECT_DIR\" diff --cached --quiet 2>/dev/null; then echo '[reminder] uncommitted changes — run /step-done (checks + secrets-scan) before committing'; fi"
-          }
-        ]
-      }
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "autoMemoryEnabled": false,
+  "permissions": {
+    "allow": [
+      "Bash(just:*)",
+      "Bash(mise:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git branch:*)",
+      "Bash(git switch:*)",
+      "Bash(lefthook:*)",
+      "Bash(gitleaks:*)",
+      "Bash(gh api user:*)",
+      "Read(**/.env.example)",
+      "Edit(**/.env.example)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Read(**/.env)",
+      "Read(**/.env[0-9a-z_-]*)",
+      "Read(**/.env.[0-9a-df-z_-]*)",
+      "Read(**/.env.e[0-9a-wy-z_-]*)",
+      "Read(**/.env.ex[0-9b-z_-]*)",
+      "Read(**/.env.example?*)",
+      "Edit(**/.env)",
+      "Edit(**/.env[0-9a-z_-]*)",
+      "Edit(**/.env.[0-9a-df-z_-]*)",
+      "Edit(**/.env.e[0-9a-wy-z_-]*)",
+      "Edit(**/.env.ex[0-9b-z_-]*)",
+      "Edit(**/.env.example?*)",
+      "Read(**/*.pem)",
+      "Edit(**/*.pem)",
+      "Read(**/*.key)",
+      "Edit(**/*.key)",
+      "Read(**/id_rsa*)",
+      "Read(**/id_ed25519*)",
+      "Read(**/.ssh/**)",
+      "Edit(**/.ssh/**)",
+      "Read(**/.aws/**)",
+      "Edit(**/.aws/**)",
+      "Read(**/secrets/**)",
+      "Edit(**/secrets/**)",
+      "Read(**/credentials/**)",
+      "Edit(**/credentials/**)"
     ]
   }
 }

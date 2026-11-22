@@ -281,7 +281,7 @@ passkey, upgrades as it is. Read on before upgrading if one of these applies:
   both mechanisms makes the gateway refuse to start, a `false` default would turn that rescue into
   an outage. New README section "Should you turn DCR off?"; the decision was recorded beside the
   original one in the decision list of the then-separate `REQUIREMENTS.md` (dissolved in F-026;
-  the rationale lives in `PROGRESS-ARCHIVE.md`).
+  the rationale lives in `features/F-019-evaluate-whether-dcr-can-be-switched-off.md`).
 - `SPEC.md` §4 now records **no unmet requirement**: the `Origin` row that carried a ✘ since v0.2.0
   reads satisfied.
 
@@ -415,7 +415,8 @@ rather than only repairing a defect.
 
 Security-hardening patch: the low-severity follow-ups from the F-006b adversarial audit
 (none a vulnerability on their own — defence-in-depth, fail-fast, and hygiene). Delivered as
-F-012a–d; see `PROGRESS-ARCHIVE.md` for the per-finding rationale.
+F-012a–d; see `features/F-012-audit-low-severity-follow-ups-from-f.md` for the per-finding
+rationale.
 
 ### Added
 
@@ -497,7 +498,9 @@ everything below is relative to that base.
 - Rebranded to `mcp-oauth-gateway`; bundled Google/GitHub login providers removed (generic
   OIDC stays, off by default).
 - Hardened against the findings of an adversarial security audit (0 critical / 1 high /
-  9 medium — all fixed; see `PROGRESS-ARCHIVE.md` F-006b/F-007a/F-007b): consent client
+  9 medium — all fixed; see F-006b/F-007a/F-007b in
+  `features/F-006-verify-against-claude-security-review.md` and
+  `features/F-007-release-hygiene.md`): consent client
   identity, CIMD SSRF denylist, fail-closed `/revoke`, `X-Forwarded-*` spoof protection,
   CIMD cache bound + authorize rate limit, lockout re-arm DoS, no internal-error disclosure,
   bare-IP `TRUSTED_PROXIES` normalisation, http-issuer startup warning, TLS-aware cookie

@@ -9,5 +9,6 @@
 - Upstream licence and attribution: see [`NOTICE`](NOTICE).
 
 **Why we forked** (and the gaps we are closing): see the F-001 write-up in
-[`PROGRESS-ARCHIVE.md`](PROGRESS-ARCHIVE.md) and the gap list under F-005 in
-[`PROGRESS.md`](PROGRESS.md).
+[`features/F-001-build-vs-fork-evaluation.md`](features/F-001-build-vs-fork-evaluation.md) and
+the gap list under F-005 in
+[`features/F-005-implement-on-the-chosen-base-sigbit-fork.md`](features/F-005-implement-on-the-chosen-base-sigbit-fork.md).

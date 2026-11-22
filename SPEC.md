@@ -8,7 +8,7 @@
 **This document is binding for changes to the gateway.** It says *what must hold*. Two documents
 sit beside it and are equally binding: `CODING-STANDARDS.md` (how the code is written) and
 `THREAT-MODEL.md` (what it defends against). Everything else in the repository — README, the
-`docs/` records, PROGRESS — is description, not rule.
+`docs/` records, the feature files — is description, not rule.
 
 ## 0. Conventions
 

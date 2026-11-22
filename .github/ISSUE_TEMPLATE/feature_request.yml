@@ -20,7 +20,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution (optional)
-      description: If you have a concrete idea how to solve it, describe it here. API sketches or links to similar implementations are welcome.
+      description: If you have a concrete idea how to solve it, describe it here. Mockups, API sketches, or links to similar implementations are welcome.
 
   - type: textarea
     id: alternatives
@@ -32,4 +32,4 @@ body:
     id: context
     attributes:
       label: Additional context (optional)
-      description: Any additional information or links.
+      description: Any additional information, screenshots, or links.
