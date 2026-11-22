@@ -44,10 +44,11 @@ with its reasons.
 
 _As of 2026-11-22._
 
-1. [F-032](F-032-harden-the-repository-and-the-supply.md) — the free GitHub security features are off and CI does not scan the shipped image.
-2. [F-033](F-033-watch-the-frozen-opentelemetry-exporters.md) — a dated watch item: re-check on 2027-01-15 whether the frozen exporters still matter.
-3. [F-034](F-034-land-on-the-settings-page-after-a-direct.md) — a direct login lands on `/` instead of the operator's settings page.
-4. [F-035](F-035-move-coding-standards-md-to-the-kit-layout.md) — conventions upkeep without behaviour change; after the operator-facing fix.
+1. [F-036](F-036-raise-the-go-toolchain-the-gateway-ships.md) — two reachable standard-library vulnerabilities in the shipped binary, one a remote server crash.
+2. [F-032](F-032-harden-the-repository-and-the-supply.md) — the free GitHub security features are off and CI does not scan the shipped image.
+3. [F-033](F-033-watch-the-frozen-opentelemetry-exporters.md) — a dated watch item: re-check on 2027-01-15 whether the frozen exporters still matter.
+4. [F-034](F-034-land-on-the-settings-page-after-a-direct.md) — a direct login lands on `/` instead of the operator's settings page.
+5. [F-035](F-035-move-coding-standards-md-to-the-kit-layout.md) — conventions upkeep without behaviour change; after the operator-facing fix.
 
 ## All features
 
@@ -60,6 +61,7 @@ _As of 2026-11-22._
 | [F-033](F-033-watch-the-frozen-opentelemetry-exporters.md) | Watch the frozen OpenTelemetry exporters pulled in through ory/x | BACKLOG |  |
 | [F-034](F-034-land-on-the-settings-page-after-a-direct.md) | Land on the settings page after a direct login | BACKLOG |  |
 | [F-035](F-035-move-coding-standards-md-to-the-kit-layout.md) | Move CODING-STANDARDS.md to the kit layout | BACKLOG |  |
+| [F-036](F-036-raise-the-go-toolchain-the-gateway-ships.md) | Raise the Go toolchain the gateway ships with | BACKLOG |  |
 
 ### Closed
 
@@ -98,7 +100,7 @@ _As of 2026-11-22._
 | [F-008](F-008-create-the-hard-fork-of-sigbit-mcp-auth.md) | Create the hard fork of sigbit/mcp-auth-proxy | DONE | 2026-06-25 |
 <!-- /features-index -->
 
-next-feature: F-036
+next-feature: F-037
 
 ## Reading note
 
