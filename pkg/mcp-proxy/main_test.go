@@ -137,6 +137,38 @@ func TestRun_PassesHTTPStreamingOnlyToProxyRouter(t *testing.T) {
 	require.True(t, streamingOnlyReceived, "httpStreamingOnly should be forwarded to proxy router")
 }
 
+// TestRun_PassesProxyAllowedPathsToProxyRouter mirrors the streaming test
+// for PROXY_ALLOWED_PATHS (SPEC §1.11).
+func TestRun_PassesProxyAllowedPathsToProxyRouter(t *testing.T) {
+	originalNewProxyRouter := newProxyRouter
+	t.Cleanup(func() {
+		newProxyRouter = originalNewProxyRouter
+	})
+
+	var allowedReceived []string
+	newProxyRouter = func(cfg proxy.Config) (*proxy.ProxyRouter, error) {
+		allowedReceived = cfg.AllowedPathPrefixes
+		return nil, errors.New("proxy router init failed")
+	}
+
+	err := Run(Config{
+		Listen:            ":0",
+		TLSListen:         ":0",
+		DataPath:          t.TempDir(),
+		RepositoryBackend: "local",
+		ExternalURL:       "http://localhost",
+		Password:          "test-password",
+		ProxyTargets:      []string{"http://example.com"},
+		ProxyAllowedPaths: []string{"/mcp", "/sse"},
+		HeaderMappingBase: "/userinfo",
+		DCREnabled:        true,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to create proxy router")
+	require.Equal(t, []string{"/mcp", "/sse"}, allowedReceived, "proxyAllowedPaths should be forwarded to proxy router")
+}
+
 // TestRun_RequiresAuthBackend covers the SPEC §3.1 fail-fast: without a
 // password, an OIDC provider, or an enrolled passkey, startup aborts.
 func TestRun_RequiresAuthBackend(t *testing.T) {

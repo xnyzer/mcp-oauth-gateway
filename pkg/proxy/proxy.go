@@ -32,6 +32,10 @@ type Config struct {
 	ProxyHeaders http.Header
 	// HTTPStreamingOnly rejects GET-SSE requests with 405 (SPEC §1.11.3).
 	HTTPStreamingOnly bool
+	// AllowedPathPrefixes restricts the proxied surface to these path
+	// prefixes, matched on segment boundaries (SPEC §1.11). Empty means
+	// every non-reserved path is forwarded, the historical behaviour.
+	AllowedPathPrefixes []string
 	// ForwardAuthorizationHeader forwards the validated client bearer upstream.
 	ForwardAuthorizationHeader bool
 	HeaderMapping              map[string]string
@@ -56,7 +60,48 @@ func NewProxyRouter(cfg Config) (*ProxyRouter, error) {
 	// Defensive re-normalization (SPEC §0): iss/aud comparison and the PRM
 	// document must always use the no-trailing-slash issuer form.
 	cfg.ExternalURL = strings.TrimSuffix(cfg.ExternalURL, "/")
+	normalized, err := normalizeAllowedPathPrefixes(cfg.AllowedPathPrefixes)
+	if err != nil {
+		return nil, err
+	}
+	cfg.AllowedPathPrefixes = normalized
 	return &ProxyRouter{cfg: cfg}, nil
+}
+
+// normalizeAllowedPathPrefixes validates the configured prefixes (SPEC §3.1,
+// fail-fast): each must be an absolute path; a trailing slash is dropped so
+// "/mcp" and "/mcp/" describe the same subtree. "/" alone is refused — it
+// would allow everything, which is what leaving the option unset already
+// means, and an explicit allowlist that allows everything is a mistake.
+func normalizeAllowedPathPrefixes(prefixes []string) ([]string, error) {
+	normalized := make([]string, 0, len(prefixes))
+	for _, raw := range prefixes {
+		prefix := strings.TrimSpace(raw)
+		if !strings.HasPrefix(prefix, "/") {
+			return nil, fmt.Errorf("allowed path %q must start with /", raw)
+		}
+		prefix = strings.TrimRight(prefix, "/")
+		if prefix == "" {
+			return nil, fmt.Errorf("allowed path %q would allow every path; leave the allowlist empty for that", raw)
+		}
+		normalized = append(normalized, prefix)
+	}
+	return normalized, nil
+}
+
+// isPathAllowed reports whether the request path lies inside one of the
+// configured prefixes. Matching stops at segment boundaries: "/mcp" covers
+// "/mcp" and "/mcp/alice" but not "/mcpx". No prefixes = everything allowed.
+func (p *ProxyRouter) isPathAllowed(path string) bool {
+	if len(p.cfg.AllowedPathPrefixes) == 0 {
+		return true
+	}
+	for _, prefix := range p.cfg.AllowedPathPrefixes {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 const (
@@ -118,6 +163,13 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return
 		}
+	}
+	// Outside the allowlist nothing is forwarded, token or not (SPEC
+	// §1.11): the upstream credential must not become a key to every
+	// endpoint the upstream happens to serve next to its MCP path.
+	if !p.isPathAllowed(c.Request.URL.Path) {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
 	}
 
 	authHeader := c.Request.Header.Get("Authorization")

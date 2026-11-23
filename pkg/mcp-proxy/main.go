@@ -64,6 +64,7 @@ type Config struct {
 	ForwardAuthorizationHeader bool
 	ProxyTargets               []string
 	HTTPStreamingOnly          bool
+	ProxyAllowedPaths          []string
 	HeaderMapping              map[string]string
 	HeaderMappingBase          string
 
